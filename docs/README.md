@@ -31,6 +31,7 @@ Material Email documentation is organized by feature area. Every article records
 
 - [Category index](data/README.md)
 - [Local state and history](data/local-state-and-history.md)
+- [Local-history deletion evidence](data/local-history-deletion-evidence.md)
 - [External editor and export](data/external-editor-and-export.md)
 - [Changelog](data/changelog.md)
 

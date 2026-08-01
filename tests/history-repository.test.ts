@@ -124,6 +124,24 @@ describe("HistoryRepository", () => {
     expect(JSON.parse(await readFile(source, "utf8"))).toEqual({ value: 4 });
     await expect(repository.read(before[1]!.hash)).rejects.toThrow();
     await expect(repository.read(before[3]!.hash)).rejects.toThrow();
+
+    const evidence = await repository.inspectDeletionEvidence(new Date("2026-08-01T12:00:00.000Z"));
+    expect(evidence).toMatchObject({
+      generatedAt: "2026-08-01T12:00:00.000Z",
+      policy: "active-history-pruning-only",
+      activeRevisionCount: 2,
+      activeLabeledRevisionCount: 1,
+      mainReflogPresent: true,
+      cryptographicErasureProvided: false,
+      reflogExpiryPerformed: false,
+      gitGarbageCollectionPerformed: false,
+      backupCopiesAudited: false,
+      storageMediaAudited: false,
+    });
+    expect(evidence.reflogOnlyRevisionCount).toBeGreaterThan(0);
+    expect(evidence.gitVersion).toMatch(/^git version /u);
+    expect(evidence.looseObjectCount).toBeGreaterThan(0);
+    expect(evidence.looseObjectSizeKiB).toBeGreaterThanOrEqual(0);
   });
 
   it("refuses stale previews and any lineage containing a non-app-owned commit", async () => {

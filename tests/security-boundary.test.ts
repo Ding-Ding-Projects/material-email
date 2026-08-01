@@ -60,6 +60,7 @@ describe("Electron security boundary", () => {
       "history:label-local",
       "history:preview-prune-local",
       "history:prune-local",
+      "history:inspect-deletion",
       "history:restore-local",
       "data:export",
       "editor:detect",

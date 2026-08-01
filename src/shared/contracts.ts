@@ -334,6 +334,29 @@ export interface LocalHistoryPruneResult {
   semanticEventRecorded: boolean;
 }
 
+export interface LocalHistoryDeletionEvidence {
+  generatedAt: string;
+  policy: "active-history-pruning-only";
+  gitVersion: string;
+  activeRevisionCount: number;
+  activeLabeledRevisionCount: number;
+  reflogOnlyRevisionCount: number;
+  mainReflogPresent: boolean;
+  looseObjectCount: number;
+  looseObjectSizeKiB: number;
+  packedObjectCount: number;
+  packCount: number;
+  packSizeKiB: number;
+  prunePackableObjectCount: number;
+  garbageObjectCount: number;
+  garbageSizeKiB: number;
+  cryptographicErasureProvided: false;
+  reflogExpiryPerformed: false;
+  gitGarbageCollectionPerformed: false;
+  backupCopiesAudited: false;
+  storageMediaAudited: false;
+}
+
 export interface ReleaseIdentity {
   version: string;
   releaseDate: string;
@@ -414,6 +437,7 @@ export interface MaterialEmailApi {
   labelLocalRevision(hash: string, label: string): Promise<LocalRevision>;
   previewLocalHistoryPrune(retentionDays: number): Promise<LocalHistoryPrunePreview>;
   pruneLocalHistory(request: LocalHistoryPruneRequest): Promise<LocalHistoryPruneResult>;
+  inspectLocalHistoryDeletion(): Promise<LocalHistoryDeletionEvidence>;
   restoreLocalRevision(hash: string): Promise<BootstrapState>;
   listContacts(): Promise<Contact[]>;
   searchContacts(query: string): Promise<Contact[]>;

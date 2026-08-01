@@ -617,6 +617,15 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .retention-candidates li { display: grid; grid-template-columns: minmax(110px, auto) minmax(0, 1fr); gap: 10px; padding: 3px 0; }
 .retention-confirmation { display: grid; gap: 6px; min-width: 0; }
 .retention-confirmation p { margin: 0; overflow-wrap: anywhere; }
+.deletion-evidence { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--outline-variant); }
+.deletion-evidence > header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+.deletion-evidence h3 { margin: 0; }
+.deletion-evidence__report { display: grid; gap: 10px; margin-top: 10px; padding: 12px; border-radius: var(--radius-sm); background: var(--surface-container-lowest); }
+.deletion-evidence__report > p { margin: 0; }
+.evidence-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 8px; margin: 0; }
+.evidence-grid > div { min-width: 0; padding: 9px; border: 1px solid var(--outline-variant); border-radius: var(--radius-sm); }
+.evidence-grid dt { color: var(--on-surface-variant); font-size: 0.72rem; }
+.evidence-grid dd { margin: 3px 0 0; overflow-wrap: anywhere; font-weight: 700; }
 .revision-row-list { display: grid; gap: 6px; }
 .revision-row-list article { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 7px 9px; border-radius: var(--radius-sm); background: var(--surface-container); }
 .revision-row-list p { margin: 2px 0 0; color: var(--on-surface-variant); font-size: 0.73rem; }

@@ -64,4 +64,12 @@ test("searches, diffs, labels, and reviews restore for a local Git revision", as
   await expect(preview).toBeVisible();
   await expect(preview).toContainText(/Dry-run result/i);
   await expect(preview).toContainText(/current.*labeled.*recent revisions protected/i);
+
+  const deletionPolicy = page.getByTestId("history-deletion-policy");
+  await deletionPolicy.getByRole("button", { name: /Inspect deletion limits/i }).click();
+  const evidence = page.getByTestId("history-deletion-evidence");
+  await expect(evidence).toBeVisible();
+  await expect(evidence).toContainText(/Active-history pruning only/i);
+  await expect(evidence).toContainText(/Cryptographic erasure is not provided/i);
+  await expect(evidence).toContainText(/Not performed: cryptographic erasure, reflog expiry, Git garbage collection/i);
 });

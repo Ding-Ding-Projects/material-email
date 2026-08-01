@@ -9,7 +9,7 @@ This matrix records evidence for the current development tree. It is not release
 | Dependencies | `npm ci` | Reported pass | Reproduce in CI |
 | Electron runtime | Playwright Electron E2E | Previously recorded suite: 15 / 15; this change's focused consent/restart and bilingual scenarios: 2 / 2. The expanded full suite was not rerun in this pass. | Run the expanded full suite in CI; clean VM, screen reader, and full display-scale matrix |
 | Types | `npm run typecheck` | Passed in the final local `npm run check` gate | Repeat in CI |
-| Tests | `npm test` | 36 files / 182 tests passed in the final local gate, including bounded MIME, remote-content sanitizer, history retention, persistence, IPC, and CSP assertions | Repeat in CI |
+| Tests | `npm test` | 36 files / 183 tests passed in the final local gate, including bounded MIME, remote-content sanitizer, history retention/deletion evidence, persistence, IPC, and CSP assertions | Repeat in CI |
 | Bundled images | `npm run verify:assets` | 10 unique 1254 × 1254 PNGs decode and match the catalog | Repeat in CI and release workflow |
 | Dependency audit | `npm audit` | 0 known vulnerabilities reported at scan time | Continuous scan; audit is not a security review |
 | Build | `npm run build` | Passed; Vite transformed 8 renderer modules | Repeat exact source in CI |

@@ -21,6 +21,7 @@ import type {
   LocalHistoryPrunePreview,
   LocalHistoryPruneRequest,
   LocalHistoryPruneResult,
+  LocalHistoryDeletionEvidence,
   ReleaseIdentity,
   CalendarEvent,
   CalendarEventPatch,
@@ -1128,6 +1129,10 @@ export class AppService {
       currentHeadHash: revisions[0]?.hash ?? outcome.currentHeadHash,
       semanticEventRecorded: true,
     };
+  }
+
+  async inspectLocalHistoryDeletion(): Promise<LocalHistoryDeletionEvidence> {
+    return this.#historyRepository.inspectDeletionEvidence();
   }
 
   async restoreLocalRevision(hash: string): Promise<BootstrapState> {

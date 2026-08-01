@@ -1,4 +1,4 @@
-import type { LocalHistoryPrunePreview, LocalRevision, LocalRevisionDiffLine } from "../../shared/contracts";
+import type { LocalHistoryDeletionEvidence, LocalHistoryPrunePreview, LocalRevision, LocalRevisionDiffLine } from "../../shared/contracts";
 
 export const localRevisionSearchText = (revision: LocalRevision): string =>
   `${revision.label}\n${revision.subject}\n${revision.hash}\n${revision.createdAt}`;
@@ -22,4 +22,9 @@ export const diffLineDescription = (kind: LocalRevisionDiffLine["kind"]): { en: 
 export const retentionPreviewDescription = (preview: LocalHistoryPrunePreview): { en: string; yue: string } => ({
   en: `${preview.eligibleRevisions.length} eligible; ${preview.protectedCurrentCount} current, ${preview.protectedLabeledCount} labeled, and ${preview.protectedRecentCount} recent revisions protected.`,
   yue: `${preview.eligibleRevisions.length} 個符合；${preview.protectedCurrentCount} 個目前、${preview.protectedLabeledCount} 個有標籤，同 ${preview.protectedRecentCount} 個近期修訂受保護。`,
+});
+
+export const deletionEvidenceDescription = (evidence: LocalHistoryDeletionEvidence): { en: string; yue: string } => ({
+  en: `${evidence.activeRevisionCount} active revisions; ${evidence.activeLabeledRevisionCount} labeled; ${evidence.reflogOnlyRevisionCount} reflog-only. Cryptographic erasure is not provided.`,
+  yue: `${evidence.activeRevisionCount} 個現役修訂；${evidence.activeLabeledRevisionCount} 個有標籤；${evidence.reflogOnlyRevisionCount} 個只喺 reflog。冇提供密碼學抹除。`,
 });

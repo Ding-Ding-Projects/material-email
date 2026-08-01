@@ -57,6 +57,7 @@ const api: MaterialEmailApi = {
   labelLocalRevision: (hash, label) => ipcRenderer.invoke("history:label-local", hash, label),
   previewLocalHistoryPrune: retentionDays => ipcRenderer.invoke("history:preview-prune-local", retentionDays),
   pruneLocalHistory: request => ipcRenderer.invoke("history:prune-local", request),
+  inspectLocalHistoryDeletion: () => ipcRenderer.invoke("history:inspect-deletion"),
   restoreLocalRevision: hash => ipcRenderer.invoke("history:restore-local", hash),
   listContacts: () => ipcRenderer.invoke("pim:contacts:list"),
   searchContacts: query => ipcRenderer.invoke("pim:contacts:search", query),

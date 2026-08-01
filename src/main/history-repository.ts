@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import {
   LOCAL_HISTORY_RETENTION_DAYS_MAX,
   LOCAL_HISTORY_RETENTION_DAYS_MIN,
+  type LocalHistoryDeletionEvidence,
   type LocalHistoryPrunePreview,
   type LocalHistoryPruneRequest,
   type LocalHistoryPruneResult,
@@ -78,6 +79,12 @@ const publicRevision = (entry: RevisionEntry): LocalRevision => ({
   label: entry.label,
   isLabeled: entry.isLabeled,
 });
+
+const gitStorageCount = (values: ReadonlyMap<string, string>, key: string): number => {
+  const value = Number(values.get(key));
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Git object evidence did not contain a valid ${key} count.`);
+  return value;
+};
 
 export class HistoryRepository {
   readonly #repositoryPath: string;
@@ -246,6 +253,53 @@ export class HistoryRepository {
     this.#queue = operation.catch(() => undefined);
     await operation;
     return result;
+  }
+
+  async inspectDeletionEvidence(now = new Date()): Promise<LocalHistoryDeletionEvidence> {
+    await this.#queue;
+    await this.#ensureRepository();
+    const activeHashes = new Set((await this.#git(["rev-list", "HEAD"], 16 * 1024 * 1024)).split(/\r?\n/u).map(hash => hash.trim()).filter(Boolean));
+    const labeledCommits = await this.#labeledCommits();
+    const activeLabeledRevisionCount = [...labeledCommits].filter(hash => activeHashes.has(hash)).length;
+    let mainReflogPresent = true;
+    try {
+      await this.#git(["reflog", "exists", "refs/heads/main"]);
+    } catch {
+      mainReflogPresent = false;
+    }
+    const reflogOnlyRevisionCount = mainReflogPresent
+      ? Number((await this.#git(["rev-list", "--count", "--reflog", "--not", "--all"])).trim())
+      : 0;
+    if (!Number.isSafeInteger(reflogOnlyRevisionCount) || reflogOnlyRevisionCount < 0) {
+      throw new Error("Git reflog evidence did not contain a valid revision count.");
+    }
+    const storageOutput = await this.#git(["count-objects", "-v"]);
+    const storage = new Map(storageOutput.split(/\r?\n/u).map(line => {
+      const separator = line.indexOf(":");
+      return separator > 0 ? [line.slice(0, separator).trim(), line.slice(separator + 1).trim()] as const : ["", ""] as const;
+    }).filter(([key]) => Boolean(key)));
+    return {
+      generatedAt: now.toISOString(),
+      policy: "active-history-pruning-only",
+      gitVersion: (await this.#git(["--version"])).trim(),
+      activeRevisionCount: activeHashes.size,
+      activeLabeledRevisionCount,
+      reflogOnlyRevisionCount,
+      mainReflogPresent,
+      looseObjectCount: gitStorageCount(storage, "count"),
+      looseObjectSizeKiB: gitStorageCount(storage, "size"),
+      packedObjectCount: gitStorageCount(storage, "in-pack"),
+      packCount: gitStorageCount(storage, "packs"),
+      packSizeKiB: gitStorageCount(storage, "size-pack"),
+      prunePackableObjectCount: gitStorageCount(storage, "prune-packable"),
+      garbageObjectCount: gitStorageCount(storage, "garbage"),
+      garbageSizeKiB: gitStorageCount(storage, "size-garbage"),
+      cryptographicErasureProvided: false,
+      reflogExpiryPerformed: false,
+      gitGarbageCollectionPerformed: false,
+      backupCopiesAudited: false,
+      storageMediaAudited: false,
+    };
   }
 
   async read(hash: string): Promise<string> {

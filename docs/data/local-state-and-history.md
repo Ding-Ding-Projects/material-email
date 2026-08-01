@@ -56,5 +56,6 @@ Focused tests exercise immutable snapshots, Git-note label persistence, parent d
 ## Suggested articles
 
 - [Security boundaries](../architecture/security-boundaries.md)
+- [Local-history deletion evidence](local-history-deletion-evidence.md)
 - [External editor and export](external-editor-and-export.md)
 - [Changelog](changelog.md)

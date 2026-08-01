@@ -21,6 +21,7 @@ import type {
   LocalRevisionDiff,
   LocalHistoryPrunePreview,
   LocalHistoryPruneRequest,
+  LocalHistoryDeletionEvidence,
   LocalDraftSummary,
   OutboxSummary,
   PendingOperationSummary,
@@ -74,7 +75,7 @@ import {
   validatePattern,
   type MatchMode,
 } from "./lib/regex";
-import { diffLineDescription, filterLocalRevisions, retentionPreviewDescription } from "./lib/local-history";
+import { deletionEvidenceDescription, diffLineDescription, filterLocalRevisions, retentionPreviewDescription } from "./lib/local-history";
 import { filterPaletteCommands } from "./lib/command-search";
 
 type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
@@ -210,6 +211,8 @@ interface RendererState {
   localRevisionDiffError: string;
   localHistoryPrunePreview: LocalHistoryPrunePreview | null;
   localHistoryPruneError: string;
+  localHistoryDeletionEvidence: LocalHistoryDeletionEvidence | null;
+  localHistoryDeletionError: string;
   tabPreferences: TabPreferences<PageId>;
   tabManagerOpen: boolean;
   contextMenu: ContextMenuState | null;
@@ -324,6 +327,8 @@ const state: RendererState = {
   localRevisionDiffError: "",
   localHistoryPrunePreview: null,
   localHistoryPruneError: "",
+  localHistoryDeletionEvidence: null,
+  localHistoryDeletionError: "",
   tabPreferences: readTabPreferences(),
   tabManagerOpen: false,
   contextMenu: null,
@@ -2211,6 +2216,32 @@ function renderLocalRevisionDiff(revision: LocalRevision): string {
   </section>`;
 }
 
+function renderLocalHistoryDeletionEvidence(): string {
+  const evidence = state.localHistoryDeletionEvidence;
+  const summary = evidence ? deletionEvidenceDescription(evidence) : null;
+  return `<section class="deletion-evidence" data-testid="history-deletion-policy" aria-labelledby="history-deletion-policy-title">
+    <header><div><p class="eyebrow">${escapeHtml(tx("READ-ONLY EVIDENCE", "只讀證據"))}</p><h3 id="history-deletion-policy-title">${escapeHtml(tx("Deletion limits and storage evidence", "刪除限制同儲存證據"))}</h3></div><button class="button button--outlined" type="button" data-action="inspect-local-history-deletion" data-focus-key="inspect-local-history-deletion" ${isBusy("local-history-deletion-evidence") ? "disabled" : ""}>${icon("search")}<span>${escapeHtml(tx(evidence ? "Refresh evidence" : "Inspect deletion limits", evidence ? "重新整理證據" : "檢查刪除限制"))}</span></button></header>
+    <p class="supporting-copy">${escapeHtml(tx("This dry run reads Git metadata only. It does not expire reflogs, run garbage collection, overwrite storage, inspect backups, or change a revision.", "呢次試行只會讀取 Git 中繼資料。唔會 expire reflog、跑垃圾回收、覆寫儲存、檢查備份，或者更改任何修訂。"))}</p>
+    ${state.localHistoryDeletionError ? `<p class="field-error" role="alert">${escapeHtml(state.localHistoryDeletionError)}</p>` : ""}
+    ${evidence ? `<div class="deletion-evidence__report" data-testid="history-deletion-evidence" role="status" aria-live="polite">
+      <p><strong>${escapeHtml(tx("Evidence summary", "證據摘要"))}</strong> ${escapeHtml(tx(summary!.en, summary!.yue))}</p>
+      <dl class="evidence-grid">
+        <div><dt>${escapeHtml(tx("Supported policy", "支援政策"))}</dt><dd>${escapeHtml(tx("Active-history pruning only", "只限現役歷史清理"))}</dd></div>
+        <div><dt>${escapeHtml(tx("Active revisions", "現役修訂"))}</dt><dd>${evidence.activeRevisionCount}</dd></div>
+        <div><dt>${escapeHtml(tx("Active labels", "現役標籤"))}</dt><dd>${evidence.activeLabeledRevisionCount}</dd></div>
+        <div><dt>${escapeHtml(tx("Reflog-only revisions", "只喺 reflog 嘅修訂"))}</dt><dd>${evidence.reflogOnlyRevisionCount}</dd></div>
+        <div><dt>${escapeHtml(tx("Loose Git objects", "鬆散 Git 物件"))}</dt><dd>${evidence.looseObjectCount} · ${evidence.looseObjectSizeKiB} KiB</dd></div>
+        <div><dt>${escapeHtml(tx("Packed Git objects", "已封裝 Git 物件"))}</dt><dd>${evidence.packedObjectCount} · ${evidence.packCount} ${escapeHtml(tx("packs", "個封裝"))} · ${evidence.packSizeKiB} KiB</dd></div>
+        <div><dt>${escapeHtml(tx("Prune-packable objects", "可清理封裝物件"))}</dt><dd>${evidence.prunePackableObjectCount}</dd></div>
+        <div><dt>${escapeHtml(tx("Reported garbage", "已報告垃圾物件"))}</dt><dd>${evidence.garbageObjectCount} · ${evidence.garbageSizeKiB} KiB</dd></div>
+      </dl>
+      <div class="inline-banner inline-banner--warning">${icon("warning")}<span>${escapeHtml(tx("Not performed: cryptographic erasure, reflog expiry, Git garbage collection, backup auditing, or storage-media auditing. A zero count is not proof that every copy disappeared.", "未有執行：密碼學抹除、reflog expiry、Git 垃圾回收、備份審核或者儲存媒體審核。數字係零都唔代表所有副本已經消失。"))}</span></div>
+      <p class="supporting-copy"><code>${escapeHtml(evidence.gitVersion)}</code> · ${escapeHtml(tx(`Generated ${formatDate(evidence.generatedAt)}`, `產生於 ${formatDate(evidence.generatedAt)}`))}</p>
+      <div class="button-row"><button class="button button--text" type="button" data-action="export-local-history-deletion-evidence">${icon("download")}<span>${escapeHtml(tx("Export evidence", "匯出證據"))}</span></button></div>
+    </div>` : `<p class="empty-inline">${escapeHtml(tx("Inspect to create a current, read-only evidence report.", "執行檢查以建立目前嘅只讀證據報告。"))}</p>`}
+  </section>`;
+}
+
 function renderLocalHistoryRetention(): string {
   const prefs = preferences();
   const preview = state.localHistoryPrunePreview;
@@ -2233,6 +2264,7 @@ function renderLocalHistoryRetention(): string {
     <p class="supporting-copy revision-diff-warning">${escapeHtml(tx("Pruning removes eligible revisions from active history. It is not secure deletion; Git objects, backups, and storage media can retain data outside this view.", "清理會由現役歷史移除符合條件嘅修訂。呢個唔係安全刪除；Git 物件、備份同儲存媒體仍可能喺呢個檢視之外保留資料。"))}</p>
     ${state.localHistoryPruneError ? `<p class="field-error" role="alert">${escapeHtml(state.localHistoryPruneError)}</p>` : ""}
     ${previewMarkup}
+    ${renderLocalHistoryDeletionEvidence()}
   </section>`;
 }
 
@@ -2942,6 +2974,8 @@ const saveLocalRevisionLabel = async (button: HTMLElement, hash: string): Promis
     const revision = await api.labelLocalRevision(hash, label);
     state.localRevisions = state.localRevisions.map(item => item.hash === hash ? revision : item);
     if (state.localRevisionDiff?.revision.hash === hash) state.localRevisionDiff = { ...state.localRevisionDiff, revision };
+    state.localHistoryDeletionEvidence = null;
+    state.localHistoryDeletionError = "";
     pendingFocusKey = `local-revision-label-${hash}`;
     pushToast("success", "Revision label saved", "The snapshot commit stayed immutable; only its local label changed.", "修訂標籤已儲存", "快照提交保持不變；只係本機標籤改咗。 ");
   });
@@ -2956,6 +2990,20 @@ const previewLocalHistoryPrune = async (): Promise<void> => {
     } catch (error) {
       state.localHistoryPrunePreview = null;
       state.localHistoryPruneError = errorMessage(error);
+      throw error;
+    }
+  });
+};
+
+const inspectLocalHistoryDeletion = async (): Promise<void> => {
+  state.localHistoryDeletionError = "";
+  await withBusy("local-history-deletion-evidence", async () => {
+    try {
+      state.localHistoryDeletionEvidence = await api.inspectLocalHistoryDeletion();
+      pendingFocusKey = "inspect-local-history-deletion";
+    } catch (error) {
+      state.localHistoryDeletionEvidence = null;
+      state.localHistoryDeletionError = errorMessage(error);
       throw error;
     }
   });
@@ -3784,6 +3832,8 @@ const handleConfirmation = async (): Promise<void> => {
       const result = await api.pruneLocalHistory(pruneRequestFromPreview(confirmation.preview));
       await refreshMetadata();
       state.localHistoryPrunePreview = null;
+      state.localHistoryDeletionEvidence = null;
+      state.localHistoryDeletionError = "";
       state.localRevisionsLoaded = false;
       state.localRevisions = [];
       state.selectedLocalRevisionHash = null;
@@ -3815,6 +3865,8 @@ const handleConfirmation = async (): Promise<void> => {
     state.localRevisionDiffError = "";
     state.localHistoryPrunePreview = null;
     state.localHistoryPruneError = "";
+    state.localHistoryDeletionEvidence = null;
+    state.localHistoryDeletionError = "";
     const next = restored.accounts.find(account => account.id === restored.preferences.selectedAccountId) ?? restored.accounts[0];
     if (next) await loadAccount(next.id, false);
     await loadLocalRevisions();
@@ -3841,6 +3893,24 @@ const sampleForSearch = (key: string): string => {
 const exportHistory = async (): Promise<void> => {
   const records = (state.bootstrap?.history ?? []).filter(historyMatches);
   await exportText("history", JSON.stringify({ exportedAt: new Date().toISOString(), filters: { from: state.filters.historyFrom, to: state.filters.historyTo, actions: [...state.filters.historyActions], query: searchFor("history") }, records }, null, 2), "material-email-history.json", tx("History", "歷史"));
+};
+
+const exportLocalHistoryDeletionEvidence = async (): Promise<void> => {
+  const evidence = state.localHistoryDeletionEvidence;
+  if (!evidence) {
+    pushToast("warning", "Deletion evidence unavailable", "Inspect deletion limits before exporting the report.", "刪除證據未有提供", "匯出報告之前請先檢查刪除限制。 ");
+    return;
+  }
+  await exportText(
+    "history",
+    JSON.stringify({
+      report: "Material Email local-history deletion evidence",
+      interpretation: "Read-only Git metadata. This report is not cryptographic-erasure proof.",
+      evidence,
+    }, null, 2),
+    "material-email-local-history-deletion-evidence.json",
+    tx("Deletion evidence", "刪除證據"),
+  );
 };
 
 const exportChangelog = async (): Promise<void> => {
@@ -4267,6 +4337,8 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "toggle-local-revision-diff": if (button.dataset.revisionHash) await toggleLocalRevisionDiff(button.dataset.revisionHash); break;
     case "save-local-revision-label": if (button.dataset.revisionHash) await saveLocalRevisionLabel(button, button.dataset.revisionHash); break;
     case "preview-local-history-prune": await previewLocalHistoryPrune(); break;
+    case "inspect-local-history-deletion": await inspectLocalHistoryDeletion(); break;
+    case "export-local-history-deletion-evidence": await exportLocalHistoryDeletionEvidence(); break;
     case "request-prune-local-history": {
       const preview = state.localHistoryPrunePreview;
       if (preview?.canPrune && preview.headHash) showConfirmation({ kind: "prune-local-history", preview }, "prune-local-history");
@@ -4355,6 +4427,8 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
   if (control.dataset.pref) {
     const patch = preferencePatchFromControl(control);
     if (patch) {
+      state.localHistoryDeletionEvidence = null;
+      state.localHistoryDeletionError = "";
       if (control.dataset.pref === "historyRetentionDays") {
         state.localHistoryPrunePreview = null;
         state.localHistoryPruneError = "";
