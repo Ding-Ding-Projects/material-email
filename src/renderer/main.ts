@@ -33,6 +33,16 @@ import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts";
 import { icon, type IconName } from "./lib/icons";
 import { classifyRendererDelivery, shouldKeepComposerOpen } from "./lib/delivery";
 import {
+  CHANGELOG_DATE_INPUT_LIMIT,
+  changelogMarkdown,
+  filterChangelogEntries,
+  persistChangelogDateInputs,
+  readChangelogDateInputs,
+  validateDateRange,
+  type ChangelogDateInputs,
+  type ChangelogEntry,
+} from "./lib/changelog";
+import {
   createMatcher,
   evaluateSample,
   regexLimits,
@@ -185,6 +195,7 @@ interface RendererState {
   commandQuery: string;
   confirmation: ConfirmationState | null;
   filters: FiltersState;
+  changelogDates: ChangelogDateInputs;
   bulkInverse: boolean;
   bulkIncludePinned: boolean;
   selectedTabGroup: TabDefinition["group"];
@@ -307,6 +318,7 @@ const state: RendererState = {
   commandQuery: "",
   confirmation: null,
   filters: { historyFrom: "", historyTo: "", historyActions: new Set() },
+  changelogDates: readChangelogDateInputs(sessionStorage),
   bulkInverse: false,
   bulkIncludePinned: false,
   selectedTabGroup: "workspace",
@@ -2061,13 +2073,6 @@ function renderHistoryPage(): string {
   </section>`;
 }
 
-interface ChangelogEntry {
-  version: string;
-  date: string;
-  title: string;
-  changes: Array<{ category: string; detail: string }>;
-}
-
 function changelogEntries(): ChangelogEntry[] {
   const entries: ChangelogEntry[] = [
     { version: "0.8.1", date: "2026-08-01", title: tx("Windows desktop foundation", "Windows 桌面基礎"), changes: [{ category: tx("Mail", "郵件"), detail: tx("Secure account setup, three-pane mail, isolated reading, compose, and attachment saving.", "安全帳戶設定、三欄郵件、隔離閱讀、撰寫同附件儲存。") }, { category: tx("Workspace", "工作空間"), detail: tx("Persistent tabs, search, pinning, and reviewed bulk close.", "持久分頁、搜尋、釘選同經審閱批量關閉。") }] },
@@ -2077,12 +2082,64 @@ function changelogEntries(): ChangelogEntry[] {
   return entries;
 }
 
-function renderChangelogPage(): string {
+const changelogDateLocale = (): string => preferences().language === "yue" ? "zh-HK" : "en-CA";
+
+function currentChangelogSelection(): {
+  entries: ChangelogEntry[];
+  markdown: string;
+  range: ReturnType<typeof validateDateRange>;
+  valid: boolean;
+} {
   const model = searchFor("changelog");
-  const entries = changelogEntries().filter(entry => !model.pattern || createMatcher(model)(`${entry.version}\n${entry.title}\n${entry.changes.map(change => `${change.category} ${change.detail}`).join("\n")}`));
-  return `<section class="standard-page" id="panel-changelog" role="tabpanel" aria-labelledby="tab-changelog">
+  const range = validateDateRange(state.changelogDates.from, state.changelogDates.to, changelogDateLocale());
+  const valid = range.valid && (!model.pattern || validatePattern(model).valid);
+  const entries = valid
+    ? filterChangelogEntries(
+      changelogEntries(),
+      model.pattern,
+      model.pattern ? createMatcher(model) : null,
+      range.from.isoDate,
+      range.to.isoDate,
+    )
+    : [];
+  return {
+    entries,
+    range,
+    valid,
+    markdown: changelogMarkdown(entries, model.pattern, range.from.isoDate, range.to.isoDate),
+  };
+}
+
+const changelogInputError = (error: "format" | "calendar" | null): string => {
+  if (error === "calendar") return tx("Enter a real calendar date.", "請輸入真實存在嘅日曆日期。 ");
+  if (error === "format") return tx("Enter a complete date as YYYY-MM-DD or in your Windows date format.", "請用 YYYY-MM-DD 或者你嘅 Windows 日期格式輸入完整日期。 ");
+  return "";
+};
+
+function renderChangelogPage(): string {
+  const selection = currentChangelogSelection();
+  const { entries, range } = selection;
+  const fromError = changelogInputError(range.from.error);
+  const toError = changelogInputError(range.to.error);
+  const rangeError = range.error === "inverted"
+    ? tx("The start date must be on or before the end date.", "開始日期一定要早過或者等於結束日期。 ")
+    : "";
+  const fromInvalid = Boolean(fromError || rangeError);
+  const toInvalid = Boolean(toError || rangeError);
+  const fromDescription = fromError ? "changelog-date-from-error" : rangeError ? "changelog-date-range-error" : "";
+  const toDescription = toError ? "changelog-date-to-error" : rangeError ? "changelog-date-range-error" : "";
+  return `<section class="standard-page" data-testid="changelog-page" id="panel-changelog" role="tabpanel" aria-labelledby="tab-changelog">
     ${renderPageHeader("BUILD NOTES", tx("Changelog", "更新記錄"), tx("Bundled facts for every version known to this build—never a prediction about a release or CI run.", "列出呢個版本已知嘅每個版本事實——絕對唔預測發佈或者 CI 結果。"), "info")}
-    <div class="page-tools"><div class="page-search">${renderSearchField("changelog", tx("Search versions and changes", "搜尋版本同變更"))}</div><button class="button button--outlined" type="button" data-action="export-changelog">${icon("download")}<span>${escapeHtml(tx("Export filtered notes", "匯出已篩選記錄"))}</span></button></div>
+    <div class="filter-surface changelog-filter">
+      <div class="page-search">${renderSearchField("changelog", tx("Search versions and changes", "搜尋版本同變更"))}</div>
+      <div class="date-filter" role="group" aria-label="${escapeHtml(tx("Filter changelog by release date", "按發佈日期篩選更新記錄"))}">
+        <label class="field"><span>${escapeHtml(tx("Released from", "發佈日期由"))}</span><input type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="${CHANGELOG_DATE_INPUT_LIMIT}" placeholder="YYYY-MM-DD" value="${escapeHtml(state.changelogDates.from)}" data-changelog-date="from" data-focus-key="changelog-date-from" aria-invalid="${fromInvalid}" ${fromDescription ? `aria-describedby="${fromDescription}"` : ""}/>${fromError ? `<span class="field-error" id="changelog-date-from-error" role="alert">${escapeHtml(fromError)}</span>` : ""}</label>
+        <span class="date-filter__separator" aria-hidden="true">—</span>
+        <label class="field"><span>${escapeHtml(tx("Released through", "發佈日期至"))}</span><input type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="${CHANGELOG_DATE_INPUT_LIMIT}" placeholder="YYYY-MM-DD" value="${escapeHtml(state.changelogDates.to)}" data-changelog-date="to" data-focus-key="changelog-date-to" aria-invalid="${toInvalid}" ${toDescription ? `aria-describedby="${toDescription}"` : ""}/>${toError ? `<span class="field-error" id="changelog-date-to-error" role="alert">${escapeHtml(toError)}</span>` : ""}</label>
+      </div>
+      ${rangeError ? `<div class="inline-banner inline-banner--error" id="changelog-date-range-error" role="alert">${icon("warning")}<span>${escapeHtml(rangeError)}</span></div>` : ""}
+      <div class="filter-actions"><span aria-live="polite">${entries.length} ${escapeHtml(tx(entries.length === 1 ? "matching released version" : "matching released versions", "個符合嘅已發佈版本"))}</span><div class="button-row"><button class="button button--text" type="button" data-action="copy-changelog" ${selection.valid ? "" : "disabled"}>${icon("compose")}<span>${escapeHtml(tx("Copy filtered view", "複製已篩選檢視"))}</span></button><button class="button button--outlined" type="button" data-action="export-changelog" ${selection.valid ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export filtered notes", "匯出已篩選記錄"))}</span></button></div></div>
+    </div>
     <div class="timeline">${entries.length ? entries.map(entry => `<article class="changelog-card"><div class="timeline-dot" aria-hidden="true"></div><header><div><p class="eyebrow">${escapeHtml(tx("VERSION", "版本"))} ${escapeHtml(entry.version)}</p><h2>${escapeHtml(entry.title)}</h2></div>${entry.date ? `<time datetime="${entry.date}">${escapeHtml(formatDate(entry.date, false))}</time>` : `<span class="date-unavailable">${escapeHtml(tx("Release date not recorded", "未有記錄發佈日期"))}</span>`}</header><div class="change-list">${entry.changes.map(change => `<div><span class="kind-badge">${escapeHtml(change.category)}</span><p>${escapeHtml(change.detail)}</p></div>`).join("")}</div><div class="release-code-name"><img src="${escapeHtml(releaseImageSource())}" alt="${escapeHtml(state.bootstrap?.release.codeName ?? "Dim sum build code name")}"/><div><small>${escapeHtml(tx("Build code name", "版本代號"))}</small><strong>${escapeHtml(state.bootstrap?.release.codeName ?? tx("Not recorded", "未有記錄"))}</strong></div></div></article>`).join("") : renderRecordEmpty("changelog")}</div>
   </section>`;
 }
@@ -3302,10 +3359,28 @@ const exportHistory = async (): Promise<void> => {
 };
 
 const exportChangelog = async (): Promise<void> => {
-  const model = searchFor("changelog");
-  const entries = changelogEntries().filter(entry => !model.pattern || createMatcher(model)(`${entry.version}\n${entry.title}\n${entry.changes.map(change => change.detail).join("\n")}`));
-  const markdown = [`# Material Email changelog`, "", `Filtered query: ${model.pattern || "(none)"}`, "", ...entries.flatMap(entry => [`## ${entry.version} — ${entry.title}`, "", ...entry.changes.map(change => `- **${change.category}:** ${change.detail}`), ""])].join("\n");
-  await exportText("changelog", markdown, "material-email-changelog.md", tx("Changelog", "更新記錄"));
+  const selection = currentChangelogSelection();
+  if (!selection.valid) {
+    pushToast("error", "Changelog filters need attention", "Correct the search or date-range error before exporting.", "更新記錄篩選要處理", "匯出之前請修正搜尋或者日期範圍錯誤。 ");
+    return;
+  }
+  await exportText("changelog", selection.markdown, "material-email-changelog.md", tx("Changelog", "更新記錄"));
+};
+
+const copyChangelog = async (): Promise<void> => {
+  const selection = currentChangelogSelection();
+  if (!selection.valid) {
+    pushToast("error", "Changelog filters need attention", "Correct the search or date-range error before copying.", "更新記錄篩選要處理", "複製之前請修正搜尋或者日期範圍錯誤。 ");
+    return;
+  }
+  const copied = await copyText(selection.markdown);
+  pushToast(
+    copied ? "success" : "error",
+    copied ? "Filtered changelog copied" : "Copy failed",
+    copied ? "The same Markdown selection used by export is on the clipboard." : "The clipboard was unavailable.",
+    copied ? "已複製篩選後更新記錄" : "複製失敗",
+    copied ? "剪貼簿而家有同匯出完全相同嘅 Markdown 選擇。 " : "剪貼簿不可用。 ",
+  );
 };
 
 const exportSettings = async (): Promise<void> => {
@@ -3660,6 +3735,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       render(); break;
     }
     case "export-history": await exportHistory(); break;
+    case "copy-changelog": await copyChangelog(); break;
     case "export-changelog": await exportChangelog(); break;
     case "export-settings": await exportSettings(); break;
     case "restore-history": {
@@ -3814,6 +3890,12 @@ app.addEventListener("input", event => {
   }
   const sampleKey = control.dataset.regexSample;
   if (sampleKey) { searchFor(sampleKey).sample = control.value; render(); return; }
+  const changelogDate = control.dataset.changelogDate;
+  if (changelogDate === "from" || changelogDate === "to") {
+    state.changelogDates[changelogDate] = control.value.slice(0, CHANGELOG_DATE_INPUT_LIMIT);
+    persistChangelogDateInputs(sessionStorage, state.changelogDates);
+    render(); return;
+  }
   if (control.dataset.commandQuery !== undefined) { state.commandQuery = control.value; render(); return; }
   if (control.name === "percentComplete" && control instanceof HTMLInputElement) {
     const output = control.closest("label")?.querySelector<HTMLOutputElement>("output");
