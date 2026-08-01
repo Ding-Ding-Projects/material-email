@@ -8,11 +8,11 @@
 
 The Changelog tab is intended to show every released version with exact version, release date, categorized changes, and the release's dim-sum code name only when a verified catalog asset exists. Search and date filters compose. Users can copy or export the currently filtered view.
 
-The current viewer supports regex search and filtered Markdown export. Date-range filtering, copy, and generated release-ledger validation remain open.
+The current viewer composes its bounded plain-text or regex search with typed release-date bounds. It preserves the raw date fields for the current app session, reports incomplete, impossible, and reversed ranges inline, and uses one shared filtered Markdown selection for both copy and export. Generated release-ledger validation remains open.
 
 ## Configuration
 
-The required date control accepts locale-formatted typed dates and ISO dates, supports a calendar with month/year jumps, range selection, and named presets, and keeps invalid/partial input visible with inline feedback. Search uses its own adjacent regex builder.
+The date fields accept ISO `YYYY-MM-DD` and locale-ordered numeric dates, keep invalid or partial input visible, and persist only in session storage. Search uses its own adjacent regex builder. The richer anchored calendar with month/year jump, range selection, and named presets is not implemented yet.
 
 ## Failure modes
 
@@ -28,7 +28,7 @@ Release notes are factual records. Security fixes must remain specific enough to
 
 ## Verification
 
-The renderer contains a Changelog route and shared search/export foundations. No release-data source, complete date picker, released-version corpus, code-name asset, or shipped-version verification exists.
+Focused unit tests cover ISO and invalid calendar parsing, reversed ranges, session-compatible raw-input persistence, composed search/date filtering, and filtered Markdown serialization. The renderer consumes those same helpers for the visible list, clipboard copy, and export. No generated release-data source, complete calendar picker, expanded released-version corpus, or shipped-version verification exists.
 
 ## Suggested articles
 
