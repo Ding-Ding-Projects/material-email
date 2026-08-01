@@ -82,6 +82,52 @@ test("onboards into a live three-pane demo and isolates message content", async 
   expect(await frame.contentFrame().locator("body").evaluate(() => typeof window.materialEmail)).toBe("undefined");
 });
 
+test("preserves the active reader document across message chrome updates", async () => {
+  await ensureDemo();
+  const messages = page.getByTestId("message-list").locator(".message-row");
+  await messages.nth(1).locator(".message-row__main").click();
+
+  const frame = page.getByTestId("reader-iframe");
+  const body = frame.contentFrame().locator("body");
+  await expect(body).toContainText("tab strip now keeps focus");
+  const documentRevision = await frame.getAttribute("data-reader-document");
+  expect(documentRevision).not.toBeNull();
+  const scrollBeforeUpdate = await body.evaluate(element => {
+    const marker = element.ownerDocument.createElement("div");
+    marker.id = "reader-preservation-marker";
+    marker.style.whiteSpace = "pre-line";
+    marker.textContent = Array.from({ length: 180 }, (_, index) => `Reader continuity line ${index + 1}`).join("\n");
+    element.append(marker);
+    const view = element.ownerDocument.defaultView;
+    view?.scrollTo(0, 240);
+    return view?.scrollY ?? 0;
+  });
+  expect(scrollBeforeUpdate).toBe(240);
+
+  await page.locator('[data-action="toggle-selected-star"]').click();
+  await expect(page.getByTestId("toast-region")).toContainText(/Message updated/i);
+  await expect(frame).toHaveAttribute("data-reader-document", documentRevision!);
+  await expect(frame).toHaveAttribute("sandbox", "allow-popups");
+  await expect(body.locator("#reader-preservation-marker")).toHaveCount(1);
+  await expect.poll(() => body.evaluate(element => element.ownerDocument.defaultView?.scrollY ?? 0)).toBe(scrollBeforeUpdate);
+  expect(await body.evaluate(() => typeof window.materialEmail)).toBe("undefined");
+
+  await messages.nth(1).locator(".message-row__main").click();
+  const refreshedFrame = page.getByTestId("reader-iframe");
+  const refreshedBody = refreshedFrame.contentFrame().locator("body");
+  await expect(refreshedBody).toContainText("tab strip now keeps focus");
+  const refreshedRevision = await refreshedFrame.getAttribute("data-reader-document");
+  expect(refreshedRevision).not.toBe(documentRevision);
+  await expect(refreshedBody.locator("#reader-preservation-marker")).toHaveCount(0);
+
+  await messages.nth(2).locator(".message-row__main").click();
+  const replacementFrame = page.getByTestId("reader-iframe");
+  const replacementBody = replacementFrame.contentFrame().locator("body");
+  await expect(replacementBody).toContainText("Windows package completed");
+  expect(await replacementFrame.getAttribute("data-reader-document")).not.toBe(refreshedRevision);
+  await expect(replacementBody.locator("#reader-preservation-marker")).toHaveCount(0);
+});
+
 test("rejects privileged IPC from another WebContents and keeps same-file skip-link IPC trusted", async () => {
   await ensureDemo();
   await page.locator('a[href="#main-content"]').focus();

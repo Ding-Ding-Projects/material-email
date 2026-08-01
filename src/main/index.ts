@@ -89,6 +89,12 @@ const registerIpc = (trustedRendererUrl: string): void => {
   );
   handleValidated("mail:send", ipcPayloadSchemas.composeDraft, ([draft]) => service.sendMessage(draft));
   handleValidated("mail:save-draft", ipcPayloadSchemas.composeDraft, ([draft]) => service.saveDraft(draft));
+  handleValidated("mail:drafts", ipcPayloadSchemas.accountId, ([accountId]) => service.listDrafts(accountId));
+  handleValidated("mail:draft", ipcPayloadSchemas.accountItem, ([accountId, draftId]) => service.getDraft(accountId, draftId));
+  handleValidated("mail:delete-draft", ipcPayloadSchemas.accountItem, ([accountId, draftId]) => service.deleteDraft(accountId, draftId));
+  handleValidated("mail:outbox", ipcPayloadSchemas.accountId, ([accountId]) => service.listOutbox(accountId));
+  handleValidated("mail:cancel-outbox", ipcPayloadSchemas.accountItem, ([accountId, outboxId]) => service.cancelOutbox(accountId, outboxId));
+  handleValidated("mail:retry-outbox", ipcPayloadSchemas.accountItem, ([accountId, outboxId]) => service.retryOutbox(accountId, outboxId));
   handleValidated("preferences:save", ipcPayloadSchemas.preferences, ([patch]) => service.savePreferences(patch));
   handleValidated("notifications:read", ipcPayloadSchemas.notificationRead, ([id, read]) => service.markNotificationRead(id, read));
   handleValidated("notifications:clear", ipcPayloadSchemas.none, () => service.clearNotifications());

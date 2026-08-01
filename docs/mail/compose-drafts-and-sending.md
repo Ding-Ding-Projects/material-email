@@ -35,6 +35,12 @@ Bcc recipients must never appear in visible recipient lists or history exports n
 
 The current local gate covers bounded compose IPC, attachment authorization, saved dirty baselines, guarded replacement, edits made during in-flight save/send, compare-and-swap draft preservation, accessible discard/focus return, and full/partial/permanent-zero/queued recipient classification. The Electron suite proves save-then-close, save/send mutual exclusion, and preservation of later edits; unit races cover accepted, partial, queued, and rejected delivery. No live-provider delivery, duplicate-ambiguity, oversized-attachment, clean-machine, or screen-reader matrix has completed.
 
+## Drafts and Outbox workspace
+
+Saved drafts remain addressable after the composer closes. The Drafts surface lists local drafts with recipient counts and previews; users can reopen, edit, or delete them. The Outbox surface lists queued deliveries, exposes retry and move-back-to-draft actions, and keeps attempt counts and the last factual error visible. Both surfaces are account-scoped and use the same validated IPC boundary as sending.
+
+Failure modes are explicit: a missing or removed draft/outbox item is rejected without mutating another account, cancellation preserves the queued message as a local draft, and retry delegates through the normal attachment authorization and send path.
+
 ## Suggested articles
 
 - [Accounts and connectivity](accounts-and-connectivity.md)

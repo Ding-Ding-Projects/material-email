@@ -139,6 +139,28 @@ export interface ComposeDraft {
   attachments: string[];
 }
 
+export interface LocalDraftSummary {
+  id: string;
+  accountId: string;
+  recipientCount: number;
+  subject: string;
+  preview: string;
+  attachmentCount: number;
+  savedAt?: string;
+}
+
+export interface OutboxSummary {
+  id: string;
+  accountId: string;
+  recipientCount: number;
+  subject: string;
+  preview: string;
+  attachmentCount: number;
+  createdAt: string;
+  attempts: number;
+  lastError: string;
+}
+
 export interface SendResult {
   messageId: string;
   accepted: string[];
@@ -235,6 +257,12 @@ export interface MaterialEmailApi {
   moveMessage(accountId: string, folderPath: string, uid: number, destination: string): Promise<void>;
   sendMessage(draft: ComposeDraft): Promise<SendResult>;
   saveDraft(draft: ComposeDraft): Promise<ComposeDraft>;
+  listDrafts(accountId: string): Promise<LocalDraftSummary[]>;
+  getDraft(accountId: string, draftId: string): Promise<ComposeDraft>;
+  deleteDraft(accountId: string, draftId: string): Promise<boolean>;
+  listOutbox(accountId: string): Promise<OutboxSummary[]>;
+  cancelOutbox(accountId: string, outboxId: string): Promise<ComposeDraft>;
+  retryOutbox(accountId: string, outboxId: string): Promise<SendResult>;
   savePreferences(patch: Partial<Preferences>): Promise<Preferences>;
   markNotificationRead(id: string, read: boolean): Promise<void>;
   clearNotifications(): Promise<void>;

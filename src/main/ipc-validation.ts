@@ -120,6 +120,7 @@ export const ipcPayloadSchemas = {
   messageFlags: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, flagPatchSchema]),
   moveMessage: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, folderPathSchema]),
   composeDraft: z.tuple([composeDraftSchema]),
+  accountItem: z.tuple([identifierSchema, identifierSchema]),
   preferences: z.tuple([preferencesPatchSchema]),
   notificationRead: z.tuple([identifierSchema, z.boolean()]),
   historyId: z.tuple([identifierSchema]),

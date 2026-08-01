@@ -35,6 +35,8 @@ import type {
   VCardImportResult,
   SendResult,
   SyncResult,
+  LocalDraftSummary,
+  OutboxSummary,
 } from "../shared/contracts.js";
 import { JsonStore } from "./storage.js";
 import { HistoryRepository } from "./history-repository.js";
@@ -691,6 +693,73 @@ export class AppService {
       this.#notify(state, "info", "Draft saved", "The draft is stored locally on this computer.");
     });
     return saved;
+  }
+
+  async listDrafts(accountId: string): Promise<LocalDraftSummary[]> {
+    const state = await this.#store.read();
+    this.#requireAccount(state, accountId);
+    return state.drafts.filter(item => item.accountId === accountId).map(item => ({
+      id: item.id!, accountId, recipientCount: item.to.length + item.cc.length + item.bcc.length,
+      subject: item.subject, preview: item.text.slice(0, 240), attachmentCount: item.attachments.length,
+    }));
+  }
+
+  async getDraft(accountId: string, draftId: string): Promise<ComposeDraft> {
+    const state = await this.#store.read();
+    this.#requireAccount(state, accountId);
+    const draft = state.drafts.find(item => item.accountId === accountId && item.id === draftId);
+    if (!draft) throw new Error("That local draft no longer exists.");
+    return structuredClone(draft);
+  }
+
+  async deleteDraft(accountId: string, draftId: string): Promise<boolean> {
+    let removed = false;
+    await this.#store.update(state => {
+      this.#requireAccount(state, accountId);
+      const draft = state.drafts.find(item => item.accountId === accountId && item.id === draftId);
+      if (!draft) return;
+      state.drafts = state.drafts.filter(item => item.id !== draftId);
+      this.#record(state, "deleted", "draft", draftId, `Deleted draft “${draft.subject || "(No subject)"}”`, draft);
+      this.#notify(state, "info", "Draft deleted", "The local draft was removed; server mail was untouched.");
+      removed = true;
+    });
+    return removed;
+  }
+
+  async listOutbox(accountId: string): Promise<OutboxSummary[]> {
+    const state = await this.#store.read();
+    this.#requireAccount(state, accountId);
+    return state.outbox.filter(item => item.draft.accountId === accountId).map(item => ({
+      id: item.id, accountId, recipientCount: item.draft.to.length + item.draft.cc.length + item.draft.bcc.length,
+      subject: item.draft.subject, preview: item.draft.text.slice(0, 240), attachmentCount: item.draft.attachments.length,
+      createdAt: item.createdAt, attempts: item.attempts, lastError: item.lastError,
+    }));
+  }
+
+  async cancelOutbox(accountId: string, outboxId: string): Promise<ComposeDraft> {
+    let cancelled: ComposeDraft | undefined;
+    await this.#store.update(state => {
+      this.#requireAccount(state, accountId);
+      const item = state.outbox.find(candidate => candidate.id === outboxId && candidate.draft.accountId === accountId);
+      if (!item) throw new Error("That Outbox item no longer exists.");
+      cancelled = structuredClone(item.draft);
+      state.outbox = state.outbox.filter(candidate => candidate.id !== outboxId);
+      const existing = cancelled.id ? state.drafts.findIndex(candidate => candidate.id === cancelled!.id) : -1;
+      if (existing >= 0) state.drafts[existing] = cancelled!; else state.drafts.push(cancelled!);
+      this.#record(state, "updated", "draft", cancelled.id ?? "", `Moved Outbox message “${cancelled.subject || "(No subject)"}” back to drafts`, cancelled);
+      this.#notify(state, "info", "Outbox item cancelled", "The message is available again as a local draft.");
+    });
+    return cancelled!;
+  }
+
+  async retryOutbox(accountId: string, outboxId: string): Promise<SendResult> {
+    const state = await this.#store.read();
+    this.#requireAccount(state, accountId);
+    const item = state.outbox.find(candidate => candidate.id === outboxId && candidate.draft.accountId === accountId);
+    if (!item) throw new Error("That Outbox item no longer exists.");
+    const result = await this.sendMessage(item.draft);
+    await this.#store.update(next => { next.outbox = next.outbox.filter(candidate => candidate.id !== outboxId); });
+    return result;
   }
 
   async savePreferences(patch: Partial<Preferences>): Promise<Preferences> {

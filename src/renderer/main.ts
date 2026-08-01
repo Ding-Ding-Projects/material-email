@@ -15,6 +15,8 @@ import type {
   FolderSummary,
   HistoryRecord,
   LocalRevision,
+  LocalDraftSummary,
+  OutboxSummary,
   MailingList,
   MailingListPatch,
   MessageDetail,
@@ -36,7 +38,7 @@ import {
   type MatchMode,
 } from "./lib/regex";
 
-type PageId = "mail" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
+type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
 type ToastKind = NotificationRecord["kind"];
 type SetupContext = "first-run" | "settings";
 
@@ -207,10 +209,14 @@ interface RendererState {
   pimEditorLastFocusName: string | null;
   confirmationReturnFocusKey: string | null;
   pimFilters: PimFilterState;
+  localDrafts: LocalDraftSummary[];
+  outboxItems: OutboxSummary[];
 }
 
 const TAB_DEFINITIONS: readonly TabDefinition[] = [
   { id: "mail", en: "Mail", yue: "郵件", icon: "mail", group: "workspace" },
+  { id: "drafts", en: "Drafts", yue: "草稿", icon: "archive", group: "workspace" },
+  { id: "outbox", en: "Outbox", yue: "寄件匣", icon: "send", group: "workspace" },
   { id: "contacts", en: "Contacts", yue: "聯絡人", icon: "account", group: "workspace" },
   { id: "calendar", en: "Calendar", yue: "日曆", icon: "calendar", group: "workspace" },
   { id: "tasks", en: "Tasks", yue: "工作", icon: "check", group: "workspace" },
@@ -323,6 +329,8 @@ const state: RendererState = {
   pimEditorLastFocusName: null,
   confirmationReturnFocusKey: null,
   pimFilters: { actions: new Set(), kinds: new Set(), from: "", to: "" },
+  localDrafts: [],
+  outboxItems: [],
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -343,6 +351,7 @@ let accountRequestSequence = 0;
 let folderRequestSequence = 0;
 let syncRequestSequence = 0;
 let messageRequestSequence = 0;
+let readerDocumentRevision = 0;
 let pimSaveSequence = 0;
 let pimLoadPromise: Promise<void> | null = null;
 let contactSearchTimer: number | null = null;
@@ -710,6 +719,7 @@ const loadMessage = async (message: MessageSummary, navigationSequence = mailNav
     const detail = await api.getMessage(message.accountId, message.folderPath, message.uid);
     if (!ownsRequest()) return;
     state.detail = detail;
+    readerDocumentRevision += 1;
     render();
     await new Promise<void>(resolve => window.setTimeout(resolve, 700));
     const readerIsActive = ownsRequest()
@@ -841,7 +851,10 @@ const initialize = async (): Promise<void> => {
     const preferred = bootstrap.accounts.find(account => account.id === bootstrap.preferences.selectedAccountId) ?? bootstrap.accounts[0];
     render();
     void maybeShowDimSum(bootstrap);
-    if (preferred) await loadAccount(preferred.id, false);
+    if (preferred) {
+      await loadAccount(preferred.id, false);
+      await refreshDraftAndOutbox();
+    }
   } catch (error) {
     state.phase = "error";
     state.fatalError = errorMessage(error);
@@ -1004,6 +1017,89 @@ function focusByKey(key: string | null): void {
   target?.focus({ preventScroll: true });
 }
 
+const readerDocumentSelector = "iframe[data-reader-document]";
+const stableReaderDocumentAttributes = ["srcdoc", "sandbox", "referrerpolicy"] as const;
+
+const pathFromRoot = (root: Node, leaf: Element): Element[] | null => {
+  const path: Element[] = [];
+  let current: Node | null = leaf;
+  while (current !== root) {
+    if (!(current instanceof Element)) return null;
+    path.push(current);
+    current = current.parentNode;
+  }
+  return path.reverse();
+};
+
+const synchronizeAttributes = (current: Element, next: Element, preserveSourceDocument = false): void => {
+  for (const attribute of [...current.attributes]) {
+    if (preserveSourceDocument && stableReaderDocumentAttributes.includes(attribute.name as typeof stableReaderDocumentAttributes[number])) continue;
+    if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+  }
+  for (const attribute of [...next.attributes]) {
+    if (preserveSourceDocument && stableReaderDocumentAttributes.includes(attribute.name as typeof stableReaderDocumentAttributes[number])) continue;
+    if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
+  }
+};
+
+const readerDocumentsMatch = (current: HTMLIFrameElement, next: HTMLIFrameElement): boolean =>
+  stableReaderDocumentAttributes.every(attribute => current.getAttribute(attribute) === next.getAttribute(attribute));
+
+const replaceSiblingsAroundPath = (
+  currentParent: Node,
+  nextParent: Node,
+  currentPath: readonly Element[],
+  nextPath: readonly Element[],
+  depth = 0,
+): boolean => {
+  const currentChild = currentPath[depth];
+  const nextChild = nextPath[depth];
+  if (!currentChild || !nextChild || currentChild.tagName !== nextChild.tagName) return false;
+
+  const nextChildren = [...nextParent.childNodes];
+  const nextChildIndex = nextChildren.indexOf(nextChild);
+  if (nextChildIndex < 0 || currentChild.parentNode !== currentParent) return false;
+
+  for (const child of [...currentParent.childNodes]) if (child !== currentChild) child.remove();
+
+  const before = document.createDocumentFragment();
+  for (const child of nextChildren.slice(0, nextChildIndex)) before.append(child.cloneNode(true));
+  currentParent.insertBefore(before, currentChild);
+
+  const after = document.createDocumentFragment();
+  for (const child of nextChildren.slice(nextChildIndex + 1)) after.append(child.cloneNode(true));
+  currentParent.insertBefore(after, currentChild.nextSibling);
+
+  const isReaderFrame = depth === currentPath.length - 1;
+  synchronizeAttributes(currentChild, nextChild, isReaderFrame);
+  if (isReaderFrame) return depth === nextPath.length - 1;
+  return replaceSiblingsAroundPath(currentChild, nextChild, currentPath, nextPath, depth + 1);
+};
+
+const replaceApplicationMarkup = (markup: string): void => {
+  const currentReader = app.querySelector<HTMLIFrameElement>(readerDocumentSelector);
+  const currentDocument = currentReader?.dataset.readerDocument;
+  if (!currentReader || !currentDocument) {
+    app.innerHTML = markup;
+    return;
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  const nextReader = template.content.querySelector<HTMLIFrameElement>(readerDocumentSelector);
+  if (!nextReader || nextReader.dataset.readerDocument !== currentDocument || !readerDocumentsMatch(currentReader, nextReader)) {
+    app.innerHTML = markup;
+    return;
+  }
+
+  const currentPath = pathFromRoot(app, currentReader);
+  const nextPath = pathFromRoot(template.content, nextReader);
+  if (!currentPath || !nextPath || currentPath.length !== nextPath.length
+    || !replaceSiblingsAroundPath(app, template.content, currentPath, nextPath)) {
+    app.innerHTML = markup;
+  }
+};
+
 const render = (): void => {
   const focused = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.focusKey : undefined;
   const selection = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
@@ -1019,7 +1115,7 @@ const render = (): void => {
   app.setAttribute("aria-busy", state.phase === "loading" || isBusy() ? "true" : "false");
   if (state.phase === "loading") app.innerHTML = renderLoading();
   else if (state.phase === "error") app.innerHTML = renderFatalError();
-  else app.innerHTML = renderApplication();
+  else replaceApplicationMarkup(renderApplication());
   decorateStableFocusKeys();
   applyBilingualSemantics(app);
   for (const [selector, testId] of [
@@ -1245,6 +1341,8 @@ function renderRegexBuilder(key: string): string {
 function renderActivePage(): string {
   switch (state.activeTab) {
     case "mail": return renderMailPage();
+    case "drafts": return renderDraftsPage();
+    case "outbox": return renderOutboxPage();
     case "contacts": return renderContactsPage();
     case "calendar": return renderCalendarPage();
     case "tasks": return renderTasksPage();
@@ -1254,6 +1352,35 @@ function renderActivePage(): string {
     case "notifications": return renderNotificationsPage();
     case "tools": return renderToolsPage();
   }
+}
+
+const refreshDraftAndOutbox = async (): Promise<void> => {
+  const account = activeAccount();
+  if (!account) return;
+  const [localDrafts, outboxItems] = await Promise.all([api.listDrafts(account.id), api.listOutbox(account.id)]);
+  state.localDrafts = localDrafts;
+  state.outboxItems = outboxItems;
+  render();
+};
+
+function renderDraftsPage(): string {
+  const account = activeAccount();
+  if (!account) return renderNoAccount();
+  return `<section class="standard-page" id="panel-drafts" role="tabpanel" aria-labelledby="tab-drafts">
+    ${renderPageHeader("LOCAL DRAFTS", tx("Drafts", "草稿"), tx("Saved locally and ready to reopen, edit, or delete.", "儲存喺本機，可以重新開啟、編輯或者刪除。"), "archive")}
+    <div class="page-tools"><button class="button button--filled" type="button" data-action="compose">${icon("compose")}<span>${escapeHtml(tx("New draft", "新草稿"))}</span></button><button class="button button--outlined" type="button" data-action="refresh-drafts">${icon("refresh")}<span>${escapeHtml(tx("Refresh", "重新整理"))}</span></button></div>
+    <div class="record-list">${state.localDrafts.length ? state.localDrafts.map(draft => `<article class="history-card" data-testid="draft-card"><span class="history-card__icon">${icon("archive")}</span><div><div class="record-meta"><span class="kind-badge">${escapeHtml(tx("Draft", "草稿"))}</span><span>${draft.recipientCount} ${escapeHtml(tx("recipients", "個收件人"))}</span></div><h2>${escapeHtml(draft.subject || tx("(No subject)", "（冇主旨）"))}</h2><p>${escapeHtml(draft.preview || tx("Empty message", "空白郵件"))}</p></div><div class="button-row"><button class="button button--text" type="button" data-action="open-draft" data-draft-id="${escapeHtml(draft.id)}">${escapeHtml(tx("Open", "開啟"))}</button><button class="button button--text" type="button" data-action="delete-draft" data-draft-id="${escapeHtml(draft.id)}">${escapeHtml(tx("Delete", "刪除"))}</button></div></article>`).join("") : renderRecordEmpty("history")}</div>
+  </section>`;
+}
+
+function renderOutboxPage(): string {
+  const account = activeAccount();
+  if (!account) return renderNoAccount();
+  return `<section class="standard-page" id="panel-outbox" role="tabpanel" aria-labelledby="tab-outbox">
+    ${renderPageHeader("DELIVERY QUEUE", tx("Outbox", "寄件匣"), tx("Queued messages stay visible until delivery succeeds or you move them back to drafts.", "排隊中嘅郵件會留喺度，直到傳送成功或者移返草稿。"), "send")}
+    <div class="page-tools"><button class="button button--outlined" type="button" data-action="refresh-outbox">${icon("refresh")}<span>${escapeHtml(tx("Refresh", "重新整理"))}</span></button></div>
+    <div class="record-list">${state.outboxItems.length ? state.outboxItems.map(item => `<article class="history-card" data-testid="outbox-card"><span class="history-card__icon">${icon("send")}</span><div><div class="record-meta"><span class="kind-badge">${escapeHtml(tx("Queued", "排隊中"))}</span><span>${item.attempts} ${escapeHtml(tx("attempts", "次嘗試"))}</span></div><h2>${escapeHtml(item.subject || tx("(No subject)", "（冇主旨）"))}</h2><p>${escapeHtml(item.lastError || item.preview || tx("Waiting for delivery.", "等緊傳送。"))}</p></div><div class="button-row"><button class="button button--text" type="button" data-action="retry-outbox" data-outbox-id="${escapeHtml(item.id)}">${escapeHtml(tx("Retry", "重試"))}</button><button class="button button--text" type="button" data-action="cancel-outbox" data-outbox-id="${escapeHtml(item.id)}">${escapeHtml(tx("Move to drafts", "移返草稿"))}</button></div></article>`).join("") : renderRecordEmpty("history")}</div>
+  </section>`;
 }
 
 function filteredMessages(): MessageSummary[] {
@@ -1684,7 +1811,7 @@ function renderReaderPane(): string {
     </header>
     ${detail.attachments.length ? `<section class="attachment-strip" aria-label="${escapeHtml(tx("Attachments", "附件"))}"><div class="attachment-strip__heading"><strong>${icon("attach")} ${detail.attachments.length} ${escapeHtml(tx("attachments", "個附件"))}</strong><button class="button button--text" type="button" data-action="save-all-attachments" ${isBusy("save-attachment") ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Save all", "全部儲存"))}</span></button></div>${detail.attachments.map((item, index) => `<span class="attachment-chip"><span><strong>${escapeHtml(item.filename)}</strong><small>${escapeHtml(formatBytes(item.size))} · ${escapeHtml(item.contentType)}</small></span><button class="icon-button icon-button--small" type="button" data-action="save-attachment" data-attachment-index="${index}" aria-label="${escapeHtml(tx(`Save ${item.filename}`, `儲存 ${item.filename}`))}" ${isBusy("save-attachment") ? "disabled" : ""}>${icon("download")}</button></span>`).join("")}</section>` : ""}
     <div class="reader-security-note">${icon("check")}<span>${escapeHtml(tx("Message HTML is isolated in a sandbox. Scripts, forms, remote images, and same-origin access are blocked.", "郵件 HTML 放喺沙盒隔離。指令碼、表單、遠端圖片同同源存取全部被封鎖。"))}</span></div>
-    <iframe class="message-frame" data-testid="reader-iframe" sandbox="allow-popups" referrerpolicy="no-referrer" title="${escapeHtml(tx(`Message body: ${detail.subject}`, `郵件內容：${detail.subject}`))}" srcdoc="${escapeHtml(safeMessageDocument(detail))}"></iframe>
+    <iframe class="message-frame" data-testid="reader-iframe" data-reader-document="${readerDocumentRevision}" sandbox="allow-popups" referrerpolicy="no-referrer" title="${escapeHtml(tx(`Message body: ${detail.subject}`, `郵件內容：${detail.subject}`))}" srcdoc="${escapeHtml(safeMessageDocument(detail))}"></iframe>
   </article>`;
 }
 
@@ -2953,6 +3080,7 @@ const saveComposerDraft = async (): Promise<void> => {
   const submittedFingerprint = composeFingerprint(submitted);
   await withBusy("save-draft", async () => {
     const saved = await api.saveDraft(submitted);
+    await refreshDraftAndOutbox();
     const composerStillCurrent = state.compose === composerAtSubmit;
     if (composerStillCurrent) captureComposer();
     let newerEditsRemain = false;
@@ -3311,6 +3439,34 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       render();
       break;
     case "compose": openComposer(); break;
+    case "refresh-drafts": await refreshDraftAndOutbox(); break;
+    case "refresh-outbox": await refreshDraftAndOutbox(); break;
+    case "open-draft": {
+      const account = activeAccount(); const id = button.dataset.draftId;
+      if (!account || !id) break;
+      const draft = await api.getDraft(account.id, id);
+      state.compose = { draft, showCopies: Boolean(draft.cc.length || draft.bcc.length), minimized: false, cleanBaseline: composeFingerprint(draft) };
+      render();
+      break;
+    }
+    case "delete-draft": {
+      const account = activeAccount(); const id = button.dataset.draftId;
+      if (!account || !id) break;
+      await api.deleteDraft(account.id, id); await refreshDraftAndOutbox();
+      break;
+    }
+    case "retry-outbox": {
+      const account = activeAccount(); const id = button.dataset.outboxId;
+      if (!account || !id) break;
+      await api.retryOutbox(account.id, id); await refreshDraftAndOutbox();
+      break;
+    }
+    case "cancel-outbox": {
+      const account = activeAccount(); const id = button.dataset.outboxId;
+      if (!account || !id) break;
+      await api.cancelOutbox(account.id, id); await refreshDraftAndOutbox();
+      break;
+    }
     case "sync": await syncCurrentAccount(); break;
     case "select-folder": if (button.dataset.folderPath) await loadFolder(button.dataset.folderPath); break;
     case "select-message": {
