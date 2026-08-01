@@ -2,6 +2,8 @@ export interface ChangelogEntry {
   version: string;
   date: string;
   title: string;
+  codeName?: string;
+  image?: string;
   changes: Array<{ category: string; detail: string }>;
 }
 
