@@ -11,4 +11,7 @@ describe("external link safety", () => {
     expect(assessExternalLink("not a url").risk).toBe("dangerous");
     expect(assessExternalLink("https://example.com/\u202eexe").reasons).toContain("bidi-control");
   });
+  it("flags visible host text that differs from the destination", () => {
+    expect(assessExternalLink("https://accounts.example.com/login", "https://example.com").reasons).toContain("visible-host-mismatch");
+  });
 });
