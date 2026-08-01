@@ -264,6 +264,9 @@ const DEFAULT_PREFERENCES: Preferences = {
   narratorLanguage: "en",
   nativeNotificationsEnabled: false,
 };
+const DEFAULT_APPEARANCE: Pick<Preferences, "theme" | "density" | "accent" | "fontFamily" | "fontScale" | "fontWeight"> = {
+  theme: "system", density: "comfortable", accent: "#6750A4", fontFamily: "Segoe UI Variable", fontScale: 1, fontWeight: 400,
+};
 
 const defaultTabs = (): TabPreferences => ({
   order: [...ALL_TAB_IDS],
@@ -2026,6 +2029,7 @@ function renderAppearanceSettings(prefs: Preferences): string {
       <label class="field field--range"><span>${escapeHtml(tx("Font weight", "字體粗幼"))} <output data-pref-output="fontWeight">${prefs.fontWeight}</output></span><input type="range" min="300" max="700" step="50" value="${prefs.fontWeight}" data-pref="fontWeight"/></label>
     </div>
     <div class="appearance-preview"><span class="avatar">Aa</span><div><strong>${escapeHtml(tx("Live preview", "即時預覽"))}</strong><p>${escapeHtml(tx("Changes apply to the whole interface while you adjust them.", "調整嗰陣，變更會即時套用到成個介面。"))}</p></div><button class="button button--tonal" type="button">${escapeHtml(tx("Material button", "Material 按鈕"))}</button></div>
+    <div class="button-row appearance-actions"><button class="button button--outlined" type="button" data-action="reset-appearance">${icon("refresh")}<span>${escapeHtml(tx("Reset appearance", "重設外觀"))}</span></button></div>
   </section>`;
 }
 
@@ -3791,6 +3795,11 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     }
     case "open-editor":
       await withBusy("open-editor", async () => { await api.openExternalEditor(); pushToast("success", "Editor launched", "The configured editor accepted the project path.", "編輯器已啟動", "已設定編輯器接受咗專案路徑。 "); });
+      break;
+    case "reset-appearance":
+      savePreferencesPatch(DEFAULT_APPEARANCE);
+      pushToast("success", "Appearance reset", "Theme, density, accent, font, scale, and weight returned to their defaults.", "外觀已重設", "主題、密度、重點色、字款、比例同粗幼已還原預設。 ");
+      render();
       break;
     case "reset-tabs": state.tabPreferences = defaultTabs(); state.activeTab = "mail"; persistTabs(); render(); break;
     case "toggle-notification-read": {

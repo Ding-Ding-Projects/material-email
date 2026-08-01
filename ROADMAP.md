@@ -72,6 +72,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] Replace or complement JSON with a migration-tested indexed store such as SQLite
 - [ ] Complete Git-backed history diff, retention, pruning, labeling, and every-record restore UI
 - [x] Add searchable semantic history action counts, date ranges, and export foundation
+- [x] Add a persisted global appearance reset for the live theme controls
 - [ ] Complete appearance editing for every element, including picker self-customization and import/export
 - [x] Add persisted tab pinning, fixed grouping, overflow, reviewed bulk close, and four independent discovery searches
 - [x] Add a factual in-app changelog covering each released version
