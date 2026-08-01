@@ -141,6 +141,10 @@ try {
     releaseDate: metadata.releaseDate,
     installedExecutableRemoved: true,
     retainedUserData: true,
+    baselineVersion: null,
+    candidateVersion: artifact.version,
+    upgradeVerified: false,
+    retainedAfterUpgrade: false,
     deleteAppDataOnUninstall: false,
   };
 } finally {
