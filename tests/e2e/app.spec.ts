@@ -311,6 +311,59 @@ test("persists Material settings and demo state across a real Electron restart",
   await page.screenshot({ path: "test-results/material-email-live.png", fullPage: true });
 });
 
+test("filters and copies verified releases from the live Changelog page", async () => {
+  await ensureDemo();
+  await openWorkspaceTab(/^Changelog/i, "changelog-page");
+
+  const changelog = page.getByTestId("changelog-page");
+  const cards = changelog.locator(".changelog-card");
+  const releases = [
+    { version: "0.8.1", title: "Windows desktop foundation", codeName: "Classic Har Gow · 蝦餃" },
+    { version: "0.10.1", title: "Drafts and reading continuity", codeName: "Scallop Har Gow · 帶子蝦餃" },
+    { version: "0.11.1", title: "Queue recovery and privacy-safe notifications", codeName: "Bamboo Shoot Har Gow · 筍尖蝦餃" },
+  ];
+
+  await expect(cards).toHaveCount(releases.length);
+  for (const [index, release] of releases.entries()) {
+    const card = cards.nth(index);
+    await expect(card).toContainText(`VERSION ${release.version}`);
+    await expect(card.getByRole("heading", { name: release.title })).toBeVisible();
+    await expect(card.getByRole("img", { name: release.codeName })).toBeVisible();
+    await expect(card.locator("time")).toHaveAttribute("datetime", "2026-08-01");
+  }
+
+  const fromDate = changelog.locator('[data-changelog-date="from"]');
+  const copyButton = changelog.getByRole("button", { name: /Copy filtered view/i });
+  const exportButton = changelog.getByRole("button", { name: /Export filtered notes/i });
+  await fromDate.fill("2026-08-02");
+  await expect(cards).toHaveCount(0);
+  await expect(changelog.getByText(/^0 matching released versions$/i)).toBeVisible();
+
+  await fromDate.fill("2026-02-31");
+  await expect(fromDate).toHaveValue("2026-02-31");
+  await expect(fromDate).toHaveAttribute("aria-invalid", "true");
+  await expect(changelog.getByRole("alert")).toContainText(/Enter a real calendar date/i);
+  await expect(copyButton).toBeDisabled();
+  await expect(exportButton).toBeDisabled();
+
+  await fromDate.fill("");
+  const search = changelog.locator('[data-search-anchor="changelog"] input[type="search"]');
+  await search.fill("Queue recovery");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toContainText("VERSION 0.11.1");
+  await expect(copyButton).toBeEnabled();
+
+  await application.evaluate(({ clipboard }) => clipboard.writeText(""));
+  await copyButton.click();
+  await expect(page.getByTestId("toast-region")).toContainText(/Filtered changelog copied/i);
+  const copied = await application.evaluate(({ clipboard }) => clipboard.readText());
+  expect(copied).toContain("# Material Email changelog");
+  expect(copied).toContain("Search: Queue recovery");
+  expect(copied).toContain("## 0.11.1 — Queue recovery and privacy-safe notifications");
+  expect(copied).not.toContain("## 0.8.1");
+  expect(copied).not.toContain("## 0.10.1");
+});
+
 test("creates, edits, searches, deletes, restores, and persists contacts and mailing lists", async () => {
   test.slow();
   await ensureDemo();
