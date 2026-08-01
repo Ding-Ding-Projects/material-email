@@ -311,6 +311,23 @@ test("persists Material settings and demo state across a real Electron restart",
   await page.screenshot({ path: "test-results/material-email-live.png", fullPage: true });
 });
 
+test("resets live appearance controls without changing language", async () => {
+  await ensureDemo();
+  await page.getByRole("tab", { name: /Settings/i }).click();
+  await expect(page.getByTestId("settings-page")).toBeVisible();
+  await page.locator('[data-pref="theme"]').selectOption("dark");
+  await page.locator('[data-pref="density"]').selectOption("relaxed");
+  await page.locator('[data-pref="fontScale"]').fill("1.5");
+  await page.locator('[data-pref="fontWeight"]').fill("700");
+  await page.locator('[data-pref="language"]').selectOption("bilingual");
+  await page.getByRole("button", { name: /Reset appearance/i }).click();
+  await expect(page.locator('[data-pref="theme"]')).toHaveValue("system");
+  await expect(page.locator('[data-pref="density"]')).toHaveValue("comfortable");
+  await expect(page.locator('[data-pref="fontScale"]')).toHaveValue("1");
+  await expect(page.locator('[data-pref="fontWeight"]')).toHaveValue("400");
+  await expect(page.locator('[data-pref="language"]')).toHaveValue("bilingual");
+});
+
 test("keeps native Windows notifications opt-in and persists the setting", async () => {
   await ensureDemo();
   await openWorkspaceTab(/^Settings/i, "settings-page");
