@@ -2,7 +2,7 @@
 
 ## Status
 
-**Focused implementation and real-Electron verification complete.** App-owned caption buttons now delegate to the native Electron window, synchronize maximize/restore state, persist validated normal bounds and maximized state, and review unsaved work before close. Native screen-reader output, Windows high contrast, multiple physical monitors, and the 100/125/150/200% display-scale matrix remain open.
+**Focused implementation and real-Electron verification complete.** App-owned caption buttons now delegate to the native Electron window, synchronize maximize/restore state, persist validated normal bounds and maximized state, review unsaved work before close, and retain system-color borders plus visible keyboard focus under Chromium forced-colors emulation. Native screen-reader output, native Windows High Contrast, multiple physical monitors, and the 100/125/150/200% display-scale matrix remain open.
 
 ## Behavior
 
@@ -38,7 +38,9 @@ The renderer never receives filesystem access or an unrestricted Electron object
 
 Focused unit coverage validates the schema, coordinate pairing, supported bounds, multi-display fallback, oversized clamping, serialized restart persistence, and corrupt-primary preservation. Renderer localization coverage exercises all four actions and inverse bilingual humor levels. The focused real-Electron suite passes 3 / 3 scenarios for accessible names, sequential Tab reachability, the computed focus indicator, minimize IPC routing, native maximize/restore synchronization, normal-bounds and maximized-state restoration after a full restart, bilingual English-level-1/Cantonese-level-5 copy, dirty-close cancellation with focus/data preservation, and a native `BrowserWindow.close()` request that cannot bypass the reviewed decision.
 
-This is scoped evidence, not packaged Windows accessibility certification.
+A separate forced-colors scenario verifies that the renderer media query is active and that keyboard traversal retains a computed solid 3 px system-color focus indicator plus visible caption-button borders.
+
+This is scoped Chromium renderer evidence, not native Windows High Contrast or packaged accessibility certification.
 
 ## Suggested articles
 

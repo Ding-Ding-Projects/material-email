@@ -1391,6 +1391,31 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 @media (forced-colors: active) {
   :root { --primary: Highlight; --on-primary: HighlightText; --primary-container: Canvas; --on-primary-container: CanvasText; --secondary-container: Canvas; --on-secondary-container: CanvasText; --surface: Canvas; --surface-container-lowest: Canvas; --surface-container-low: Canvas; --surface-container: Canvas; --surface-container-high: Canvas; --surface-container-highest: Canvas; --on-surface: CanvasText; --on-surface-variant: CanvasText; --outline: CanvasText; --outline-variant: GrayText; }
   button, input, select, textarea, .settings-card, .tool-card, .notification-card, .history-card, .changelog-card, .search-field, .workspace-tab, .toast, .pim-card, .pim-detail-pane, .pim-editor-sheet, .pim-transaction, .deleted-pim { forced-color-adjust: auto; border-color: ButtonText; }
+  :focus-visible { outline-color: Highlight; }
+  .window-control-button,
+  .notification-card__actions :is(.button, .icon-button),
+  .appearance-presets :is(.button, input, select),
+  .changelog-calendar :is(.button, input, select) { border: 1px solid ButtonText; }
+  .window-control-button:focus-visible { outline: 3px solid Highlight; outline-offset: -4px; }
+  .notification-card__actions :is(.button, .icon-button):focus-visible,
+  .appearance-presets :is(.button, input, select):focus-visible,
+  .changelog-calendar :is(.button, input, select):focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
+  .appearance-presets .field:has(:focus-visible),
+  .changelog-calendar label:has(:focus-visible) { outline: 3px solid Highlight; outline-offset: 2px; }
+  .window-control-button--close:hover,
+  .window-control-button--close:active { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+  .notification-card.is-read { opacity: 1; }
+  .notification-card.is-dismissed { border-color: GrayText; }
+  .notification-card__actions [aria-pressed="true"],
+  .assist-chip.is-selected { forced-color-adjust: none; border: 2px solid Highlight; background: Highlight; color: HighlightText; }
+  .appearance-presets,
+  .changelog-calendar { border-color: CanvasText; }
+  .changelog-calendar__day.is-in-range { forced-color-adjust: none; border: 2px solid Highlight; background: Canvas; color: CanvasText; }
+  .changelog-calendar__day.is-range-start,
+  .changelog-calendar__day.is-range-end { background: Highlight; color: HighlightText; }
+  .changelog-calendar__day.is-range-start:focus-visible,
+  .changelog-calendar__day.is-range-end:focus-visible { outline: 3px solid HighlightText; outline-offset: 0; }
+  .changelog-calendar__day.is-today:not(.is-range-start):not(.is-range-end) { border-color: CanvasText; }
   .folder-row.is-selected, .workspace-tab.is-active, .space-button.is-active { outline: 2px solid Highlight; }
   .icon { stroke: currentColor; }
   .message-row.is-unread::before { background: Highlight; }
