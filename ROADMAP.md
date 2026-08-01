@@ -42,6 +42,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Bounded conservative vCard 3.0/4.0 import and deterministic export
 - [x] Local Home calendar, events, recurrence metadata, attendees, alarms, and tasks
 - [x] Bounded local CardDAV/CalDAV/ICS profile validation, deterministic capability/state reporting, and vCard/iCalendar interchange limits with explicit no-network/no-credential facts
+- [x] Atomic local iCalendar VEVENT/VTODO import with explicit duplicate handling and selected/all normalized CRLF export through native dialogs
 - [x] Generation-based PIM persistence with validated recovery copies and cross-instance/process locking
 - [x] Task refresh ordering that rejects stale or edit-overwriting results
 - [x] Windows x64 NSIS packaging configuration
@@ -53,7 +54,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Give command-palette search its own plain-text-first model, adjacent anchored regex builder, invalid-pattern execution guard, and focused real-Electron proof
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
 - [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 49 files / 253 tests on the current tree; the focused message-cryptography trust-state and POP3 foundations each passed 1 / 1 real-Electron scenario; broader previously recorded Electron evidence remains listed in `HANDOFF.md`)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 51 files / 268 tests on the current tree; focused local-iCalendar controls passed 1 / 1 real-Electron scenario; broader evidence remains listed in `HANDOFF.md`)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling matrices (the primary workspace-tab Arrow/Home/End slice alone is verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
@@ -78,7 +79,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Local attachment quarantine with reviewed batch routing and accessible bilingual release/delete decisions
 - [ ] Antivirus or malware-content scanner integration and provider-backed reputation checks
 - [x] Native Windows notifications with privacy controls (opt-in generic summaries)
-- [x] Renderer/preload/IPC integration for contacts, mailing lists, calendars, tasks, vCard actions, and transaction recovery
+- [x] Renderer/preload/IPC integration for contacts, mailing lists, calendars, tasks, vCard/local-iCalendar actions, and transaction recovery
 - [ ] Live CardDAV/CalDAV/ICS/task-provider discovery, authentication, credential storage, synchronization, conflicts, recurrence expansion, and broad interoperability (the local validation/interchange foundation is not provider proof)
 - [ ] OpenPGP and S/MIME signing/encryption with clear trust UX
 - [ ] Audited OpenPGP/S/MIME libraries, OS-backed key/certificate lifecycle, real signing/encryption/decryption/verification, revocation/expiry handling, and provider interoperability (the metadata-only trust-state foundation is not completion evidence)

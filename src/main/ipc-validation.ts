@@ -12,6 +12,7 @@ import {
   type ComposeDraft,
   type CachedMailSearchQuery,
   type LocalHistoryPruneRequest,
+  type ICalendarExportRequest,
   type PimProviderProfileInput,
   type Pop3AccountOptions,
   type Preferences,
@@ -92,6 +93,23 @@ export const pimProviderProfileInputSchema = z.strictObject({
   endpointUrl: z.string().max(PIM_PROVIDER_ENDPOINT_LIMIT),
   authMode: z.enum(["none", "basic", "oauth2"]),
 }) as z.ZodType<PimProviderProfileInput>;
+
+const uniqueValues = <Value>(values: readonly Value[]): boolean => new Set(values).size === values.length;
+const pimIcsUidSchema = identifierSchema.max(255);
+export const iCalendarExportRequestSchema = z.discriminatedUnion("scope", [
+  z.strictObject({
+    scope: z.literal("all"),
+    entityKinds: z.array(z.enum(["calendar-event", "task"])).min(1).max(2).refine(uniqueValues, "Record types must be unique."),
+  }),
+  z.strictObject({
+    scope: z.literal("selected"),
+    eventUids: z.array(pimIcsUidSchema).max(5_000).refine(uniqueValues, "Event UIDs must be unique."),
+    taskUids: z.array(pimIcsUidSchema).max(5_000).refine(uniqueValues, "Task UIDs must be unique."),
+  }).superRefine((value, context) => {
+    const count = value.eventUids.length + value.taskUids.length;
+    if (count < 1 || count > 5_000) context.addIssue({ code: "custom", message: "Select from 1 through 5000 records." });
+  }),
+]) as z.ZodType<ICalendarExportRequest>;
 
 export const accountDraftSchema = z.union([
   z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("imap").default("imap") }),
@@ -210,6 +228,8 @@ export const ipcPayloadSchemas = {
   tlsCertificateInspection: z.tuple([tlsCertificateInspectionSchema]),
   pop3Foundation: z.tuple([pop3AccountOptionsSchema]),
   pimProviderFoundation: z.tuple([pimProviderProfileInputSchema]),
+  pimIcsImport: z.tuple([z.enum(["skip", "update"])]),
+  pimIcsExport: z.tuple([iCalendarExportRequestSchema]),
   accountDraft: z.tuple([accountDraftSchema]),
   accountId: z.tuple([identifierSchema]),
   accountFolder: z.tuple([identifierSchema, folderPathSchema]),

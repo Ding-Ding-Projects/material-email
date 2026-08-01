@@ -518,6 +518,27 @@ export interface VCardImportResult {
   unchanged: number;
 }
 
+export type ICalendarDuplicatePolicy = "skip" | "update";
+
+export interface ICalendarImportResult {
+  events: CalendarEvent[];
+  tasks: Task[];
+  created: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+}
+
+export type ICalendarExportRequest =
+  | { scope: "all"; entityKinds: readonly ("calendar-event" | "task")[] }
+  | { scope: "selected"; eventUids: readonly string[]; taskUids: readonly string[] };
+
+export interface ICalendarExportResult {
+  status: "saved" | "cancelled";
+  eventCount: number;
+  taskCount: number;
+}
+
 export interface TaskRefreshResult {
   requestId: number;
   applied: boolean;

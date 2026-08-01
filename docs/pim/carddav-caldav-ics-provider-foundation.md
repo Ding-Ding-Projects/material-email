@@ -17,7 +17,7 @@ The main process validates a typed provider profile, returns a fixed capability 
 
 ## Import and export boundary
 
-The provider module includes an isolated local interchange inspector and export normalizer. This is a content boundary, not a renderer import command or sync pipeline.
+The provider module includes the local interchange inspector and export normalizer used by the record-level local iCalendar pipeline. It remains a content boundary, not a synchronization pipeline.
 
 - Input is limited to 1 MiB, 20,000 physical lines, and 8,192 bytes per physical line.
 - vCard input must contain 1–2,000 balanced `VCARD` components, each declaring version 3.0 or 4.0.
@@ -26,7 +26,7 @@ The provider module includes an isolated local interchange inspector and export 
 - Scheduling `METHOD` payloads, iCalendar attachments, unsupported components, malformed nesting, NUL bytes, and oversized input are refused.
 - Valid export text is normalized to CRLF with a single final line ending after the same boundary checks pass.
 
-The existing vCard service remains the record-level contact import/export implementation. No record-level ICS import/export is connected to this Settings panel.
+Calendar and Tasks now connect record-level local ICS import/export through native dialogs. This provider-profile Settings panel still validates metadata only and starts no file or network operation.
 
 ## Configuration
 
@@ -59,3 +59,4 @@ These checks do not prove DNS, TLS, provider login, server discovery, ETags, syn
 - [Calendars and events](calendars-and-events.md)
 - [Tasks and refresh ordering](tasks-and-refresh-ordering.md)
 - [PIM persistence and transaction history](persistence-and-transactions.md)
+- [Local iCalendar import and export](icalendar-import-export.md)

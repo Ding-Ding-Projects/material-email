@@ -740,6 +740,10 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .pim-surface { min-width: 0; }
 .pim-toolbar { flex-wrap: wrap; }
 .pim-toolbar .page-search { min-width: min(100%, 330px); }
+.ics-policy { min-width: 150px; }
+.record-select { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding-inline: 8px; color: var(--on-surface-variant); font-size: 0.72rem; cursor: pointer; }
+.record-select input { width: 18px; height: 18px; accent-color: var(--primary); }
+.record-select:has(input:focus-visible) { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: var(--radius-sm); }
 .local-truth-note {
   display: flex;
   align-items: flex-start;

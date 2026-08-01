@@ -11,6 +11,8 @@ import type {
   CreateContactInput,
   CreateMailingListInput,
   CreateTaskInput,
+  ICalendarDuplicatePolicy,
+  ICalendarExportRequest,
   MailingListPatch,
   TaskPatch,
   TransactionFilter,
@@ -158,6 +160,8 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleTrusted("pim:contacts:restore", (uid: string, transactionId?: string) => service.restoreContact(uid, transactionId));
   handleTrusted("pim:vcard:import", () => service.importVCard());
   handleTrusted("pim:vcard:export", (contactUids?: string[], mailingListUids?: string[]) => service.exportVCard(contactUids, mailingListUids));
+  handleValidated("pim:ics:import", ipcPayloadSchemas.pimIcsImport, ([duplicatePolicy]) => service.importICalendar(duplicatePolicy as ICalendarDuplicatePolicy));
+  handleValidated("pim:ics:export", ipcPayloadSchemas.pimIcsExport, ([request]) => service.exportICalendar(request as ICalendarExportRequest));
   handleTrusted("pim:mailing-lists:list", () => service.listMailingLists());
   handleTrusted("pim:mailing-lists:members", (uid: string) => service.listMailingListMembers(uid));
   handleTrusted("pim:mailing-lists:create", (input: CreateMailingListInput) => service.createMailingList(input));

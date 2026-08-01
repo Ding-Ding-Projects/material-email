@@ -15,6 +15,8 @@ import type {
   CreateContactInput,
   CreateMailingListInput,
   CreateTaskInput,
+  ICalendarDuplicatePolicy,
+  ICalendarExportRequest,
   FolderSummary,
   HistoryRecord,
   LocalRevision,
@@ -274,6 +276,9 @@ interface RendererState {
   mailingLists: MailingList[];
   calendarEvents: CalendarEvent[];
   tasks: Task[];
+  selectedCalendarEventUids: Set<string>;
+  selectedTaskUids: Set<string>;
+  icsDuplicatePolicy: ICalendarDuplicatePolicy;
   pimTransactions: PimTransaction[];
   pimHistoryResults: PimTransaction[] | null;
   pimLoaded: boolean;
@@ -421,6 +426,9 @@ const state: RendererState = {
   mailingLists: [],
   calendarEvents: [],
   tasks: [],
+  selectedCalendarEventUids: new Set(),
+  selectedTaskUids: new Set(),
+  icsDuplicatePolicy: "skip",
   pimTransactions: [],
   pimHistoryResults: null,
   pimLoaded: false,
@@ -786,6 +794,8 @@ const refreshPimData = async (): Promise<void> => {
   state.mailingLists = mailingLists;
   state.calendarEvents = calendarEvents;
   state.tasks = tasks;
+  state.selectedCalendarEventUids = new Set([...state.selectedCalendarEventUids].filter(uid => calendarEvents.some(event => event.uid === uid)));
+  state.selectedTaskUids = new Set([...state.selectedTaskUids].filter(uid => tasks.some(task => task.uid === uid)));
   state.pimTransactions = transactions;
   state.pimLoaded = true;
   state.pimLoadError = "";
@@ -1882,7 +1892,8 @@ function renderCalendarPage(): string {
   const events = [...filteredCalendarEvents()].sort((left, right) => Date.parse(left.start.value) - Date.parse(right.start.value));
   return `<section class="standard-page pim-page" data-testid="calendar-page" id="panel-calendar" role="tabpanel" aria-labelledby="tab-calendar">
     ${renderPageHeader("HOME · LOCAL", tx("Calendar", "日曆"), tx("Structured events are stored in the local Home calendar. Recurrence metadata is preserved but occurrences are not expanded here.", "結構化事件儲存喺本機 Home 日曆。重複 metadata 會保留，但呢度唔會展開每次出現。"), "calendar")}
-    <div class="page-tools pim-toolbar"><div class="page-search" data-testid="calendar-search">${renderSearchField("calendar-events", tx("Search title, location, description, or status", "搜尋標題、地點、描述或者狀態"))}</div><button class="button button--filled" data-testid="add-calendar-event" type="button" data-action="open-pim-editor" data-pim-kind="calendar-event">${icon("calendar")}<span>${escapeHtml(tx("New event", "新增事件"))}</span></button></div>
+    <div class="page-tools pim-toolbar"><div class="page-search" data-testid="calendar-search">${renderSearchField("calendar-events", tx("Search title, location, description, or status", "搜尋標題、地點、描述或者狀態"))}</div><label class="field ics-policy"><span>${escapeHtml(tx("Duplicate UIDs", "重複 UID"))}</span><select data-ics-duplicate-policy><option value="skip" ${state.icsDuplicatePolicy === "skip" ? "selected" : ""}>${escapeHtml(tx("Skip safely", "安全略過"))}</option><option value="update" ${state.icsDuplicatePolicy === "update" ? "selected" : ""}>${escapeHtml(tx("Update matching type", "更新同類記錄"))}</option></select></label><button class="button button--outlined" data-testid="import-calendar-ics" type="button" data-action="import-ics">${icon("download")}<span>${escapeHtml(tx("Import ICS", "匯入 ICS"))}</span></button><button class="button button--outlined" data-testid="export-selected-events-ics" type="button" data-action="export-selected-ics" data-ics-kind="calendar-event" ${state.selectedCalendarEventUids.size ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export selected", "匯出所選"))}</span></button><button class="button button--outlined" data-testid="export-all-events-ics" type="button" data-action="export-all-ics" data-ics-kind="calendar-event" ${state.calendarEvents.length ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export all", "全部匯出"))}</span></button><button class="button button--filled" data-testid="add-calendar-event" type="button" data-action="open-pim-editor" data-pim-kind="calendar-event">${icon("calendar")}<span>${escapeHtml(tx("New event", "新增事件"))}</span></button></div>
+    <p class="local-truth-note" data-testid="calendar-ics-boundary">${icon("info")}<span>${escapeHtml(tx("ICS import is local-only, UTF-8, atomic, and bounded to 1 MiB / 5,000 records. Skip is the safe default; update changes only an active record with the same UID and type. Export uses normalized CRLF iCalendar 2.0 text.", "ICS 匯入只限本機、UTF-8、原子處理，同時限制為 1 MiB／5,000 筆記錄。安全預設係略過；更新只會改相同 UID 同類型嘅現有記錄。匯出使用標準化 CRLF iCalendar 2.0 文字。"))}</span></p>
     <div class="pim-card-grid calendar-grid" data-testid="calendar-event-list">${events.length ? events.map(renderCalendarEventCard).join("") : renderPimEmpty(tx("No matching events", "冇符合嘅事件"), tx("Create a local event or adjust this calendar search.", "新增本機事件，或者調整日曆搜尋。"), "calendar")}</div>
     ${renderDeletedPimSection(["calendar-event"], tx("Recently deleted events", "最近刪除嘅事件"))}
   </section>`;
@@ -1890,7 +1901,13 @@ function renderCalendarPage(): string {
 
 function renderCalendarEventCard(event: CalendarEvent): string {
   const status = event.status === "confirmed" ? tx("Confirmed", "已確認") : event.status === "tentative" ? tx("Tentative", "暫定") : tx("Cancelled", "已取消");
-  return `<article class="pim-card event-card" data-testid="calendar-event-card" data-pim-uid="${escapeHtml(event.uid)}"><header><span class="event-date"><strong>${escapeHtml(event.start.kind === "date" ? event.start.value.slice(-2) : new Date(event.start.value).toLocaleDateString(preferences().language === "yue" ? "zh-HK" : "en-CA", { day: "2-digit" }))}</strong><small>${escapeHtml(event.start.kind === "date" ? event.start.value.slice(0, 7) : new Date(event.start.value).toLocaleDateString(preferences().language === "yue" ? "zh-HK" : "en-CA", { month: "short" }))}</small></span><div><h2>${escapeHtml(event.title)}</h2><p>${escapeHtml(formatTemporal(event.start))} — ${escapeHtml(formatTemporal(event.end))}</p></div><span class="status-chip status-chip--${event.status}">${escapeHtml(status)}</span></header><dl class="pim-details"><div><dt>${escapeHtml(tx("Location", "地點"))}</dt><dd>${escapeHtml(event.location ?? tx("Not set", "未設定"))}</dd></div><div><dt>${escapeHtml(tx("Calendar", "日曆"))}</dt><dd>Home · ${escapeHtml(tx("Local", "本機"))}</dd></div></dl>${event.description ? `<p class="pim-notes">${escapeHtml(event.description)}</p>` : ""}<footer><button class="button button--text" type="button" data-action="edit-pim" data-pim-kind="calendar-event" data-pim-uid="${escapeHtml(event.uid)}">${icon("edit")}<span>${escapeHtml(tx("Edit", "編輯"))}</span></button><span class="action-spacer"></span><button class="icon-button danger-action" type="button" data-action="request-delete-pim" data-pim-kind="calendar-event" data-pim-uid="${escapeHtml(event.uid)}" data-pim-label="${escapeHtml(event.title)}" aria-label="${escapeHtml(tx(`Delete ${event.title}`, `刪除 ${event.title}`))}">${icon("trash")}</button></footer></article>`;
+  const selected = state.selectedCalendarEventUids.has(event.uid);
+  return `<article class="pim-card event-card${selected ? " is-selected" : ""}" data-testid="calendar-event-card" data-pim-uid="${escapeHtml(event.uid)}">
+    <header><span class="event-date"><strong>${escapeHtml(event.start.kind === "date" ? event.start.value.slice(-2) : new Date(event.start.value).toLocaleDateString(preferences().language === "yue" ? "zh-HK" : "en-CA", { day: "2-digit" }))}</strong><small>${escapeHtml(event.start.kind === "date" ? event.start.value.slice(0, 7) : new Date(event.start.value).toLocaleDateString(preferences().language === "yue" ? "zh-HK" : "en-CA", { month: "short" }))}</small></span><div><h2>${escapeHtml(event.title)}</h2><p>${escapeHtml(formatTemporal(event.start))} — ${escapeHtml(formatTemporal(event.end))}</p></div><span class="status-chip status-chip--${event.status}">${escapeHtml(status)}</span></header>
+    <dl class="pim-details"><div><dt>${escapeHtml(tx("Location", "地點"))}</dt><dd>${escapeHtml(event.location ?? tx("Not set", "未設定"))}</dd></div><div><dt>${escapeHtml(tx("Calendar", "日曆"))}</dt><dd>Home · ${escapeHtml(tx("Local", "本機"))}</dd></div></dl>
+    ${event.description ? `<p class="pim-notes">${escapeHtml(event.description)}</p>` : ""}
+    <footer><label class="record-select"><input type="checkbox" data-ics-select="calendar-event" data-pim-uid="${escapeHtml(event.uid)}" ${selected ? "checked" : ""}/><span>${escapeHtml(tx("Select for export", "選擇匯出"))}</span></label><button class="button button--text" type="button" data-action="edit-pim" data-pim-kind="calendar-event" data-pim-uid="${escapeHtml(event.uid)}">${icon("edit")}<span>${escapeHtml(tx("Edit", "編輯"))}</span></button><span class="action-spacer"></span><button class="icon-button danger-action" type="button" data-action="request-delete-pim" data-pim-kind="calendar-event" data-pim-uid="${escapeHtml(event.uid)}" data-pim-label="${escapeHtml(event.title)}" aria-label="${escapeHtml(tx(`Delete ${event.title}`, `刪除 ${event.title}`))}">${icon("trash")}</button></footer>
+  </article>`;
 }
 
 function renderTasksPage(): string {
@@ -1898,7 +1915,8 @@ function renderTasksPage(): string {
   const tasks = [...filteredTasks()].sort((left, right) => (left.status === "completed" ? 1 : 0) - (right.status === "completed" ? 1 : 0) || (left.due?.value ?? "9999").localeCompare(right.due?.value ?? "9999"));
   return `<section class="standard-page pim-page" data-testid="tasks-page" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks">
     ${renderPageHeader("HOME · LOCAL", tx("Tasks", "工作"), tx("Track due dates, status, priority, and completion locally. Recurrence metadata is not expanded into instances.", "喺本機追蹤到期日、狀態、優先次序同完成度。重複 metadata 唔會展開成實例。"), "check")}
-    <div class="page-tools pim-toolbar"><div class="page-search" data-testid="tasks-search">${renderSearchField("tasks", tx("Search title, description, status, or priority", "搜尋標題、描述、狀態或者優先次序"))}</div><button class="button button--filled" data-testid="add-task" type="button" data-action="open-pim-editor" data-pim-kind="task">${icon("check")}<span>${escapeHtml(tx("New task", "新增工作"))}</span></button></div>
+    <div class="page-tools pim-toolbar"><div class="page-search" data-testid="tasks-search">${renderSearchField("tasks", tx("Search title, description, status, or priority", "搜尋標題、描述、狀態或者優先次序"))}</div><label class="field ics-policy"><span>${escapeHtml(tx("Duplicate UIDs", "重複 UID"))}</span><select data-ics-duplicate-policy><option value="skip" ${state.icsDuplicatePolicy === "skip" ? "selected" : ""}>${escapeHtml(tx("Skip safely", "安全略過"))}</option><option value="update" ${state.icsDuplicatePolicy === "update" ? "selected" : ""}>${escapeHtml(tx("Update matching type", "更新同類記錄"))}</option></select></label><button class="button button--outlined" data-testid="import-tasks-ics" type="button" data-action="import-ics">${icon("download")}<span>${escapeHtml(tx("Import ICS", "匯入 ICS"))}</span></button><button class="button button--outlined" data-testid="export-selected-tasks-ics" type="button" data-action="export-selected-ics" data-ics-kind="task" ${state.selectedTaskUids.size ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export selected", "匯出所選"))}</span></button><button class="button button--outlined" data-testid="export-all-tasks-ics" type="button" data-action="export-all-ics" data-ics-kind="task" ${state.tasks.length ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export all", "全部匯出"))}</span></button><button class="button button--filled" data-testid="add-task" type="button" data-action="open-pim-editor" data-pim-kind="task">${icon("check")}<span>${escapeHtml(tx("New task", "新增工作"))}</span></button></div>
+    <p class="local-truth-note" data-testid="tasks-ics-boundary">${icon("info")}<span>${escapeHtml(tx("The same local-only atomic ICS boundary applies here. Select tasks explicitly for a focused export, or export every task currently stored in Home.", "呢度使用同一個只限本機嘅原子 ICS 邊界。可以明確揀工作做精準匯出，或者匯出 Home 目前儲存嘅全部工作。"))}</span></p>
     <div class="pim-card-grid task-grid" data-testid="task-list">${tasks.length ? tasks.map(renderTaskCard).join("") : renderPimEmpty(tx("No matching tasks", "冇符合嘅工作"), tx("Create a task or adjust this task search.", "新增工作，或者調整工作搜尋。"), "check")}</div>
     ${renderDeletedPimSection(["task"], tx("Recently deleted tasks", "最近刪除嘅工作"))}
   </section>`;
@@ -1906,7 +1924,13 @@ function renderTasksPage(): string {
 
 function renderTaskCard(task: Task): string {
   const statusLabels: Record<Task["status"], string> = { "needs-action": tx("Needs action", "需要處理"), "in-progress": tx("In progress", "進行中"), completed: tx("Completed", "已完成"), cancelled: tx("Cancelled", "已取消") };
-  return `<article class="pim-card task-card${task.status === "completed" ? " is-completed" : ""}" data-testid="task-card" data-pim-uid="${escapeHtml(task.uid)}"><header><span class="task-check">${task.status === "completed" ? icon("check") : icon("tasks" as IconName)}</span><div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.due ? tx(`Due ${formatTemporal(task.due)}`, `到期日 ${formatTemporal(task.due)}`) : tx("No due date", "冇到期日"))}</p></div><span class="status-chip status-chip--${task.status}">${escapeHtml(statusLabels[task.status])}</span></header><div class="task-progress"><progress max="100" value="${task.percentComplete}" aria-label="${escapeHtml(tx("Task completion", "工作完成度"))}"></progress><span>${task.percentComplete}%</span><span class="priority-chip">P${task.priority}</span></div>${task.description ? `<p class="pim-notes">${escapeHtml(task.description)}</p>` : ""}<footer><button class="button button--text" type="button" data-action="edit-pim" data-pim-kind="task" data-pim-uid="${escapeHtml(task.uid)}">${icon("edit")}<span>${escapeHtml(tx("Edit", "編輯"))}</span></button>${task.status !== "completed" ? `<button class="button button--tonal" type="button" data-action="complete-task" data-pim-uid="${escapeHtml(task.uid)}">${icon("check")}<span>${escapeHtml(tx("Complete", "完成"))}</span></button>` : ""}<span class="action-spacer"></span><button class="icon-button danger-action" type="button" data-action="request-delete-pim" data-pim-kind="task" data-pim-uid="${escapeHtml(task.uid)}" data-pim-label="${escapeHtml(task.title)}" aria-label="${escapeHtml(tx(`Delete ${task.title}`, `刪除 ${task.title}`))}">${icon("trash")}</button></footer></article>`;
+  const selected = state.selectedTaskUids.has(task.uid);
+  return `<article class="pim-card task-card${task.status === "completed" ? " is-completed" : ""}${selected ? " is-selected" : ""}" data-testid="task-card" data-pim-uid="${escapeHtml(task.uid)}">
+    <header><span class="task-check">${task.status === "completed" ? icon("check") : icon("tasks" as IconName)}</span><div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.due ? tx(`Due ${formatTemporal(task.due)}`, `到期日 ${formatTemporal(task.due)}`) : tx("No due date", "冇到期日"))}</p></div><span class="status-chip status-chip--${task.status}">${escapeHtml(statusLabels[task.status])}</span></header>
+    <div class="task-progress"><progress max="100" value="${task.percentComplete}" aria-label="${escapeHtml(tx("Task completion", "工作完成度"))}"></progress><span>${task.percentComplete}%</span><span class="priority-chip">P${task.priority}</span></div>
+    ${task.description ? `<p class="pim-notes">${escapeHtml(task.description)}</p>` : ""}
+    <footer><label class="record-select"><input type="checkbox" data-ics-select="task" data-pim-uid="${escapeHtml(task.uid)}" ${selected ? "checked" : ""}/><span>${escapeHtml(tx("Select for export", "選擇匯出"))}</span></label><button class="button button--text" type="button" data-action="edit-pim" data-pim-kind="task" data-pim-uid="${escapeHtml(task.uid)}">${icon("edit")}<span>${escapeHtml(tx("Edit", "編輯"))}</span></button>${task.status !== "completed" ? `<button class="button button--tonal" type="button" data-action="complete-task" data-pim-uid="${escapeHtml(task.uid)}">${icon("check")}<span>${escapeHtml(tx("Complete", "完成"))}</span></button>` : ""}<span class="action-spacer"></span><button class="icon-button danger-action" type="button" data-action="request-delete-pim" data-pim-kind="task" data-pim-uid="${escapeHtml(task.uid)}" data-pim-label="${escapeHtml(task.title)}" aria-label="${escapeHtml(tx(`Delete ${task.title}`, `刪除 ${task.title}`))}">${icon("trash")}</button></footer>
+  </article>`;
 }
 
 function renderPimEmpty(title: string, body: string, iconName: IconName): string {
@@ -4789,6 +4813,35 @@ const saveReaderAttachment = async (index: number | "all", reviewed?: Attachment
   });
 };
 
+const importICalendar = async (): Promise<void> => {
+  await withBusy("pim-ics", async () => {
+    const result = await api.importICalendar(state.icsDuplicatePolicy);
+    if (!result) {
+      pushToast("info", "ICS import cancelled", "No local events or tasks were changed.", "已取消 ICS 匯入", "冇本機事件或者工作被更改。 ");
+      return;
+    }
+    await refreshPimData();
+    pushToast(
+      "success",
+      "ICS import complete",
+      `${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, and ${result.skipped} duplicate UIDs skipped atomically.`,
+      "ICS 匯入完成",
+      `原子匯入結果：${result.created} 個建立、${result.updated} 個更新、${result.unchanged} 個冇變，另有 ${result.skipped} 個重複 UID 安全略過。`,
+    );
+  });
+};
+
+const exportICalendar = async (request: ICalendarExportRequest): Promise<void> => {
+  await withBusy("pim-ics", async () => {
+    const result = await api.exportICalendar(request);
+    if (result.status === "cancelled") {
+      pushToast("info", "ICS export cancelled", "No file was written.", "已取消 ICS 匯出", "冇寫入任何檔案。 ");
+      return;
+    }
+    pushToast("success", "ICS exported", `${result.eventCount} events and ${result.taskCount} tasks were written as normalized iCalendar 2.0.`, "ICS 已匯出", `已將 ${result.eventCount} 個事件同 ${result.taskCount} 個工作寫成標準化 iCalendar 2.0。`);
+  });
+};
+
 const handleConfirmation = async (): Promise<void> => {
   const confirmation = state.confirmation;
   const returnFocusKey = state.confirmationReturnFocusKey;
@@ -5236,6 +5289,18 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "export-all-vcard": await exportVCardSelection(); break;
     case "export-contact-vcard": if (button.dataset.pimUid) await exportVCardSelection([button.dataset.pimUid], []); break;
     case "export-list-vcard": if (button.dataset.pimUid) await exportVCardSelection([], [button.dataset.pimUid]); break;
+    case "import-ics": await importICalendar(); break;
+    case "export-all-ics": {
+      const kind = button.dataset.icsKind;
+      if (kind === "calendar-event" || kind === "task") await exportICalendar({ scope: "all", entityKinds: [kind] });
+      break;
+    }
+    case "export-selected-ics": {
+      const kind = button.dataset.icsKind;
+      if (kind === "calendar-event") await exportICalendar({ scope: "selected", eventUids: [...state.selectedCalendarEventUids], taskUids: [] });
+      if (kind === "task") await exportICalendar({ scope: "selected", eventUids: [], taskUids: [...state.selectedTaskUids] });
+      break;
+    }
     case "complete-task": {
       const uid = button.dataset.pimUid;
       const task = state.tasks.find(item => item.uid === uid);
@@ -5664,6 +5729,17 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
     model.flags = control.checked ? `${model.flags}${flag}` : model.flags.replaceAll(flag, "");
     if (control.dataset.regexFlag === "mail") scheduleMailSearch(0);
     render(); return;
+  }
+  if (control.dataset.icsDuplicatePolicy !== undefined && (control.value === "skip" || control.value === "update")) {
+    state.icsDuplicatePolicy = control.value;
+    render();
+    return;
+  }
+  if (control.dataset.icsSelect && control.dataset.pimUid && control instanceof HTMLInputElement) {
+    const selected = control.dataset.icsSelect === "calendar-event" ? state.selectedCalendarEventUids : state.selectedTaskUids;
+    if (control.checked) selected.add(control.dataset.pimUid); else selected.delete(control.dataset.pimUid);
+    render();
+    return;
   }
   if (control.dataset.pimMemberUid && control instanceof HTMLInputElement) {
     const selected = state.pimDraftMemberUids ?? new Set<string>();

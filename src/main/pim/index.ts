@@ -3,6 +3,12 @@ export type { AtomicStorePaths, MutationDecision } from "./atomic-json-store.js"
 export { PimConflictError, PimNotFoundError, PimService } from "./pim-service.js";
 export type { PimServiceOptions } from "./pim-service.js";
 export {
+  ICalendarParseError,
+  parseICalendarBundle,
+  serializeICalendarBundle,
+} from "./icalendar.js";
+export type { ParsedICalendarBundle } from "./icalendar.js";
+export {
   inspectPimInterchange,
   normalizePimInterchangeForExport,
   PimInterchangeBoundaryError,
@@ -34,6 +40,10 @@ export type {
   CreateMailingListInput,
   CreateTaskInput,
   HomeCalendar,
+  ICalendarDuplicatePolicy,
+  ICalendarExportRequest,
+  ICalendarExportResult,
+  ICalendarImportResult,
   MailingList,
   MailingListPatch,
   PimEntityKind,

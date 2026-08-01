@@ -30,6 +30,9 @@ import {
   type CreateMailingListInput,
   type CreateTaskInput,
   type HomeCalendar,
+  type ICalendarDuplicatePolicy,
+  type ICalendarExportRequest,
+  type ICalendarImportResult,
   type MailingList,
   type MailingListPatch,
   type PersistedPimState,
@@ -45,6 +48,7 @@ import {
   type TransactionFilter,
   type VCardImportResult,
 } from "./types.js";
+import { parseICalendarBundle, serializeICalendarBundle } from "./icalendar.js";
 import { parseVCardBundle, serializeContactVCard, serializeVCardBundle } from "./vcard.js";
 
 export interface PimServiceOptions {
@@ -425,6 +429,109 @@ export class PimService {
       }
       return { changed, result };
     });
+  }
+
+  async importICalendar(source: string, duplicatePolicy: ICalendarDuplicatePolicy = "skip"): Promise<ICalendarImportResult> {
+    if (duplicatePolicy !== "skip" && duplicatePolicy !== "update") throw new TypeError("The iCalendar duplicate policy must be skip or update.");
+    const parsed = parseICalendarBundle(source);
+    return this.#store.mutate(state => {
+      const now = this.#now();
+      const result: ICalendarImportResult = { events: [], tasks: [], created: 0, updated: 0, unchanged: 0, skipped: 0 };
+      let changed = false;
+
+      const conflictFromOtherKind = (uid: string, kind: "calendar-event" | "task"): boolean => {
+        const other = kind === "calendar-event" ? "task" : "calendar-event";
+        return this.#entityCollection(state, other).some(entity => entity.uid === uid) || this.#isHistoricalUid(state, other, uid);
+      };
+
+      for (const rawEvent of parsed.events) {
+        const input = createCalendarEventSchema.parse(rawEvent);
+        const uid = input.uid!;
+        const index = state.calendarEvents.findIndex(event => event.uid === uid);
+        const current = state.calendarEvents[index];
+        const reserved = this.#isHistoricalUid(state, "calendar-event", uid) && !current;
+        if (reserved || conflictFromOtherKind(uid, "calendar-event")) {
+          if (duplicatePolicy === "skip") { result.skipped += 1; continue; }
+          throw new PimConflictError(`iCalendar UID ${uid} is reserved by deleted history or another local record type.`);
+        }
+        const { uid: _uid, ...content } = input;
+        if (current) {
+          if (duplicatePolicy === "skip") { result.events.push(current); result.skipped += 1; continue; }
+          const candidate = calendarEventSchema.parse({ uid, ...content, createdAt: current.createdAt, updatedAt: current.updatedAt, revision: current.revision });
+          if (same(withoutMetadata(current), withoutMetadata(candidate))) { result.events.push(current); result.unchanged += 1; continue; }
+          const updated = calendarEventSchema.parse({ ...candidate, updatedAt: now, revision: current.revision + 1 });
+          state.calendarEvents[index] = updated;
+          this.#record(state, "updated", "calendar-event", uid, current, updated, now);
+          result.events.push(updated);
+          result.updated += 1;
+        } else {
+          const created = calendarEventSchema.parse({ uid, ...content, createdAt: now, updatedAt: now, revision: 1 });
+          state.calendarEvents.push(created);
+          this.#record(state, "created", "calendar-event", uid, null, created, now);
+          result.events.push(created);
+          result.created += 1;
+        }
+        changed = true;
+      }
+
+      for (const rawTask of parsed.tasks) {
+        const input = createTaskSchema.parse(rawTask);
+        const uid = input.uid!;
+        const index = state.tasks.findIndex(task => task.uid === uid);
+        const current = state.tasks[index];
+        const reserved = this.#isHistoricalUid(state, "task", uid) && !current;
+        if (reserved || conflictFromOtherKind(uid, "task")) {
+          if (duplicatePolicy === "skip") { result.skipped += 1; continue; }
+          throw new PimConflictError(`iCalendar UID ${uid} is reserved by deleted history or another local record type.`);
+        }
+        const { uid: _uid, ...rawContent } = input;
+        const content = this.#normalizeTaskContent(rawContent, now);
+        if (current) {
+          if (duplicatePolicy === "skip") { result.tasks.push(current); result.skipped += 1; continue; }
+          const candidate = taskSchema.parse({ uid, ...content, createdAt: current.createdAt, updatedAt: current.updatedAt, revision: current.revision });
+          if (same(withoutMetadata(current), withoutMetadata(candidate))) { result.tasks.push(current); result.unchanged += 1; continue; }
+          const updated = taskSchema.parse({ ...candidate, updatedAt: now, revision: current.revision + 1 });
+          state.tasks[index] = updated;
+          state.taskMutationVersion += 1;
+          this.#record(state, "updated", "task", uid, current, updated, now);
+          result.tasks.push(updated);
+          result.updated += 1;
+        } else {
+          const created = taskSchema.parse({ uid, ...content, createdAt: now, updatedAt: now, revision: 1 });
+          state.tasks.push(created);
+          state.taskMutationVersion += 1;
+          this.#record(state, "created", "task", uid, null, created, now);
+          result.tasks.push(created);
+          result.created += 1;
+        }
+        changed = true;
+      }
+      return { changed, result };
+    });
+  }
+
+  async exportICalendar(request: ICalendarExportRequest): Promise<{ content: string; eventCount: number; taskCount: number }> {
+    const state = await this.#store.read();
+    let events: CalendarEvent[];
+    let tasks: Task[];
+    if (request.scope === "all") {
+      const kinds = new Set(request.entityKinds);
+      if (!kinds.size || kinds.size !== request.entityKinds.length || [...kinds].some(kind => kind !== "calendar-event" && kind !== "task")) {
+        throw new TypeError("Choose one or both supported local iCalendar record types.");
+      }
+      events = kinds.has("calendar-event") ? state.calendarEvents : [];
+      tasks = kinds.has("task") ? state.tasks : [];
+    } else {
+      if (request.eventUids.length + request.taskUids.length < 1 || request.eventUids.length + request.taskUids.length > 5_000) {
+        throw new TypeError("Select from 1 through 5000 local events or tasks to export.");
+      }
+      if (new Set(request.eventUids).size !== request.eventUids.length || new Set(request.taskUids).size !== request.taskUids.length) {
+        throw new TypeError("Selected iCalendar record UIDs must be unique.");
+      }
+      events = this.#selectByUid(state.calendarEvents, request.eventUids, "Calendar event");
+      tasks = this.#selectByUid(state.tasks, request.taskUids, "Task");
+    }
+    return { content: serializeICalendarBundle(events, tasks), eventCount: events.length, taskCount: tasks.length };
   }
 
   async createCalendarEvent(input: CreateCalendarEventInput): Promise<CalendarEvent> {

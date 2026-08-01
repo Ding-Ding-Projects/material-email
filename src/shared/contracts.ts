@@ -7,6 +7,10 @@ import type {
   CreateContactInput,
   CreateMailingListInput,
   CreateTaskInput,
+  ICalendarDuplicatePolicy,
+  ICalendarExportRequest,
+  ICalendarExportResult,
+  ICalendarImportResult,
   MailingList,
   MailingListPatch,
   PimTransaction,
@@ -34,6 +38,10 @@ export type {
   CreateContactInput,
   CreateMailingListInput,
   CreateTaskInput,
+  ICalendarDuplicatePolicy,
+  ICalendarExportRequest,
+  ICalendarExportResult,
+  ICalendarImportResult,
   MailingList,
   MailingListPatch,
   PimTransaction,
@@ -695,6 +703,8 @@ export interface MaterialEmailApi {
   restoreContact(uid: string, sourceTransactionId?: string): Promise<Contact>;
   importVCard(): Promise<VCardImportResult | null>;
   exportVCard(contactUids?: string[], mailingListUids?: string[]): Promise<string | null>;
+  importICalendar(duplicatePolicy: ICalendarDuplicatePolicy): Promise<ICalendarImportResult | null>;
+  exportICalendar(request: ICalendarExportRequest): Promise<ICalendarExportResult>;
   listMailingLists(): Promise<MailingList[]>;
   listMailingListMembers(uid: string): Promise<Contact[]>;
   createMailingList(input: CreateMailingListInput): Promise<MailingList>;

@@ -131,6 +131,18 @@ describe("non-PIM IPC validation", () => {
     }])).toThrow();
   });
 
+  it("strictly validates local iCalendar duplicate policy and selected/all export scope", () => {
+    expect(ipcPayloadSchemas.pimIcsImport.parse(["skip"])).toEqual(["skip"]);
+    expect(ipcPayloadSchemas.pimIcsImport.parse(["update"])).toEqual(["update"]);
+    expect(() => ipcPayloadSchemas.pimIcsImport.parse(["replace"])).toThrow();
+    expect(ipcPayloadSchemas.pimIcsExport.parse([{ scope: "all", entityKinds: ["calendar-event", "task"] }])).toHaveLength(1);
+    expect(ipcPayloadSchemas.pimIcsExport.parse([{ scope: "selected", eventUids: ["event-1"], taskUids: [] }])).toHaveLength(1);
+    expect(() => ipcPayloadSchemas.pimIcsExport.parse([{ scope: "selected", eventUids: [], taskUids: [] }])).toThrow();
+    expect(() => ipcPayloadSchemas.pimIcsExport.parse([{ scope: "all", entityKinds: ["task", "task"] }])).toThrow();
+    expect(() => ipcPayloadSchemas.pimIcsExport.parse([{ scope: "selected", eventUids: ["event-1", "event-1"], taskUids: [] }])).toThrow();
+    expect(() => ipcPayloadSchemas.pimIcsExport.parse([{ scope: "all", entityKinds: ["calendar-event"], filePath: "C:\\secret.ics" }])).toThrow();
+  });
+
   it("accepts only fixed-length opaque external-link request IDs", () => {
     expect(ipcPayloadSchemas.externalLinkRequest.parse(["abcdefghijklmnopqrstuvwxyzABCDEF"])).toEqual(["abcdefghijklmnopqrstuvwxyzABCDEF"]);
     for (const candidate of ["short", "a".repeat(31), "a".repeat(33), `${"a".repeat(31)}!`]) {

@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -31,6 +31,10 @@ import type {
   CreateContactInput,
   CreateMailingListInput,
   CreateTaskInput,
+  ICalendarDuplicatePolicy,
+  ICalendarExportRequest,
+  ICalendarExportResult,
+  ICalendarImportResult,
   MailingList,
   MailingListPatch,
   PimTransaction,
@@ -57,7 +61,7 @@ import type {
   TlsCertificateInspectionRequest,
   TlsCertificateInspectionResult,
 } from "../shared/contracts.js";
-import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT, LOCAL_HISTORY_RETENTION_DAYS_DEFAULT } from "../shared/contracts.js";
+import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT, LOCAL_HISTORY_RETENTION_DAYS_DEFAULT, PIM_INTERCHANGE_MAX_BYTES } from "../shared/contracts.js";
 import {
   attachmentSaveReviewMatches,
   createAttachmentRiskReviewItem,
@@ -1272,6 +1276,51 @@ export class AppService {
     if (result.canceled || !result.filePath) return null;
     await writeFile(result.filePath, content, "utf8");
     return result.filePath;
+  }
+
+  async importICalendar(duplicatePolicy: ICalendarDuplicatePolicy): Promise<ICalendarImportResult | null> {
+    const result = await dialog.showOpenDialog({
+      title: "Import local calendar and tasks from iCalendar",
+      properties: ["openFile"],
+      filters: [{ name: "iCalendar events and tasks", extensions: ["ics"] }],
+    });
+    const selected = result.filePaths[0];
+    if (result.canceled || !selected) return null;
+    const filePath = path.resolve(selected);
+    if (/^(?:\\\\|\/\/)/u.test(selected)) throw new Error("Network and UNC iCalendar files are outside the local import boundary.");
+    const info = await lstat(filePath);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error("The selected iCalendar import must be a regular local file, not a link.");
+    if (info.size < 1 || info.size > PIM_INTERCHANGE_MAX_BYTES) {
+      throw new Error(`iCalendar imports must contain from 1 through ${PIM_INTERCHANGE_MAX_BYTES} bytes.`);
+    }
+    const bytes = await readFile(filePath);
+    let source: string;
+    try { source = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    catch (error) { throw new Error("The selected iCalendar file is not valid UTF-8 text.", { cause: error }); }
+    return this.#pim.importICalendar(source, duplicatePolicy);
+  }
+
+  async exportICalendar(request: ICalendarExportRequest): Promise<ICalendarExportResult> {
+    const bundle = await this.#pim.exportICalendar(request);
+    const result = await dialog.showSaveDialog({
+      title: "Export local calendar and tasks as iCalendar",
+      defaultPath: "material-email-calendar-and-tasks.ics",
+      filters: [{ name: "iCalendar events and tasks", extensions: ["ics"] }],
+    });
+    if (result.canceled || !result.filePath) return { status: "cancelled", eventCount: bundle.eventCount, taskCount: bundle.taskCount };
+    const selected = /\.ics$/iu.test(result.filePath) ? result.filePath : `${result.filePath}.ics`;
+    if (/^(?:\\\\|\/\/)/u.test(selected)) throw new Error("Network and UNC iCalendar files are outside the local export boundary.");
+    const filePath = path.resolve(selected);
+    const parent = await lstat(path.dirname(filePath));
+    if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error("The iCalendar export folder must be a regular local directory, not a link.");
+    const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.next`);
+    try {
+      await writeFile(temporaryPath, bundle.content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+      await rename(temporaryPath, filePath);
+    } finally {
+      await rm(temporaryPath, { force: true });
+    }
+    return { status: "saved", eventCount: bundle.eventCount, taskCount: bundle.taskCount };
   }
 
   async listMailingLists(): Promise<MailingList[]> {
