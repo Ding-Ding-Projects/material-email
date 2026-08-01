@@ -108,7 +108,7 @@ jobs:
           MATERIAL_EMAIL_DISH_ID: ${{ steps.dish.outputs.dish_id }}
           MATERIAL_EMAIL_DISH_ASSET: ${{ steps.dish.outputs.photo_file }}
           MATERIAL_EMAIL_CATALOG_COMMIT: ${{ steps.dish.outputs.catalog_commit }}
-        run: npx playwright test tests/e2e/app.spec.ts --grep "opens an anchored regex builder"
+        run: npm test
 
       - name: Test and build the Windows installer
         env:
