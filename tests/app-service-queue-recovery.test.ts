@@ -145,6 +145,50 @@ describe("AppService queued-operation recovery", () => {
     ]);
   });
 
+  it("persists a structured retry action together with independent read and dismiss state", async () => {
+    const { service, accountId } = await createService();
+    serviceMocks.setFlags.mockRejectedValue(new Error("Fixture offline"));
+
+    await service.setMessageFlags(accountId, "Inbox", 41, { starred: true });
+    const queued = (await service.bootstrap()).notifications.find(item => item.title === "Change queued for synchronization");
+    expect(queued).toMatchObject({
+      category: "mail",
+      read: false,
+      dismissed: false,
+      action: { kind: "retry", target: "pending-operation", accountId },
+    });
+
+    await service.markNotificationRead(queued!.id, true);
+    await service.markNotificationDismissed(queued!.id, true);
+    const restarted = new AppService(directory);
+    expect((await restarted.bootstrap()).notifications.find(item => item.id === queued!.id)).toMatchObject({
+      read: true,
+      dismissed: true,
+      action: queued!.action,
+    });
+  });
+
+  it("records a settings restore as an append-only undo action", async () => {
+    const { service } = await createService();
+    await service.savePreferences({ theme: "dark" });
+    const source = (await service.bootstrap()).history.find(item => item.kind === "settings-changed")!;
+
+    await service.restoreHistory(source.id);
+    let bootstrap = await service.bootstrap();
+    expect(bootstrap.preferences.theme).toBe("system");
+    const restored = bootstrap.notifications.find(item => item.title === "Revision restored")!;
+    expect(restored).toMatchObject({
+      category: "history",
+      action: { kind: "undo", target: "settings-revision" },
+    });
+
+    if (restored.action?.kind !== "undo") throw new Error("Expected the structured settings undo action.");
+    await service.restoreHistory(restored.action.historyId);
+    bootstrap = await service.bootstrap();
+    expect(bootstrap.preferences.theme).toBe("dark");
+    expect(bootstrap.history.filter(item => item.kind === "restored")).toHaveLength(2);
+  });
+
   it("enforces queue-head order and rejects a concurrent manual flight while retaining identity", async () => {
     const { service, accountId } = await createService();
     serviceMocks.setFlags.mockRejectedValue(new Error("Fixture offline"));

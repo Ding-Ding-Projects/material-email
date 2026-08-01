@@ -56,6 +56,7 @@ describe("Electron security boundary", () => {
       "mail:retry-outbox",
       "preferences:save",
       "notifications:read",
+      "notifications:dismissed",
       "notifications:clear",
       "notifications:native",
       "history:restore",

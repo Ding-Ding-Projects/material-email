@@ -131,6 +131,9 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("mail:retry-outbox", ipcPayloadSchemas.accountItem, ([accountId, outboxId]) => service.retryOutbox(accountId, outboxId));
   handleValidated("preferences:save", ipcPayloadSchemas.preferences, ([patch]) => service.savePreferences(patch));
   handleValidated("notifications:read", ipcPayloadSchemas.notificationRead, ([id, read]) => service.markNotificationRead(id, read));
+  handleValidated("notifications:dismissed", ipcPayloadSchemas.notificationDismissed, ([id, dismissed]) =>
+    service.markNotificationDismissed(id, dismissed),
+  );
   handleValidated("notifications:clear", ipcPayloadSchemas.none, () => service.clearNotifications());
   handleValidated("notifications:native", ipcPayloadSchemas.nativeNotification, async ([kind]) => {
     if (!(await service.getPreferences()).nativeNotificationsEnabled || !Notification.isSupported()) return false;

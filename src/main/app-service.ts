@@ -15,6 +15,8 @@ import type {
   MessageDetail,
   MessageSummary,
   NotificationRecord,
+  NotificationAction,
+  NotificationCategory,
   Preferences,
   LocalRevision,
   LocalRevisionDiff,
@@ -343,7 +345,10 @@ export class AppService {
       state.messages[folderKey(account.id, "Inbox")] = messages.summaries;
       for (const detail of messages.details) state.details[detail.id] = detail;
       this.#record(state, "created", "account", account.id, "Created the local demo workspace", account);
-      this.#notify(state, "success", "Demo workspace ready", "This workspace is fully local. Add a real account from Settings when you are ready.");
+      this.#notify(state, "success", "Demo workspace ready", "This workspace is fully local. Add a real account from Settings when you are ready.", {
+        category: "account",
+        action: { kind: "open", target: "page", page: "settings" },
+      });
     });
     return account;
   }
@@ -395,7 +400,10 @@ export class AppService {
       state.accounts.push(account);
       state.preferences.selectedAccountId = account.id;
       this.#record(state, "created", "account", account.id, `Added account ${account.email}`, this.#publicAccount(account));
-      this.#notify(state, "success", "Account connected", `${account.email} passed incoming and outgoing server checks.`);
+      this.#notify(state, "success", "Account connected", `${account.email} passed incoming and outgoing server checks.`, {
+        category: "account",
+        action: { kind: "open", target: "page", page: "settings" },
+      });
     });
     return this.#publicAccount(account);
   }
@@ -441,7 +449,10 @@ export class AppService {
         delete state.preferences.selectedFolderPath;
       }
       this.#record(state, "deleted", "account", accountId, `Removed account ${account.email}`, this.#publicAccount(account));
-      this.#notify(state, "info", "Account removed", `${account.email} was removed from this computer.`);
+      this.#notify(state, "info", "Account removed", `${account.email} was removed from this computer.`, {
+        category: "account",
+        action: { kind: "open", target: "page", page: "settings" },
+      });
     });
   }
 
@@ -496,7 +507,10 @@ export class AppService {
           item.lastSyncAt = syncedAt;
           delete item.syncError;
         }
-        this.#notify(draft, "success", "Mail synchronized", `${batches.reduce((sum, [, rows]) => sum + rows.length, 0)} messages refreshed.`);
+        this.#notify(draft, "success", "Mail synchronized", `${batches.reduce((sum, [, rows]) => sum + rows.length, 0)} messages refreshed.`, {
+          category: "mail",
+          action: { kind: "open", target: "page", page: "mail" },
+        });
       });
       return { folders, messages: batches.flatMap(([, rows]) => rows), syncedAt };
     } catch (error) {
@@ -505,7 +519,10 @@ export class AppService {
         const item = draft.accounts.find(candidate => candidate.id === accountId);
         if (!item) return;
         item.syncError = message;
-        this.#notify(draft, "error", "Mail synchronization failed", message);
+        this.#notify(draft, "error", "Mail synchronization failed", message, {
+          category: "mail",
+          action: { kind: "retry", target: "sync", accountId },
+        });
       });
       throw error;
     }
@@ -802,8 +819,9 @@ export class AppService {
       if (detail) Object.assign(detail, patch);
       this.#record(draft, "updated", "message", message.id, `Updated message “${message.subject}”`, before);
       if (networkError) {
+        const operationId = randomUUID();
         draft.pendingOperations.push({
-          id: randomUUID(),
+          id: operationId,
           accountId,
           kind: "flags",
           folderPath,
@@ -814,7 +832,10 @@ export class AppService {
           attempts: 0,
           lastError: networkError,
         });
-        this.#notify(draft, "warning", "Change queued for synchronization", networkError);
+        this.#notify(draft, "warning", "Change queued for synchronization", networkError, {
+          category: "mail",
+          action: { kind: "retry", target: "pending-operation", accountId, operationId },
+        });
       }
     });
   }
@@ -859,8 +880,9 @@ export class AppService {
         destinationCacheDeferred: destinationUid === undefined,
       });
       if (networkError) {
+        const operationId = randomUUID();
         draft.pendingOperations.push({
-          id: randomUUID(),
+          id: operationId,
           accountId,
           kind: "move",
           folderPath,
@@ -871,7 +893,10 @@ export class AppService {
           attempts: 0,
           lastError: networkError,
         });
-        this.#notify(draft, "warning", "Move queued for synchronization", networkError);
+        this.#notify(draft, "warning", "Move queued for synchronization", networkError, {
+          category: "mail",
+          action: { kind: "retry", target: "pending-operation", accountId, operationId },
+        });
       } else if (!moved) {
         this.#notify(
           draft,
@@ -924,7 +949,10 @@ export class AppService {
           accepted: result.accepted,
           rejected: result.rejected,
         });
-        this.#notify(next, "error", "Message not sent; draft kept", `0 recipients accepted; ${result.rejected.length} rejected. Review the recipients and retry from this unchanged composer.`);
+        this.#notify(next, "error", "Message not sent; draft kept", `0 recipients accepted; ${result.rejected.length} rejected. Review the recipients and retry from this unchanged composer.`, {
+          category: "delivery",
+          action: { kind: "open", target: "draft", accountId: draft.accountId, draftId: retainedDraft.id! },
+        });
         return;
       }
       if (persistedDraftUnchanged) next.drafts = next.drafts.filter(item => item.id !== draft.id);
@@ -939,11 +967,20 @@ export class AppService {
       });
       if (result.queued) {
         next.outbox.push({ id: result.messageId, draft, createdAt: new Date().toISOString(), attempts: 0, lastError: networkError });
-        this.#notify(next, "warning", "Message queued in Outbox", networkError);
+        this.#notify(next, "warning", "Message queued in Outbox", networkError, {
+          category: "delivery",
+          action: { kind: "retry", target: "outbox", accountId: draft.accountId, outboxId: result.messageId },
+        });
       } else if (disposition === "partial") {
-        this.#notify(next, "warning", "Message partially sent", describeRecipientOutcome(result));
+        this.#notify(next, "warning", "Message partially sent", describeRecipientOutcome(result), {
+          category: "delivery",
+          action: { kind: "open", target: "page", page: "mail" },
+        });
       } else {
-        this.#notify(next, "success", "Message sent", describeRecipientOutcome(result));
+        this.#notify(next, "success", "Message sent", describeRecipientOutcome(result), {
+          category: "delivery",
+          action: { kind: "open", target: "page", page: "mail" },
+        });
       }
     });
     return result;
@@ -962,7 +999,10 @@ export class AppService {
       if (index >= 0) state.drafts[index] = saved;
       else state.drafts.push(saved);
       this.#record(state, index >= 0 ? "updated" : "created", "draft", saved.id ?? "", `Saved draft “${saved.subject || "(No subject)"}”`, saved);
-      this.#notify(state, "info", "Draft saved", "The draft is stored locally on this computer.");
+      this.#notify(state, "info", "Draft saved", "The draft is stored locally on this computer.", {
+        category: "delivery",
+        action: { kind: "open", target: "draft", accountId: saved.accountId, draftId: saved.id! },
+      });
     });
     return saved;
   }
@@ -1038,7 +1078,10 @@ export class AppService {
         await this.#store.update(next => {
           this.#requireAccount(next, accountId);
           next.pendingOperations = next.pendingOperations.filter(candidate => candidate.id !== operationId);
-          this.#notify(next, "success", "Queued change synchronized", "The queue head reached the mail server after one manual retry.");
+          this.#notify(next, "success", "Queued change synchronized", "The queue head reached the mail server after one manual retry.", {
+            category: "mail",
+            action: { kind: "open", target: "page", page: "mail" },
+          });
         });
       } catch (error) {
         await this.#recordPendingFailure(operationId, error);
@@ -1098,7 +1141,10 @@ export class AppService {
         const existing = cancelled.id ? state.drafts.findIndex(candidate => candidate.id === cancelled!.id) : -1;
         if (existing >= 0) state.drafts[existing] = cancelled!; else state.drafts.push(cancelled!);
         this.#record(state, "updated", "draft", cancelled.id ?? "", `Moved Outbox message “${cancelled.subject || "(No subject)"}” back to drafts`, cancelled);
-        this.#notify(state, "info", "Outbox item cancelled", "The message is available again as a local draft.");
+        this.#notify(state, "info", "Outbox item cancelled", "The message is available again as a local draft.", {
+          category: "delivery",
+          action: cancelled?.id ? { kind: "open", target: "draft", accountId, draftId: cancelled.id } : { kind: "open", target: "page", page: "drafts" },
+        });
       });
       return cancelled!;
     });
@@ -1142,6 +1188,15 @@ export class AppService {
     });
   }
 
+  async markNotificationDismissed(id: string, dismissed: boolean): Promise<void> {
+    await this.#store.update(state => {
+      const notification = state.notifications.find(item => item.id === id);
+      if (!notification) return;
+      notification.dismissed = dismissed;
+      if (dismissed) notification.read = true;
+    });
+  }
+
   async clearNotifications(): Promise<void> {
     await this.#store.update(state => {
       state.notifications = [];
@@ -1154,9 +1209,13 @@ export class AppService {
       const source = state.history.find(item => item.id === id);
       if (!source) throw new Error("That revision no longer exists.");
       if (source.entityType !== "settings") throw new Error("This revision is view-only because restoring it could overwrite server-backed mail data.");
+      const before = structuredClone(state.preferences);
       state.preferences = preferencesSchema.parse(source.snapshot);
-      restored = this.#record(state, "restored", source.entityType, source.entityId, `Restored revision: ${source.label}`, source.snapshot);
-      this.#notify(state, "success", "Revision restored", "The restore was recorded as a new revision, so it can be undone.");
+      restored = this.#record(state, "restored", source.entityType, source.entityId, `Restored revision: ${source.label}`, before);
+      this.#notify(state, "success", "Revision restored", "The restore was recorded as a new revision, so it can be undone.", {
+        category: "history",
+        action: { kind: "undo", target: "settings-revision", historyId: restored.id },
+      });
     });
     return restored;
   }
@@ -1620,6 +1679,10 @@ export class AppService {
           "warning",
           "Automatic retries paused",
           `Queued ${item.kind} change ${item.id} reached ${AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT} failed attempts. Review the queue head, retry it once manually, or discard it.`,
+          {
+            category: "mail",
+            action: { kind: "retry", target: "pending-operation", accountId: item.accountId, operationId: item.id },
+          },
         );
       }
     });
@@ -1638,6 +1701,10 @@ export class AppService {
           "warning",
           "Automatic retries paused",
           `Outbox item ${item.id} reached ${AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT} failed attempts. Review the queue head, retry it once manually, or move it back to drafts.`,
+          {
+            category: "delivery",
+            action: { kind: "retry", target: "outbox", accountId: item.draft.accountId, outboxId: item.id },
+          },
         );
       }
     });
@@ -1919,8 +1986,24 @@ export class AppService {
     return account;
   }
 
-  #notify(state: PersistedState, kind: NotificationRecord["kind"], title: string, body: string): NotificationRecord {
-    const item: NotificationRecord = { id: randomUUID(), kind, title, body, createdAt: new Date().toISOString(), read: false };
+  #notify(
+    state: PersistedState,
+    kind: NotificationRecord["kind"],
+    title: string,
+    body: string,
+    options: { category?: NotificationCategory; action?: NotificationAction } = {},
+  ): NotificationRecord {
+    const item: NotificationRecord = {
+      id: randomUUID(),
+      kind,
+      category: options.category ?? "system",
+      title,
+      body,
+      createdAt: new Date().toISOString(),
+      read: false,
+      dismissed: false,
+      ...(options.action ? { action: options.action } : {}),
+    };
     state.notifications.unshift(item);
     state.notifications = state.notifications.slice(0, 500);
     return item;

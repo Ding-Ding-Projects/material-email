@@ -35,6 +35,39 @@ describe("persisted application state schema", () => {
     expect(parsePersistedState(minimalState()).preferences.historyRetentionDays).toBe(365);
   });
 
+  it("migrates notification category and dismissal state while dropping legacy executable commands", () => {
+    const notification = {
+      id: "notification-1",
+      kind: "warning",
+      title: "Stored before structured actions",
+      body: "The record remains reviewable.",
+      createdAt: "2026-08-01T12:00:00.000Z",
+      read: true,
+      action: { label: "Run arbitrary command", command: "anything" },
+    };
+    const [parsed] = parsePersistedState({ ...minimalState(), notifications: [notification] }).notifications;
+
+    expect(parsed).toMatchObject({ category: "system", dismissed: false, read: true });
+    expect(parsed?.action).toBeUndefined();
+  });
+
+  it("retains bounded structured notification actions and persisted read/dismiss state", () => {
+    const notification = {
+      id: "notification-2",
+      kind: "error",
+      category: "delivery",
+      title: "Delivery paused",
+      body: "Retry remains available.",
+      createdAt: "2026-08-01T12:00:00.000Z",
+      read: true,
+      dismissed: true,
+      action: { kind: "retry", target: "outbox", accountId: "account-1", outboxId: "outbox-1" },
+    };
+    const [parsed] = parsePersistedState({ ...minimalState(), notifications: [notification] }).notifications;
+
+    expect(parsed).toEqual(notification);
+  });
+
   it("migrates cached message details to default-deny remote-content fields", () => {
     const detail = {
       id: "demo:Inbox:1",

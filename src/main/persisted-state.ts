@@ -233,14 +233,30 @@ const outboxItemSchema = z.strictObject({
   attempts: z.number().int().nonnegative().max(1_000_000),
   lastError: boundedString(32_768),
 });
+const notificationActionSchema = z.union([
+  z.strictObject({ kind: z.literal("open"), target: z.literal("page"), page: z.enum(["mail", "drafts", "outbox", "settings", "history", "tools"]) }),
+  z.strictObject({ kind: z.literal("open"), target: z.literal("draft"), accountId: identifierSchema, draftId: identifierSchema }),
+  z.strictObject({ kind: z.literal("retry"), target: z.literal("sync"), accountId: identifierSchema }),
+  z.strictObject({ kind: z.literal("retry"), target: z.literal("pending-operation"), accountId: identifierSchema, operationId: identifierSchema }),
+  z.strictObject({ kind: z.literal("retry"), target: z.literal("outbox"), accountId: identifierSchema, outboxId: identifierSchema }),
+  z.strictObject({ kind: z.literal("undo"), target: z.literal("settings-revision"), historyId: identifierSchema }),
+]);
+const storedNotificationActionSchema = z
+  .union([
+    notificationActionSchema,
+    z.strictObject({ label: boundedString(1_024), command: boundedString(4_096) }).transform(() => undefined),
+  ])
+  .optional();
 const notificationSchema = z.strictObject({
   id: identifierSchema,
   kind: z.enum(["info", "success", "warning", "error"]),
+  category: z.enum(["account", "mail", "delivery", "security", "history", "system"]).default("system"),
   title: boundedString(1_024),
   body: boundedString(32_768),
   createdAt: timestampSchema,
   read: z.boolean(),
-  action: z.strictObject({ label: boundedString(1_024), command: boundedString(4_096) }).optional(),
+  dismissed: z.boolean().default(false),
+  action: storedNotificationActionSchema,
 });
 const historyRecordSchema = z.strictObject({
   id: identifierSchema,

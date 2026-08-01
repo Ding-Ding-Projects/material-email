@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   SURFACE_TONE_COPY,
+  localizedNotificationAction,
+  localizedNotificationCategory,
   localizedNotificationKind,
   localizedSurfaceTone,
   localizedTone,
@@ -75,5 +77,19 @@ describe("renderer language and humor selection", () => {
     ["bilingual", "Warning · 警告"],
   ] as const)("localizes notification kind labels in %s mode", (language, expected) => {
     expect(localizedNotificationKind("warning", { language })).toBe(expected);
+  });
+
+  it("localizes every notification category and supported action without changing its target", () => {
+    expect(localizedNotificationCategory("delivery", { language: "en" })).toBe("Delivery");
+    expect(localizedNotificationCategory("security", { language: "yue" })).toBe("安全");
+    expect(localizedNotificationCategory("history", { language: "bilingual" })).toBe("History · 歷史");
+
+    const retry = { kind: "retry", target: "pending-operation", accountId: "account-1", operationId: "operation-1" } as const;
+    const undo = { kind: "undo", target: "settings-revision", historyId: "history-1" } as const;
+    const open = { kind: "open", target: "page", page: "settings" } as const;
+    expect(localizedNotificationAction(retry, { language: "en" })).toBe("Retry queued change");
+    expect(localizedNotificationAction(undo, { language: "yue" })).toBe("撤銷還原");
+    expect(localizedNotificationAction(open, { language: "bilingual" })).toBe("Open Settings · 開啟設定");
+    expect(retry).toEqual({ kind: "retry", target: "pending-operation", accountId: "account-1", operationId: "operation-1" });
   });
 });

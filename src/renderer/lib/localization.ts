@@ -1,4 +1,4 @@
-import type { Preferences } from "../../shared/contracts";
+import type { NotificationAction, NotificationCategory, Preferences } from "../../shared/contracts";
 
 export type LocalizedTonePreferences = Pick<Preferences, "language" | "funnyEnglish" | "funnyCantonese">;
 export type ToneScale = readonly (string | null | undefined)[];
@@ -150,4 +150,53 @@ export const localizedNotificationKind = (
   if (preferences.language === "yue") return copy.cantonese;
   if (preferences.language === "bilingual") return combineBilingual(copy.english, copy.cantonese);
   return copy.english;
+};
+
+const NOTIFICATION_CATEGORY_COPY: Record<NotificationCategory, { english: string; cantonese: string }> = {
+  account: { english: "Account", cantonese: "帳戶" },
+  mail: { english: "Mail", cantonese: "郵件" },
+  delivery: { english: "Delivery", cantonese: "傳送" },
+  security: { english: "Security", cantonese: "安全" },
+  history: { english: "History", cantonese: "歷史" },
+  system: { english: "App", cantonese: "應用程式" },
+};
+
+const localizedPair = (
+  copy: { english: string; cantonese: string },
+  preferences: Pick<Preferences, "language">,
+  combineBilingual: (english: string, cantonese: string) => string,
+): string => preferences.language === "yue"
+  ? copy.cantonese
+  : preferences.language === "bilingual"
+    ? combineBilingual(copy.english, copy.cantonese)
+    : copy.english;
+
+export const localizedNotificationCategory = (
+  category: NotificationCategory,
+  preferences: Pick<Preferences, "language">,
+  combineBilingual: (english: string, cantonese: string) => string = (english, cantonese) => `${english} · ${cantonese}`,
+): string => localizedPair(NOTIFICATION_CATEGORY_COPY[category], preferences, combineBilingual);
+
+export const localizedNotificationAction = (
+  action: NotificationAction,
+  preferences: Pick<Preferences, "language">,
+  combineBilingual: (english: string, cantonese: string) => string = (english, cantonese) => `${english} · ${cantonese}`,
+): string => {
+  let copy: { english: string; cantonese: string };
+  if (action.kind === "undo") copy = { english: "Undo restore", cantonese: "撤銷還原" };
+  else if (action.kind === "retry" && action.target === "sync") copy = { english: "Retry synchronization", cantonese: "重試同步" };
+  else if (action.kind === "retry" && action.target === "pending-operation") copy = { english: "Retry queued change", cantonese: "重試排隊更改" };
+  else if (action.kind === "retry") copy = { english: "Retry delivery", cantonese: "重試傳送" };
+  else if (action.target === "draft") copy = { english: "Open draft", cantonese: "開啟草稿" };
+  else {
+    copy = {
+      mail: { english: "Open Mail", cantonese: "開啟郵件" },
+      drafts: { english: "Open Drafts", cantonese: "開啟草稿" },
+      outbox: { english: "Open Outbox", cantonese: "開啟寄件匣" },
+      settings: { english: "Open Settings", cantonese: "開啟設定" },
+      history: { english: "Open History", cantonese: "開啟歷史" },
+      tools: { english: "Open Tools", cantonese: "開啟工具" },
+    }[action.page];
+  }
+  return localizedPair(copy, preferences, combineBilingual);
 };

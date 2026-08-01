@@ -64,6 +64,8 @@ import {
 import { icon, type IconName } from "./lib/icons";
 import { DEFAULT_APPEARANCE } from "./lib/appearance";
 import {
+  localizedNotificationAction,
+  localizedNotificationCategory,
   localizedNotificationKind,
   localizedSurfaceTone,
   localizedTone,
@@ -2865,7 +2867,38 @@ function renderTabSettings(): string {
 
 function notificationMatches(item: NotificationRecord): boolean {
   const model = searchFor("notifications");
-  return !model.pattern || createMatcher(model)(`${item.title}\n${item.body}\n${item.kind}`);
+  return !model.pattern || createMatcher(model)(`${item.title}\n${item.body}\n${item.kind}\n${item.category}`);
+}
+
+function notificationActionAttributes(item: NotificationRecord): string {
+  const action = item.action;
+  if (!action) return "";
+  if (action.kind === "open" && action.target === "page") {
+    return `data-action="activate-tab" data-tab-id="${escapeHtml(action.page)}"`;
+  }
+  if (action.kind === "open") {
+    return `data-action="open-draft" data-account-id="${escapeHtml(action.accountId)}" data-draft-id="${escapeHtml(action.draftId)}"`;
+  }
+  if (action.kind === "retry" && action.target === "sync") {
+    return `data-action="sync" data-account-id="${escapeHtml(action.accountId)}"`;
+  }
+  if (action.kind === "retry" && action.target === "pending-operation") {
+    return `data-action="retry-pending-operation" data-account-id="${escapeHtml(action.accountId)}" data-operation-id="${escapeHtml(action.operationId)}"`;
+  }
+  if (action.kind === "retry") {
+    return `data-action="retry-outbox" data-account-id="${escapeHtml(action.accountId)}" data-outbox-id="${escapeHtml(action.outboxId)}"`;
+  }
+  return `data-action="restore-history" data-history-id="${escapeHtml(action.historyId)}"`;
+}
+
+function renderNotificationRecord(item: NotificationRecord): string {
+  const titleId = `notification-title-${item.id}`;
+  const actionLabel = item.action ? localizedNotificationAction(item.action, preferences(), bilingualText) : "";
+  return `<article class="notification-card notification-card--${item.kind}${item.read ? " is-read" : ""}${item.dismissed ? " is-dismissed" : ""}" data-testid="notification-card" data-notification-id="${escapeHtml(item.id)}" aria-labelledby="${escapeHtml(titleId)}">
+    <span class="notification-card__icon">${icon(item.kind === "success" ? "check" : item.kind === "warning" ? "warning" : item.kind === "error" ? "error" : "info")}</span>
+    <div class="notification-card__body"><div class="record-meta"><span class="kind-badge">${escapeHtml(localizedNotificationCategory(item.category, preferences(), bilingualText))}</span><span class="severity-badge">${escapeHtml(localizedNotificationKind(item.kind, preferences(), bilingualText))}</span>${item.dismissed ? `<span class="dismissed-badge">${escapeHtml(tx("Dismissed", "已關閉"))}</span>` : ""}<time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(formatDate(item.createdAt))}</time></div><h2 id="${escapeHtml(titleId)}">${escapeHtml(item.title)}</h2><p>${escapeHtml(item.body)}</p></div>
+    <div class="notification-card__actions">${item.action ? `<button class="button button--tonal" type="button" ${notificationActionAttributes(item)} aria-label="${escapeHtml(`${actionLabel}: ${item.title}`)}">${icon(item.action.kind === "retry" ? "refresh" : item.action.kind === "undo" ? "history" : "forward")}<span>${escapeHtml(actionLabel)}</span></button>` : ""}<button class="button button--text" type="button" data-action="toggle-notification-read" data-notification-id="${escapeHtml(item.id)}" aria-pressed="${item.read}">${escapeHtml(item.read ? tx("Mark unread", "標示為未讀") : tx("Mark read", "標示為已讀"))}</button><button class="icon-button" type="button" data-action="toggle-notification-dismissed" data-notification-id="${escapeHtml(item.id)}" aria-pressed="${item.dismissed}" aria-label="${escapeHtml(item.dismissed ? tx(`Restore notification: ${item.title}`, `恢復通知：${item.title}`) : tx(`Dismiss notification: ${item.title}`, `關閉通知：${item.title}`))}">${icon(item.dismissed ? "refresh" : "close")}</button></div>
+  </article>`;
 }
 
 function renderNotificationsPage(): string {
@@ -2875,7 +2908,7 @@ function renderNotificationsPage(): string {
     ${renderPageHeader("INBOX FOR THE APP", tx("Notification centre", "通知中心"), tx("Informational messages stay reviewable after their corner toasts disappear.", "角落提示消失之後，資訊訊息仍然可以喺呢度翻查。"), "notifications")}
     <p class="supporting-copy" data-testid="notifications-tone">${escapeHtml(surfaceTone("notifications"))}</p>
     <div class="page-tools"><div class="page-search">${renderSearchField("notifications", tx("Search notification title, body, or kind", "搜尋通知標題、內容或者類型"))}</div><span class="count-pill">${unread} ${escapeHtml(tx("unread", "未讀"))}</span><button class="button button--outlined" type="button" data-action="request-clear-notifications" ${records.length === 0 ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Clear history", "清除記錄"))}</span></button></div>
-    <div class="record-list">${records.length ? records.map(item => `<article class="notification-card notification-card--${item.kind}${item.read ? " is-read" : ""}"><span class="notification-card__icon">${icon(item.kind === "success" ? "check" : item.kind === "warning" ? "warning" : item.kind === "error" ? "error" : "info")}</span><div><div class="record-meta"><span class="kind-badge">${escapeHtml(localizedNotificationKind(item.kind, preferences(), bilingualText))}</span><time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(formatDate(item.createdAt))}</time></div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.body)}</p></div><button class="button button--text" type="button" data-action="toggle-notification-read" data-notification-id="${escapeHtml(item.id)}" data-read="${item.read}">${escapeHtml(item.read ? tx("Mark unread", "標示為未讀") : tx("Mark read", "標示為已讀"))}</button></article>`).join("") : renderRecordEmpty("notifications")}</div>
+    <div class="record-list">${records.length ? records.map(renderNotificationRecord).join("") : renderRecordEmpty("notifications")}</div>
   </section>`;
 }
 
@@ -5924,10 +5957,12 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "refresh-drafts": await refreshDraftAndOutbox(); break;
     case "refresh-outbox": await refreshDraftAndOutbox(); break;
     case "open-draft": {
-      const account = activeAccount(); const id = button.dataset.draftId;
-      if (!account || !id) break;
-      const draft = await api.getDraft(account.id, id);
+      const accountId = button.dataset.accountId ?? activeAccount()?.id; const id = button.dataset.draftId;
+      if (!accountId || !id) break;
+      if (state.accountId !== accountId) await loadAccount(accountId, false);
+      const draft = await api.getDraft(accountId, id);
       state.compose = { draft, showCopies: Boolean(draft.cc.length || draft.bcc.length), minimized: false, cleanBaseline: composeFingerprint(draft) };
+      state.activeTab = "drafts";
       render();
       break;
     }
@@ -5938,11 +5973,12 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       break;
     }
     case "retry-pending-operation": {
-      const account = activeAccount(); const id = button.dataset.operationId;
-      if (!account || !id) break;
+      const accountId = button.dataset.accountId ?? activeAccount()?.id; const id = button.dataset.operationId;
+      if (!accountId || !id) break;
+      if (state.accountId !== accountId) await loadAccount(accountId, false);
       await withBusy("queue-operation", async () => {
         try {
-          await api.retryPendingOperation(account.id, id);
+          await api.retryPendingOperation(accountId, id);
           pushToast("success", "Queued change synchronized", "The queue head completed after exactly one manual attempt.", "排隊更改已同步", "隊首啱啱手動試咗一次，並已完成。 ");
         } finally {
           await Promise.all([refreshDraftAndOutbox(), refreshMetadata()]);
@@ -5956,11 +5992,12 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       break;
     }
     case "retry-outbox": {
-      const account = activeAccount(); const id = button.dataset.outboxId;
-      if (!account || !id) break;
+      const accountId = button.dataset.accountId ?? activeAccount()?.id; const id = button.dataset.outboxId;
+      if (!accountId || !id) break;
+      if (state.accountId !== accountId) await loadAccount(accountId, false);
       await withBusy("queue-operation", async () => {
         try {
-          const result = await api.retryOutbox(account.id, id);
+          const result = await api.retryOutbox(accountId, id);
           const disposition = classifyRendererDelivery(result);
           pushToast(
             disposition === "partial" ? "warning" : disposition === "rejected" ? "error" : "success",
@@ -5985,7 +6022,12 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       });
       break;
     }
-    case "sync": await syncCurrentAccount(); break;
+    case "sync": {
+      const accountId = button.dataset.accountId;
+      if (accountId && state.accountId !== accountId) await loadAccount(accountId, false);
+      await syncCurrentAccount();
+      break;
+    }
     case "select-unified-folder": {
       const folder = button.dataset.unifiedFolder;
       if (folder === "inbox" || folder === "starred" || folder === "unread") await loadUnifiedFolder(folder);
@@ -6141,6 +6183,15 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "toggle-notification-read": {
       const item = state.bootstrap?.notifications.find(notification => notification.id === button.dataset.notificationId);
       if (item) await withBusy(`notification-${item.id}`, async () => { await api.markNotificationRead(item.id, !item.read); item.read = !item.read; });
+      break;
+    }
+    case "toggle-notification-dismissed": {
+      const item = state.bootstrap?.notifications.find(notification => notification.id === button.dataset.notificationId);
+      if (item) await withBusy(`notification-${item.id}`, async () => {
+        await api.markNotificationDismissed(item.id, !item.dismissed);
+        item.dismissed = !item.dismissed;
+        if (item.dismissed) item.read = true;
+      });
       break;
     }
     case "request-clear-notifications": showConfirmation({ kind: "clear-notifications" }); break;

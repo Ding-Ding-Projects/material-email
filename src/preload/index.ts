@@ -60,6 +60,7 @@ const api: MaterialEmailApi = {
   retryOutbox: (accountId, outboxId) => ipcRenderer.invoke("mail:retry-outbox", accountId, outboxId),
   savePreferences: patch => ipcRenderer.invoke("preferences:save", patch),
   markNotificationRead: (id, read) => ipcRenderer.invoke("notifications:read", id, read),
+  markNotificationDismissed: (id, dismissed) => ipcRenderer.invoke("notifications:dismissed", id, dismissed),
   clearNotifications: () => ipcRenderer.invoke("notifications:clear"),
   nativeNotification: kind => ipcRenderer.invoke("notifications:native", kind),
   restoreHistory: id => ipcRenderer.invoke("history:restore", id),

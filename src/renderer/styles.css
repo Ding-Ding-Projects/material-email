@@ -580,6 +580,11 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .record-list { display: flex; flex-direction: column; gap: 12px; }
 .notification-card, .history-card { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 17px; }
 .notification-card.is-read { opacity: 0.72; }
+.notification-card.is-dismissed { border-style: dashed; }
+.notification-card__body { min-width: 0; }
+.notification-card__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.severity-badge, .dismissed-badge { display: inline-flex; align-items: center; width: fit-content; padding: 3px 7px; border: 1px solid var(--outline-variant); border-radius: 999px; color: var(--on-surface-variant); font-size: 0.66rem; font-weight: 700; }
+.dismissed-badge { border-style: dashed; }
 .notification-card__icon, .history-card__icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--secondary-container); color: var(--primary); }
 .notification-card--error .notification-card__icon { background: var(--error-container); color: var(--on-error-container); }
 .notification-card--warning .notification-card__icon { background: var(--warning-container); color: var(--warning); }
@@ -1325,7 +1330,7 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
   .server-grid .field--wide:last-child { grid-column: 1; }
   .tls-inspection-facts { grid-template-columns: 1fr; }
   .notification-card, .history-card { grid-template-columns: 42px minmax(0, 1fr); }
-  .notification-card > .button, .history-card > .button, .history-card > .button-row, .history-card > .view-only-label { grid-column: 2; justify-self: start; }
+  .notification-card__actions, .notification-card > .button, .history-card > .button, .history-card > .button-row, .history-card > .view-only-label { grid-column: 2; justify-self: start; justify-content: flex-start; }
   .tab-search-results, .group-result-list { grid-template-columns: 1fr; }
   .local-revision-row { grid-template-columns: 28px minmax(0, 1fr) !important; }
   .local-revision-row > .button-row, .local-revision-detail { grid-column: 1 / -1; }

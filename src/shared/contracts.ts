@@ -514,12 +514,26 @@ export interface Preferences {
 export interface NotificationRecord {
   id: string;
   kind: "info" | "success" | "warning" | "error";
+  category: NotificationCategory;
   title: string;
   body: string;
   createdAt: string;
   read: boolean;
-  action?: { label: string; command: string };
+  dismissed: boolean;
+  action?: NotificationAction;
 }
+
+export type NotificationCategory = "account" | "mail" | "delivery" | "security" | "history" | "system";
+
+export type NotificationPageTarget = "mail" | "drafts" | "outbox" | "settings" | "history" | "tools";
+
+export type NotificationAction =
+  | { kind: "open"; target: "page"; page: NotificationPageTarget }
+  | { kind: "open"; target: "draft"; accountId: string; draftId: string }
+  | { kind: "retry"; target: "sync"; accountId: string }
+  | { kind: "retry"; target: "pending-operation"; accountId: string; operationId: string }
+  | { kind: "retry"; target: "outbox"; accountId: string; outboxId: string }
+  | { kind: "undo"; target: "settings-revision"; historyId: string };
 
 export interface HistoryRecord {
   id: string;
@@ -687,6 +701,7 @@ export interface MaterialEmailApi {
   savePreferences(patch: Partial<Preferences>): Promise<Preferences>;
   nativeNotification(kind: NotificationRecord["kind"]): Promise<boolean>;
   markNotificationRead(id: string, read: boolean): Promise<void>;
+  markNotificationDismissed(id: string, dismissed: boolean): Promise<void>;
   clearNotifications(): Promise<void>;
   restoreHistory(id: string): Promise<HistoryRecord>;
   listLocalRevisions(): Promise<LocalRevision[]>;

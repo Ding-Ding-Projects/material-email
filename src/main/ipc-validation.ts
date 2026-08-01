@@ -258,6 +258,7 @@ export const ipcPayloadSchemas = {
   accountItem: z.tuple([identifierSchema, identifierSchema]),
   preferences: z.tuple([preferencesPatchSchema]),
   notificationRead: z.tuple([identifierSchema, z.boolean()]),
+  notificationDismissed: z.tuple([identifierSchema, z.boolean()]),
   nativeNotification: z.tuple([z.enum(["info", "success", "warning", "error"])]),
   historyId: z.tuple([identifierSchema]),
   revisionHash: z.tuple([revisionHashSchema]),
