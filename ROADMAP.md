@@ -65,7 +65,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] CardDAV/CalDAV/ICS/task-provider synchronization and broad interoperability
 - [ ] OpenPGP and S/MIME signing/encryption with clear trust UX
 - [x] Pure external-link risk assessment (HTTP, credentials, host and Unicode deception signals)
-- [ ] Phishing review dialog, certificate diagnostics, and opt-in remote-content controls
+- [x] Phishing review dialog with normalized destination, risk reasons, one-time expiry, and trusted renderer confirmation
+- [ ] Certificate diagnostics and opt-in remote-content controls
 
 ## Data and platform open
 

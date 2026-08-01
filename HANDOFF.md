@@ -8,6 +8,8 @@ A PIM service under `src/main/pim/` covers contacts, mailing lists, bounded vCar
 
 Mail mutation handling now treats false IMAP results as failures, refuses unsafe copy/delete fallback on servers without MOVE, adopts the server-returned destination UID and UIDVALIDITY without recycling the source UID, and waits for refresh when an offline or unmapped destination cannot be updated authoritatively. A permanent all-recipient SMTP 5xx returns the exact rejected recipients and keeps the draft rather than entering an outbox retry. Removing an account purges its live cache, drafts, outbox entries, and pending operations while append-only history remains available.
 
+External message links now use a deny-by-default review flow. Electron denies every popup, the main process keeps only a short-lived single-use opaque request, and the trusted renderer shows a bilingual confirmation with the normalized URL, hostname, risk, and factual warning reasons. Confirmation revalidates expiry and HTTP(S) protocol before `shell.openExternal`; cancellation, expiry, duplicate use, and browser-launch failures do not open the link.
+
 Compose and PIM editors use saved/loaded dirty baselines. Their discard decision is accessible and restores focus, replacement attempts are guarded, and the unload guard covers either dirty editor so a whole-window close cannot silently discard the form. Send/Save operations are mutually exclusive; edits made during an in-flight operation remain visible and unsaved, while the main process preserves newer same-ID draft versions. PIM saves are bound to their originating editor and keep a retryable, factual state if post-save refresh fails. Mail account/folder/message requests use monotonic ownership so late results cannot overwrite the current view.
 
 No hosted documentation site, CI release, downloadable installer containing the current corrections, or clean-machine installation proof exists at this handoff. A recorded local installer lifecycle checkpoint exists for an earlier tree and must not be mistaken for current artifact proof.
@@ -19,7 +21,8 @@ The consolidated current-tree gates pass locally. This evidence covers the sourc
 | Check | Result |
 | --- | --- |
 | Focused regression coverage | Process/IPC trust, mail mutation and SMTP outcomes, account cleanup, renderer dirty/load state, bilingual semantics, and keyboard focus |
-| `npm run check` | Passed: typecheck; 22 files / 96 tests; 10 bundled-image checks; site/source-policy checks; production build with 8 renderer modules |
+| `npm run check` | Passed on the pre-review tree: typecheck; 22 files / 96 tests; 10 bundled-image checks; site/source-policy checks; production build with 8 renderer modules |
+| Focused external-link tests | Passed: 4 existing safety tests plus 5 queue tests and IPC validation; 22 tests across 4 files |
 | `npm run test:e2e` | Passed: 15 / 15 real-Electron scenarios in one worker, including two restart paths and four deterministic concurrency cases |
 | Clean-machine and assistive-technology matrices | Not completed |
 
@@ -28,13 +31,14 @@ The coverage targets JSON/persistence behavior, process and IPC trust boundaries
 ## Security facts
 
 - Renderer sandboxing, context isolation, disabled Node integration, navigation denial, and permission denial are configured.
+- Message popups are denied; external HTTP(S) links require a trusted-renderer confirmation request with bounded opaque IDs, 60-second expiry, single-use consumption, and protocol revalidation before browser launch.
 - Packaged renderer startup ignores the development URL environment variable; unpackaged development permits only exact HTTP loopback hosts.
 - Every IPC operation authenticates the current main `WebContents`, top frame, and exact trusted renderer URL/path before validating its bounded payload.
 - Account secrets are encrypted through Electron `safeStorage` before JSON persistence and omitted from public account summaries.
 - Message HTML is allowlisted and removes scripts, styles, images, event attributes, and unsafe schemes.
 - State writes use a same-directory temporary file and rename and serialize concurrent updates.
 
-Open security work includes broader IPC payload testing, attachment scanning/quarantine, OAuth browser flow review, phishing/certificate UX, cryptographic messaging, migration testing, and PIM at-rest encryption decisions.
+Open security work includes broader IPC payload testing, certificate diagnostics and safe-link preview, attachment scanning/quarantine, OAuth browser flow review, cryptographic messaging, migration testing, and PIM at-rest encryption decisions.
 
 ## Documentation delivered in this pass
 

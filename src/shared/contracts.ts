@@ -16,6 +16,7 @@ import type {
   VCardImportResult,
 } from "../main/pim/types.js";
 import type { AttachmentRiskAssessment, AttachmentSaveReview } from "./attachment-safety.js";
+import type { ExternalLinkReason, ExternalLinkRisk } from "./external-link-safety.js";
 
 export type {
   CalendarEvent,
@@ -41,6 +42,7 @@ export type {
   AttachmentRiskReviewItem,
   AttachmentSaveReview,
 } from "./attachment-safety.js";
+export type { ExternalLinkAssessment, ExternalLinkReason, ExternalLinkRisk } from "./external-link-safety.js";
 
 export type LanguageMode = "en" | "yue" | "bilingual";
 export type ThemeMode = "light" | "dark" | "system";
@@ -270,8 +272,20 @@ export interface SyncResult {
   syncedAt: string;
 }
 
+export interface ExternalLinkReviewRequest {
+  requestId: string;
+  normalizedUrl: string;
+  hostname: string;
+  risk: ExternalLinkRisk;
+  reasons: ExternalLinkReason[];
+  expiresAt: number;
+}
+
 export interface MaterialEmailApi {
   onMailto(callback: (url: string) => void): () => void;
+  onExternalLinkReview(callback: (request: ExternalLinkReviewRequest) => void): () => void;
+  confirmExternalLink(requestId: string): Promise<void>;
+  cancelExternalLink(requestId: string): Promise<boolean>;
   bootstrap(): Promise<BootstrapState>;
   chooseAttachments(): Promise<string[]>;
   createDemoAccount(): Promise<AccountSummary>;

@@ -7,6 +7,13 @@ const api: MaterialEmailApi = {
     ipcRenderer.on("app:mailto", listener);
     return () => ipcRenderer.removeListener("app:mailto", listener);
   },
+  onExternalLinkReview: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, request: Parameters<typeof callback>[0]) => callback(request);
+    ipcRenderer.on("external-link:review", listener);
+    return () => ipcRenderer.removeListener("external-link:review", listener);
+  },
+  confirmExternalLink: requestId => ipcRenderer.invoke("external-link:confirm", requestId),
+  cancelExternalLink: requestId => ipcRenderer.invoke("external-link:cancel", requestId),
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
   chooseAttachments: () => ipcRenderer.invoke("dialog:attachments"),
   createDemoAccount: () => ipcRenderer.invoke("account:create-demo"),

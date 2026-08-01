@@ -16,6 +16,7 @@ import type {
   TransactionFilter,
 } from "../shared/contracts.js";
 import { ipcPayloadSchemas, parseIpcArgs } from "./ipc-validation.js";
+import { ExternalLinkReviewQueue } from "./external-link-review.js";
 import { assessExternalLink } from "../shared/external-link-safety.js";
 import {
   assertTrustedRendererClaim,
@@ -29,6 +30,7 @@ let activeTrustedRendererUrl: string | null = null;
 let service: AppService;
 const nativeNotificationLastShown = new Map<string, number>();
 const pendingMailto: string[] = [];
+const externalLinkReviews = new ExternalLinkReviewQueue();
 const isCiSmoke = process.argv.includes("--ci-smoke");
 const isHeadlessHarness = process.env.MATERIAL_EMAIL_HEADLESS === "1";
 const ciSmokeOutput = process.argv.find(argument => argument.startsWith("--ci-smoke-output="))?.slice("--ci-smoke-output=".length);
@@ -153,6 +155,11 @@ const registerIpc = (trustedRendererUrl: string): void => {
   );
   handleValidated("editor:detect", ipcPayloadSchemas.none, () => service.detectEditors());
   handleValidated("editor:open", ipcPayloadSchemas.editorOpen, ([editorPath]) => service.openExternalEditor(editorPath));
+  handleValidated("external-link:confirm", ipcPayloadSchemas.externalLinkRequest, async ([requestId]) => {
+    const url = externalLinkReviews.takeForConfirmation(requestId);
+    await shell.openExternal(url);
+  });
+  handleValidated("external-link:cancel", ipcPayloadSchemas.externalLinkRequest, ([requestId]) => externalLinkReviews.cancel(requestId));
   handleValidated("window:minimize", ipcPayloadSchemas.none, () => mainWindow?.minimize());
   handleValidated("window:maximize", ipcPayloadSchemas.none, () => {
     if (!mainWindow) return false;
@@ -174,6 +181,12 @@ const deliverMailto = (commandLine: string[]): void => {
     ) mainWindow.webContents.send("app:mailto", argument);
     else pendingMailto.push(argument);
   }
+};
+
+const deliverExternalLinkReview = (rawUrl: string): void => {
+  if (!mainWindow || !activeTrustedRendererUrl || !isTrustedRendererFrameUrl(mainWindow.webContents.getURL(), activeTrustedRendererUrl)) return;
+  const request = externalLinkReviews.create(rawUrl);
+  if (request) mainWindow.webContents.send("external-link:review", request);
 };
 
 const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> => {
@@ -201,7 +214,8 @@ const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> =
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     const assessment = assessExternalLink(url);
-    if (assessment.risk !== "dangerous" && assessment.normalizedUrl) void shell.openExternal(assessment.normalizedUrl);
+    if (assessment.risk === "ordinary" && assessment.normalizedUrl) void shell.openExternal(assessment.normalizedUrl);
+    else deliverExternalLinkReview(url);
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", event => event.preventDefault());
@@ -230,6 +244,7 @@ const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> =
     }
   });
   mainWindow.on("closed", () => {
+    externalLinkReviews.clear();
     mainWindow = null;
     activeTrustedRendererUrl = null;
   });

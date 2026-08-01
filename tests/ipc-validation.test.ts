@@ -58,6 +58,14 @@ describe("non-PIM IPC validation", () => {
     );
   });
 
+  it("accepts only fixed-length opaque external-link request IDs", () => {
+    expect(ipcPayloadSchemas.externalLinkRequest.parse(["abcdefghijklmnopqrstuvwxyzABCDEF"])).toEqual(["abcdefghijklmnopqrstuvwxyzABCDEF"]);
+    for (const candidate of ["short", "a".repeat(31), "a".repeat(33), `${"a".repeat(31)}!`]) {
+      expect(() => ipcPayloadSchemas.externalLinkRequest.parse([candidate])).toThrow();
+    }
+    expect(() => ipcPayloadSchemas.externalLinkRequest.parse(["a".repeat(32), "smuggled"])).toThrow();
+  });
+
   it("strictly validates risky attachment review acknowledgements", () => {
     expect(ipcPayloadSchemas.saveAttachment.parse(["account-1", "Inbox", 8, 2, riskyAttachmentReview()])).toHaveLength(5);
     expect(ipcPayloadSchemas.saveAllAttachments.parse(["account-1", "Inbox", 8, riskyAttachmentReview()])).toHaveLength(4);

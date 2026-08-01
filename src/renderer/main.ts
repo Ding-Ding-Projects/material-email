@@ -31,6 +31,7 @@ import type {
   Task,
   TaskPatch,
   TransactionFilter,
+  ExternalLinkReviewRequest,
 } from "../shared/contracts";
 import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts";
 import { icon, type IconName } from "./lib/icons";
@@ -145,7 +146,8 @@ type ConfirmationState =
   | { kind: "discard-pending-operation"; accountId: string; operationId: string; label: string }
   | { kind: "delete-pim"; entityKind: PimEntityKind; uid: string; label: string }
   | { kind: "bulk-close-tabs"; tabIds: PageId[]; inverse: boolean }
-  | { kind: "save-risky-attachments"; target: number | "all"; review: AttachmentSaveReview };
+  | { kind: "save-risky-attachments"; target: number | "all"; review: AttachmentSaveReview }
+  | { kind: "external-link"; request: ExternalLinkReviewRequest };
 
 interface FiltersState {
   historyFrom: string;
@@ -369,6 +371,7 @@ let narrationQueue: Array<{ text: string; language: "en" | "yue" }> = [];
 let narratorSpeaking = false;
 let draggedTab: PageId | null = null;
 let disposeMailtoActivation: (() => void) | null = null;
+let disposeExternalLinkReview: (() => void) | null = null;
 let mailNavigationSequence = 0;
 let accountRequestSequence = 0;
 let folderRequestSequence = 0;
@@ -1859,6 +1862,19 @@ const attachmentRiskReasonLabel = (reason: AttachmentRiskReason): string => {
   }
 };
 
+const externalLinkReasonLabel = (reason: ExternalLinkReviewRequest["reasons"][number]): string => {
+  switch (reason) {
+    case "http": return tx("Unencrypted HTTP", "未加密 HTTP");
+    case "credentials": return tx("Address contains credentials", "網址包含登入資料");
+    case "ip-literal": return tx("IP address instead of a host name", "用 IP 位址代替主機名稱");
+    case "non-default-port": return tx("Non-default network port", "非預設網絡連接埠");
+    case "punycode": return tx("Punycode host name", "Punycode 主機名稱");
+    case "bidi-control": return tx("Bidirectional control character", "雙向文字控制符");
+    case "visible-host-mismatch": return tx("Visible host differs from destination", "顯示主機同目的地唔一致");
+    case "malformed": return tx("Malformed address", "網址格式錯誤");
+  }
+};
+
 const attachmentRiskLevelLabel = (attachment: AttachmentSummary): string =>
   attachment.risk.level === "dangerous" ? tx("Dangerous", "危險") : tx("Caution", "小心");
 
@@ -2376,6 +2392,7 @@ function showConfirmation(confirmation: ConfirmationState, returnFocusKey?: stri
 
 function cancelConfirmation(): void {
   const confirmation = state.confirmation;
+  if (confirmation?.kind === "external-link") void api.cancelExternalLink(confirmation.request.requestId).catch(() => undefined);
   const pimReturnName = confirmation?.kind === "discard-pim-editor" || confirmation?.kind === "replace-pim-editor"
     ? state.pimEditorLastFocusName
     : null;
@@ -2460,6 +2477,17 @@ function renderConfirmation(): string {
     confirmLabel = confirmation.target === "all" ? tx("Save reviewed batch", "儲存已審閱批次") : tx("Save reviewed attachment", "儲存已審閱附件");
     cancelLabel = tx("Cancel save", "取消儲存");
     detailsMarkup = `<ul class="attachment-review-list" id="confirmation-details" aria-label="${escapeHtml(tx("Risky attachments to review", "要審閱嘅有風險附件"))}">${confirmation.review.riskyAttachments.map(item => `<li><div><strong><bdi>${escapeHtml(item.filename)}</bdi></strong><span class="attachment-risk-badge attachment-risk-badge--${item.level}">${escapeHtml(item.level === "dangerous" ? tx("Dangerous", "危險") : tx("Caution", "小心"))}</span></div><small>${escapeHtml(item.reasons.map(attachmentRiskReasonLabel).join(" · "))}</small></li>`).join("")}</ul>`;
+  } else if (confirmation.kind === "external-link") {
+    const request = confirmation.request;
+    title = tx("Review external link before opening", "開啟外部連結之前先審閱");
+    body = tx(
+      "This link came from message content and has been stopped before any browser window opened. Check the normalized address and warning signs before continuing.",
+      "呢條連結來自郵件內容，已經喺瀏覽器視窗開啟之前停低。繼續之前請檢查標準化網址同警號。",
+    );
+    confirmLabel = tx("Open in browser", "用瀏覽器開啟");
+    cancelLabel = tx("Do not open", "唔好開啟");
+    const riskLabel = request.risk === "dangerous" ? tx("Dangerous", "危險") : request.risk === "caution" ? tx("Caution", "小心") : tx("No detected warning", "未發現警號");
+    detailsMarkup = `<div class="external-link-review" id="confirmation-details"><p><strong>${escapeHtml(tx("Destination", "目的地"))}</strong><code class="external-link-review__url" tabindex="0"><bdi>${escapeHtml(request.normalizedUrl)}</bdi></code></p><p><strong>${escapeHtml(tx("Host", "主機"))}</strong> <bdi>${escapeHtml(request.hostname)}</bdi> · <span class="attachment-risk-badge attachment-risk-badge--${request.risk}">${escapeHtml(riskLabel)}</span></p>${request.reasons.length ? `<p><strong>${escapeHtml(tx("Why it was flagged", "點解標記咗"))}</strong> ${escapeHtml(request.reasons.map(externalLinkReasonLabel).join(" · "))}</p>` : ""}</div>`;
   } else {
     title = tx("Send without a subject?", "冇主旨都寄出？");
     body = tx("Recipients and body are present, but the subject is empty. The message will still be sent or queued if you continue.", "收件人同內容都有，但主旨係空白。繼續之後，郵件仍然會寄出或者排入寄件匣。 ");
@@ -3340,6 +3368,17 @@ const handleConfirmation = async (): Promise<void> => {
     await saveReaderAttachment(confirmation.target, confirmation.review);
     return;
   }
+  if (confirmation.kind === "external-link") {
+    await withBusy("external-link-open", async () => {
+      try {
+        await api.confirmExternalLink(confirmation.request.requestId);
+        pushToast("success", "Link opened", "The reviewed address was handed to your default browser.", "連結已開啟", "已審閱嘅網址交畀預設瀏覽器開啟。 ");
+      } catch (error) {
+        pushToast("error", "Link was not opened", errorMessage(error), "連結未有開啟", errorMessage(error));
+      }
+    });
+    return;
+  }
   if (confirmation.kind === "bulk-close-tabs") {
     for (const id of confirmation.tabIds) {
       if (!state.tabPreferences.closed.includes(id)) state.tabPreferences.closed.push(id);
@@ -4167,7 +4206,18 @@ window.addEventListener("beforeunload", event => {
   if (composerIsDirty() || state.pimEditorDirty) { event.preventDefault(); event.returnValue = ""; }
 });
 window.addEventListener("unload", () => disposeMailtoActivation?.());
+window.addEventListener("unload", () => disposeExternalLinkReview?.());
 
 if (typeof api?.onMailto === "function") disposeMailtoActivation = api.onMailto(url => handleMailtoActivation(url));
+if (typeof api?.onExternalLinkReview === "function") {
+  disposeExternalLinkReview = api.onExternalLinkReview(request => {
+    if (state.phase !== "ready" || state.confirmation) {
+      void api.cancelExternalLink(request.requestId).catch(() => undefined);
+      pushToast("warning", "Link review postponed", "Another review is already active, so this browser request was not opened.", "連結審閱延後", "另一個審閱已經進行緊，所以呢次瀏覽器要求冇開啟。 ");
+      return;
+    }
+    showConfirmation({ kind: "external-link", request });
+  });
+}
 
 void initialize();

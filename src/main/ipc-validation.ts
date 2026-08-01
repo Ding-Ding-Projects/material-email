@@ -10,6 +10,7 @@ export const folderPathSchema = z.string().min(1).max(2_048).refine(noHeaderBrea
 export const messageUidSchema = z.number().int().min(1).max(0xffff_ffff);
 export const attachmentIndexSchema = z.number().int().min(0).max(9_999);
 export const revisionHashSchema = z.string().regex(/^[a-f0-9]{7,40}$/iu);
+export const externalLinkRequestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{32}$/u);
 export const nativePathSchema = z
   .string()
   .min(1)
@@ -158,6 +159,7 @@ export const ipcPayloadSchemas = {
   revisionHash: z.tuple([revisionHashSchema]),
   exportData: z.tuple([z.enum(["history", "settings", "changelog"]), z.string().max(32 * 1024 * 1024), suggestedFilenameSchema]),
   editorOpen: z.union([z.tuple([]), z.tuple([z.undefined()]), z.tuple([nativePathSchema])]),
+  externalLinkRequest: z.tuple([externalLinkRequestIdSchema]),
 } as const;
 
 export const parseIpcArgs = <Schema extends z.ZodType>(channel: string, schema: Schema, args: unknown[]): z.output<Schema> => {

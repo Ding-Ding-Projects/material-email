@@ -57,12 +57,25 @@ describe("Electron security boundary", () => {
       "data:export",
       "editor:detect",
       "editor:open",
+      "external-link:confirm",
+      "external-link:cancel",
       "window:minimize",
       "window:maximize",
       "window:close",
     ];
     for (const channel of channels) expect(main).toContain(`handleValidated("${channel}"`);
     expect(main).not.toMatch(/ipcMain\.handle\("(?:account|mail|preferences|notifications|history|data|editor|window):/u);
+  });
+
+  it("denies popup creation and reviews only links with warning signals", async () => {
+    const main = await read("src/main/index.ts");
+    const popupHandler = main.slice(main.indexOf("setWindowOpenHandler"), main.indexOf('will-navigate"'));
+    expect(popupHandler).toContain('return { action: "deny" }');
+    expect(popupHandler).toContain('assessment.risk === "ordinary"');
+    expect(popupHandler).toContain("deliverExternalLinkReview(url)");
+    expect(main).toContain('mainWindow.webContents.send("external-link:review", request)');
+    expect(main).toContain("externalLinkReviews.takeForConfirmation(requestId)");
+    expect(main).toContain("await shell.openExternal(url)");
   });
 
   it("authenticates every IPC sender against the current top-level trusted renderer", async () => {

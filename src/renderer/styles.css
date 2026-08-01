@@ -993,6 +993,9 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .confirmation-dialog { width: min(460px, 94vw); display: grid; justify-items: center; gap: 12px; padding: 28px; border-radius: var(--radius-xl); background: var(--surface-container-high); box-shadow: var(--elevation-3); text-align: center; }
 .confirmation-dialog h2, .confirmation-dialog p { margin: 0; }
 .confirmation-dialog p { color: var(--on-surface-variant); }
+.external-link-review { width: 100%; display: grid; gap: 8px; text-align: start; overflow-wrap: anywhere; }
+.external-link-review p { margin: 0; }
+.external-link-review__url { display: block; max-height: 7.5rem; overflow: auto; margin-top: 4px; padding: 8px; border: 1px solid var(--outline-variant); border-radius: var(--radius-sm); color: var(--on-surface); background: var(--surface-container-low); white-space: pre-wrap; overflow-wrap: anywhere; }
 .attachment-review-list { width: 100%; max-height: min(260px, 35vh); margin: 0; padding: 0; overflow: auto; display: grid; gap: 7px; list-style: none; text-align: start; }
 .attachment-review-list li { display: grid; gap: 4px; padding: 9px 11px; border: 1px solid var(--outline-variant); border-radius: var(--radius-md); background: var(--surface-container); }
 .attachment-review-list li > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
