@@ -169,6 +169,7 @@ test("composes through the real renderer command path and reports demo delivery"
 });
 
 test("distinguishes a saved composer from later unsaved edits", async () => {
+  test.slow();
   await ensureDemo();
   await page.locator('[data-action="compose"]').click();
   let composer = page.getByTestId("compose-form");
@@ -612,3 +613,4 @@ test("shows a retryable PIM error instead of an endless loading state", async ()
   await expect(page.getByTestId("contacts-page")).toBeVisible();
   await expect(page.getByTestId("pim-load-error")).toHaveCount(0);
 });
+

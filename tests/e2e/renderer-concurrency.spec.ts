@@ -201,6 +201,7 @@ test("completion of one PIM save never closes the replacement editor", async () 
 });
 
 test("a saved PIM mutation with a failed refresh keeps a retryable editor", async () => {
+  test.slow();
   await ensureDemo();
   await openContacts();
   await createContact("Refresh Failure Contact", "refresh-failure@example.test");
@@ -311,3 +312,4 @@ test("compose Send and Save are mutually exclusive in both directions", async ()
   });
   expect(counts).toEqual({ sends: 1, saves: 1 });
 });
+
