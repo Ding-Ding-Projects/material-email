@@ -373,6 +373,48 @@ test("resets live appearance controls without changing language", async () => {
   await expect(page.locator('[data-pref="language"]')).toHaveValue("bilingual");
 });
 
+test("keeps workspace tab focus and tabpanel semantics during keyboard navigation", async () => {
+  await ensureDemo();
+
+  const strip = page.getByTestId("tab-strip");
+  const settingsTab = strip.locator('[role="tab"][data-tab-id="settings"]');
+  const changelogTab = strip.locator('[role="tab"][data-tab-id="changelog"]');
+  await expect(strip).toHaveAccessibleName(/Workspace tabs/i);
+  await settingsTab.focus();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(changelogTab).toBeFocused();
+  await expect(changelogTab).toHaveAttribute("aria-selected", "true");
+  await expect(changelogTab).toHaveAccessibleName(/Changelog/i);
+  await expect(changelogTab).toHaveAttribute("tabindex", "0");
+  await expect(settingsTab).toHaveAttribute("aria-selected", "false");
+  await expect(settingsTab).toHaveAttribute("tabindex", "-1");
+  await expect(strip.locator('[role="tab"][tabindex="0"]')).toHaveCount(1);
+
+  const focusIndicator = await changelogTab.evaluate(element => {
+    const style = getComputedStyle(element);
+    return {
+      offset: style.outlineOffset,
+      style: style.outlineStyle,
+      width: style.outlineWidth,
+    };
+  });
+  expect(focusIndicator).toEqual({ offset: "-3px", style: "solid", width: "3px" });
+
+  const panelId = await changelogTab.getAttribute("aria-controls");
+  expect(panelId).toBe("panel-changelog");
+  const panel = page.locator(`#${panelId}`);
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("role", "tabpanel");
+  await expect(panel).toHaveAttribute("aria-labelledby", "tab-changelog");
+  await expect(panel).toHaveAccessibleName(/Changelog/i);
+
+  await page.keyboard.press("End");
+  await expect(strip.locator('[role="tab"][data-tab-id="tools"]')).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(strip.locator('[role="tab"][data-tab-id="mail"]')).toBeFocused();
+});
+
 test("edits one workspace tab with validated persistence, per-property reset, and keyboard focus return", async () => {
   await ensureDemo();
   let settingsTab = page.locator('[role="tab"][data-tab-id="settings"]');

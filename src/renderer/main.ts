@@ -2805,14 +2805,15 @@ const preferencePatchFromControl = (control: HTMLInputElement | HTMLSelectElemen
   }
 };
 
-const activateTab = (id: PageId): void => {
+const activateTab = (id: PageId, focusTarget: "panel" | "tab" = "panel"): void => {
   state.tabPreferences.closed = state.tabPreferences.closed.filter(tab => tab !== id);
   state.activeTab = id;
   state.tabManagerOpen = false;
   state.contextMenu = null;
+  if (focusTarget === "tab") pendingFocusKey = tabFocusKey(id);
   persistTabs();
   render();
-  document.querySelector<HTMLElement>("#main-content")?.focus({ preventScroll: true });
+  if (focusTarget === "panel") document.querySelector<HTMLElement>("#main-content")?.focus({ preventScroll: true });
   if (id === "history" && !state.localRevisionsLoaded) void loadLocalRevisions();
   if (id === "contacts" || id === "calendar" || id === "tasks") void ensurePimData();
   if (id === "drafts" || id === "outbox") {
@@ -4480,7 +4481,7 @@ document.addEventListener("keydown", event => {
     event.preventDefault();
     const visible = visibleTabIds(); const current = visible.indexOf(tabButton.dataset.tabId as PageId);
     const index = event.key === "Home" ? 0 : event.key === "End" ? visible.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + visible.length) % visible.length;
-    const id = visible[index]; if (id) activateTab(id); return;
+    const id = visible[index]; if (id) activateTab(id, "tab"); return;
   }
   if (tabButton && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
     event.preventDefault(); const id = tabButton.dataset.tabId as PageId; if (ALL_TAB_IDS.includes(id)) openTabContextFromKeyboard(tabButton, id); return;

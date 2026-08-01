@@ -368,6 +368,7 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .workspace-tab.is-active { background: var(--tab-custom-bg, var(--surface)); box-shadow: inset 0 -3px var(--primary); }
 .workspace-tab:not([style]).is-active { background: var(--surface); color: var(--on-surface); }
 .workspace-tab__main { min-width: 0; flex: 1; height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 0; background: transparent; font-size: var(--tab-custom-size); font-weight: var(--tab-custom-weight); }
+.workspace-tab__main:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; border-radius: inherit; }
 .workspace-tab__main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-tab__main .icon { width: 17px; height: 17px; }
 .tab-close { width: 27px; height: 27px; display: grid; place-items: center; margin-right: 4px; padding: 0; border: 0; border-radius: 50%; background: transparent; }

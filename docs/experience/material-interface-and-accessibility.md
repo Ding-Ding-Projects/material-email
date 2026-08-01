@@ -2,13 +2,13 @@
 
 ## Status
 
-**Renderer integrated with focused Electron accessibility verification.** Dirty-state decisions, modal focus containment/return, load errors, and representative bilingual semantics pass; full visual and assistive-technology matrices remain open.
+**Renderer integrated with focused Electron accessibility verification.** Dirty-state decisions, modal focus containment/return, workspace-tab roving focus, load errors, and representative bilingual semantics pass; full visual and assistive-technology matrices remain open.
 
 ## Behavior
 
 The planned application shell uses a Windows title bar, navigation rail, browser-style workspace tabs, and discrete Mail, Settings, Changelog, History, Notifications, and Tools panels. Mail uses folder, message-list, and reader panes. Informational feedback appears as corner notifications rather than blocking dialogs.
 
-Semantic tab/tablist/tabpanel relationships, roving tab focus, named controls, live regions, skip navigation, and keyboard commands are part of the implementation contract. Compose and PIM forms compare against loaded/saved dirty baselines before prompting, and either dirty editor prevents an unreviewed whole-window unload. Their discard decision is named and keyboard operable, cancellation returns focus to the originating control, and PIM load failures remain visible with an explicit retry action rather than collapsing into an empty page.
+Semantic tab/tablist/tabpanel relationships, roving tab focus, named controls, live regions, skip navigation, and keyboard commands are part of the implementation contract. The primary workspace tab strip now keeps focus on the selected tab during arrow, Home, and End navigation and uses an inset focus indicator that remains inside the horizontally scrollable strip. Compose and PIM forms compare against loaded/saved dirty baselines before prompting, and either dirty editor prevents an unreviewed whole-window unload. Their discard decision is named and keyboard operable, cancellation returns focus to the originating control, and PIM load failures remain visible with an explicit retry action rather than collapsing into an empty page.
 
 ## Configuration
 
@@ -29,7 +29,7 @@ Never render untrusted message markup into the application chrome. Accessibility
 
 ## Verification
 
-The 15-scenario Electron suite covers dirty baselines, replacement and unload prevention, async editor ownership, the accessible discard decision, modal Tab/Escape containment, exact focus return, explicit PIM load-error retry, and representative bilingual language semantics at 760 × 560. Full keyboard traversal, native screen-reader announcements, high-contrast mode, forced colors, 100/125/150/200% display scaling, RTL, clean-machine rendering, and Windows title-bar behavior remain open.
+The previously recorded 15-scenario Electron suite covers dirty baselines, replacement and unload prevention, async editor ownership, the accessible discard decision, modal Tab/Escape containment, exact focus return, explicit PIM load-error retry, and representative bilingual language semantics at 760 × 560. A separate focused real-Electron regression passes for workspace-tab Arrow/End/Home focus, roving tabindex state, tab/tabpanel naming, and the visible inset focus rule. Full keyboard traversal, native screen-reader announcements, high-contrast mode, forced colors, 100/125/150/200% display scaling, RTL, clean-machine rendering, and Windows title-bar behavior remain open.
 
 ## Suggested articles
 

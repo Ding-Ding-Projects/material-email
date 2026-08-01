@@ -43,9 +43,10 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Integrate the mail/settings/history/notifications/changelog/tools renderer with the preload API
 - [x] Integrate Contacts, Mailing Lists, Calendar, Tasks, and PIM transaction history with typed preload/IPC operations
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
+- [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
 - [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 34 files / 160 tests on the current tree; the previously recorded Electron suite passed 15 / 15 scenarios and the new focused remote-content/bilingual run passed 2 / 2)
 - [ ] Exercise every user-visible path in a packaged Electron session
-- [ ] Run keyboard, screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling checks
+- [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling matrices (the primary workspace-tab Arrow/Home/End slice alone is verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
 - [ ] Verify plain-text and regex search from every search surface, including invalid, Unicode, multiline, capture, zero-width, and adversarial cases
 - [ ] Test a real IMAP/SMTP account without exposing credentials or private messages in evidence
