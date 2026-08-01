@@ -52,9 +52,20 @@ jobs:
         shell: pwsh
         run: |
           $catalog = Get-Content -Raw "src/renderer/assets/dim-sum/release-catalog.json" | ConvertFrom-Json
-          $used = @(
-            gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].assets[].name'
-          )
+          $used = @()
+          $lastError = $null
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $response = gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].assets[].name' 2>&1
+            if ($LASTEXITCODE -eq 0) {
+              $used = @($response | Where-Object { $_ -and $_.Trim() })
+              break
+            }
+            $lastError = ($response -join " ")
+            if ($attempt -lt 3) { Start-Sleep -Seconds ([int](5 * $attempt)) }
+          }
+          if ($lastError -and $used.Count -eq 0) {
+            throw "Could not read published release assets after three attempts; refusing to guess a reusable code name. Last API error: $lastError"
+          }
           $candidate = $catalog | Where-Object { $used -notcontains $_.file } | Select-Object -First 1
           if (-not $candidate) {
             throw "No unused verified dim-sum image remains in the bundled release catalog."
