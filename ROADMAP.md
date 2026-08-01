@@ -55,7 +55,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 
 - [ ] Interactive OAuth authorization flow and token lifecycle
 - [ ] POP support
-- [ ] User-facing retry ceilings and conflict resolution for queued mail operations
+- [x] User-facing retry ceilings and conflict resolution for queued mail operations
 - [ ] Unified folders and cross-account views
 - [ ] Conversation threading and complete search indexing
 - [ ] Attachment quarantine/scanner integration and unsafe-file warnings

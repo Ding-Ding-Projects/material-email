@@ -40,6 +40,8 @@ export type DensityMode = "compact" | "comfortable" | "relaxed";
 export type MailSecurity = "tls" | "starttls" | "plain";
 export type AuthMode = "password" | "oauth2";
 
+export const AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT = 3;
+
 export interface ServerSettings {
   host: string;
   port: number;
@@ -149,7 +151,28 @@ export interface LocalDraftSummary {
   savedAt?: string;
 }
 
-export interface OutboxSummary {
+export interface MailQueueRetryState {
+  attempts: number;
+  automaticAttemptLimit: number;
+  automaticRetryPaused: boolean;
+  isQueueHead: boolean;
+}
+
+export interface PendingOperationSummary extends MailQueueRetryState {
+  id: string;
+  accountId: string;
+  kind: "flags" | "move";
+  folderPath: string;
+  uid: number;
+  uidValidity?: string;
+  patch?: { unread?: boolean; starred?: boolean };
+  destination?: string;
+  createdAt: string;
+  lastError: string;
+  conflictReason?: string;
+}
+
+export interface OutboxSummary extends MailQueueRetryState {
   id: string;
   accountId: string;
   recipientCount: number;
@@ -157,7 +180,6 @@ export interface OutboxSummary {
   preview: string;
   attachmentCount: number;
   createdAt: string;
-  attempts: number;
   lastError: string;
 }
 
@@ -261,6 +283,9 @@ export interface MaterialEmailApi {
   listDrafts(accountId: string): Promise<LocalDraftSummary[]>;
   getDraft(accountId: string, draftId: string): Promise<ComposeDraft>;
   deleteDraft(accountId: string, draftId: string): Promise<boolean>;
+  listPendingOperations(accountId: string): Promise<PendingOperationSummary[]>;
+  retryPendingOperation(accountId: string, operationId: string): Promise<void>;
+  discardPendingOperation(accountId: string, operationId: string): Promise<void>;
   listOutbox(accountId: string): Promise<OutboxSummary[]>;
   cancelOutbox(accountId: string, outboxId: string): Promise<ComposeDraft>;
   retryOutbox(accountId: string, outboxId: string): Promise<SendResult>;

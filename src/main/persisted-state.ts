@@ -149,7 +149,9 @@ const pendingOperationSchema = z
   })
   .refine(
     operation =>
-      (operation.kind === "flags" && operation.patch !== undefined) ||
+      (operation.kind === "flags" &&
+        operation.patch !== undefined &&
+        (operation.patch.unread !== undefined || operation.patch.starred !== undefined)) ||
       (operation.kind === "move" && operation.destination !== undefined),
     "Queued operations must contain the data required by their kind.",
   );

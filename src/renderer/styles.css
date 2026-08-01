@@ -539,6 +539,19 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .notification-card p, .history-card p { color: var(--on-surface-variant); }
 .record-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; color: var(--on-surface-variant); font-size: 0.7rem; }
 .record-meta time { margin-left: auto; }
+.queue-section { display: grid; gap: 12px; margin-top: 22px; }
+.queue-section > h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; }
+.queue-card { align-items: start; }
+.queue-card--conflict { border-color: color-mix(in srgb, var(--error) 58%, var(--outline-variant)); }
+.queue-card__body { min-width: 0; }
+.queue-card__body small { display: block; margin-top: 8px; overflow-wrap: anywhere; color: var(--on-surface-variant); }
+.queue-head-badge { padding: 3px 8px; border-radius: 999px; background: var(--primary-container); color: var(--on-primary-container); font-weight: 750; }
+.queue-status { display: flex; align-items: flex-start; gap: 8px; margin-block: 10px !important; padding: 10px 12px; border-radius: var(--radius-md); }
+.queue-status > .icon { flex: 0 0 auto; margin-top: 2px; }
+.queue-status > span { display: grid; gap: 2px; }
+.queue-status--paused { background: var(--warning-container); color: var(--on-surface); }
+.queue-status--conflict { background: var(--error-container); color: var(--on-error-container) !important; }
+.queue-error { overflow-wrap: anywhere; }
 .view-only-label { color: var(--on-surface-variant); font-size: 0.74rem; }
 .filter-surface { margin-bottom: 16px; padding: 16px; }
 .date-filter { display: flex; align-items: end; gap: 8px; margin-top: 12px; }
@@ -1027,7 +1040,7 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
   .form-grid, .server-grid, .credential-grid, .bulk-options { grid-template-columns: 1fr; }
   .server-grid .field--wide:last-child { grid-column: 1; }
   .notification-card, .history-card { grid-template-columns: 42px minmax(0, 1fr); }
-  .notification-card > .button, .history-card > .button, .history-card > .view-only-label { grid-column: 2; justify-self: start; }
+  .notification-card > .button, .history-card > .button, .history-card > .button-row, .history-card > .view-only-label { grid-column: 2; justify-self: start; }
   .tab-search-results, .group-result-list { grid-template-columns: 1fr; }
   .compose-sheet { inset: auto 8px 8px 60px; width: auto; height: calc(100vh - 90px); }
   .setup-dialog { width: calc(100vw - 18px); height: calc(100vh - 18px); }

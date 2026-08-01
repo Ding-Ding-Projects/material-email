@@ -17,6 +17,7 @@ import type {
   LocalRevision,
   LocalDraftSummary,
   OutboxSummary,
+  PendingOperationSummary,
   MailingList,
   MailingListPatch,
   MessageDetail,
@@ -28,6 +29,7 @@ import type {
   TaskPatch,
   TransactionFilter,
 } from "../shared/contracts";
+import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts";
 import { icon, type IconName } from "./lib/icons";
 import { classifyRendererDelivery, shouldKeepComposerOpen } from "./lib/delivery";
 import {
@@ -126,6 +128,7 @@ type ConfirmationState =
   | { kind: "discard-pim-editor"; label: string }
   | { kind: "replace-pim-editor"; entityKind: PimEntityKind; uid: string | null; returnFocusKey: string | null }
   | { kind: "send-empty-subject" }
+  | { kind: "discard-pending-operation"; accountId: string; operationId: string; label: string }
   | { kind: "delete-pim"; entityKind: PimEntityKind; uid: string; label: string }
   | { kind: "bulk-close-tabs"; tabIds: PageId[]; inverse: boolean };
 
@@ -210,6 +213,7 @@ interface RendererState {
   confirmationReturnFocusKey: string | null;
   pimFilters: PimFilterState;
   localDrafts: LocalDraftSummary[];
+  pendingOperations: PendingOperationSummary[];
   outboxItems: OutboxSummary[];
 }
 
@@ -331,6 +335,7 @@ const state: RendererState = {
   confirmationReturnFocusKey: null,
   pimFilters: { actions: new Set(), kinds: new Set(), from: "", to: "" },
   localDrafts: [],
+  pendingOperations: [],
   outboxItems: [],
 };
 
@@ -1359,8 +1364,13 @@ function renderActivePage(): string {
 const refreshDraftAndOutbox = async (): Promise<void> => {
   const account = activeAccount();
   if (!account) return;
-  const [localDrafts, outboxItems] = await Promise.all([api.listDrafts(account.id), api.listOutbox(account.id)]);
+  const [localDrafts, pendingOperations, outboxItems] = await Promise.all([
+    api.listDrafts(account.id),
+    api.listPendingOperations(account.id),
+    api.listOutbox(account.id),
+  ]);
   state.localDrafts = localDrafts;
+  state.pendingOperations = pendingOperations;
   state.outboxItems = outboxItems;
   render();
 };
@@ -1378,10 +1388,38 @@ function renderDraftsPage(): string {
 function renderOutboxPage(): string {
   const account = activeAccount();
   if (!account) return renderNoAccount();
+  const queueBusy = isBusy("queue-operation");
+  const pendingRows = state.pendingOperations.map(item => {
+    const title = item.kind === "move"
+      ? tx(`Move Inbox identity UID ${item.uid} to ${item.destination ?? "the selected folder"}`, `搬 Inbox 身份 UID ${item.uid} 去 ${item.destination ?? "所選資料夾"}`)
+      : tx(`Update flags for UID ${item.uid} in ${item.folderPath}`, `更新 ${item.folderPath} 入面 UID ${item.uid} 嘅旗標`);
+    const change = item.kind === "move"
+      ? tx(`Destination: ${item.destination ?? "missing"}`, `目的地：${item.destination ?? "欠缺"}`)
+      : [
+          item.patch?.unread === undefined ? "" : tx(`Unread: ${item.patch.unread ? "yes" : "no"}`, `未讀：${item.patch.unread ? "係" : "唔係"}`),
+          item.patch?.starred === undefined ? "" : tx(`Starred: ${item.patch.starred ? "yes" : "no"}`, `星號：${item.patch.starred ? "有" : "冇"}`),
+        ].filter(Boolean).join(" · ");
+    const retryDisabled = queueBusy || !item.isQueueHead || Boolean(item.conflictReason);
+    return `<article class="history-card queue-card${item.conflictReason ? " queue-card--conflict" : ""}" data-testid="pending-operation-card">
+      <span class="history-card__icon">${icon(item.kind === "move" ? "chevron" : "star")}</span>
+      <div class="queue-card__body">
+        <div class="record-meta"><span class="kind-badge">${escapeHtml(item.kind === "move" ? tx("Pending move", "待處理搬移") : tx("Pending flag change", "待處理旗標更改"))}</span><span>${escapeHtml(tx(`${item.attempts} failed attempts · automatic ceiling ${item.automaticAttemptLimit}`, `${item.attempts} 次失敗 · 自動上限 ${item.automaticAttemptLimit}`))}</span>${item.isQueueHead ? `<span class="queue-head-badge">${escapeHtml(tx("Queue head", "隊首先處理"))}</span>` : `<span>${escapeHtml(tx("Waiting behind an earlier item", "等緊前面項目"))}</span>`}</div>
+        <h2>${escapeHtml(title)}</h2>
+        <p>${escapeHtml(change)}</p>
+        ${item.conflictReason ? `<p class="queue-status queue-status--conflict" role="status">${icon("warning")}<span><strong>${escapeHtml(tx("Conflict—retry refused", "衝突——已拒絕重試"))}</strong>${escapeHtml(item.conflictReason)}</span></p>` : item.automaticRetryPaused ? `<p class="queue-status queue-status--paused" role="status">${icon("warning")}<span><strong>${escapeHtml(tx("Automatic retries paused", "自動重試已暫停"))}</strong>${escapeHtml(tx("Use Retry once on the queue head or discard the queued change.", "喺隊首用「重試一次」，或者捨棄呢個排隊更改。"))}</span></p>` : ""}
+        <p class="queue-error">${escapeHtml(item.lastError)}</p>
+        <small>${escapeHtml(tx(`Queue ID ${item.id} · UIDVALIDITY ${item.uidValidity ?? "unavailable"}`, `隊列 ID ${item.id} · UIDVALIDITY ${item.uidValidity ?? "不可用"}`))}</small>
+      </div>
+      <div class="button-row"><button class="button button--text" type="button" data-action="retry-pending-operation" data-operation-id="${escapeHtml(item.id)}" ${retryDisabled ? "disabled" : ""}>${escapeHtml(tx("Retry once", "重試一次"))}</button><button class="button button--text button--danger" type="button" data-action="request-discard-pending-operation" data-operation-id="${escapeHtml(item.id)}" data-operation-label="${escapeHtml(title)}" ${queueBusy ? "disabled" : ""}>${escapeHtml(tx("Discard change", "捨棄更改"))}</button></div>
+    </article>`;
+  }).join("");
+  const outboxRows = state.outboxItems.map(item => `<article class="history-card queue-card" data-testid="outbox-card"><span class="history-card__icon">${icon("send")}</span><div class="queue-card__body"><div class="record-meta"><span class="kind-badge">${escapeHtml(tx("Queued delivery", "排隊傳送"))}</span><span>${escapeHtml(tx(`${item.attempts} failed attempts · automatic ceiling ${item.automaticAttemptLimit}`, `${item.attempts} 次失敗 · 自動上限 ${item.automaticAttemptLimit}`))}</span>${item.isQueueHead ? `<span class="queue-head-badge">${escapeHtml(tx("Queue head", "隊首先處理"))}</span>` : `<span>${escapeHtml(tx("Waiting behind an earlier item", "等緊前面項目"))}</span>`}</div><h2>${escapeHtml(item.subject || tx("(No subject)", "（冇主旨）"))}</h2>${item.automaticRetryPaused ? `<p class="queue-status queue-status--paused" role="status">${icon("warning")}<span><strong>${escapeHtml(tx("Automatic retries paused", "自動重試已暫停"))}</strong>${escapeHtml(tx("Retry the queue head once or move this message back to drafts.", "重試隊首一次，或者將呢封郵件移返草稿。"))}</span></p>` : ""}<p class="queue-error">${escapeHtml(item.lastError || item.preview || tx("Waiting for delivery.", "等緊傳送。"))}</p><small>${escapeHtml(tx(`Queue ID ${item.id}`, `隊列 ID ${item.id}`))}</small></div><div class="button-row"><button class="button button--text" type="button" data-action="retry-outbox" data-outbox-id="${escapeHtml(item.id)}" ${queueBusy || !item.isQueueHead ? "disabled" : ""}>${escapeHtml(tx("Retry once", "重試一次"))}</button><button class="button button--text" type="button" data-action="cancel-outbox" data-outbox-id="${escapeHtml(item.id)}" ${queueBusy ? "disabled" : ""}>${escapeHtml(tx("Move to drafts", "移返草稿"))}</button></div></article>`).join("");
   return `<section class="standard-page" id="panel-outbox" role="tabpanel" aria-labelledby="tab-outbox">
-    ${renderPageHeader("DELIVERY QUEUE", tx("Outbox", "寄件匣"), tx("Queued messages stay visible until delivery succeeds or you move them back to drafts.", "排隊中嘅郵件會留喺度，直到傳送成功或者移返草稿。"), "send")}
+    ${renderPageHeader("MAIL OPERATION QUEUE", tx("Outbox and pending changes", "寄件匣同待處理更改"), tx(`Automatic processing stops after ${AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT} failed attempts. Only the account queue head can be retried, and each manual action makes exactly one attempt.`, `自動處理失敗 ${AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT} 次就會停。只可以重試帳戶隊首，而且每次手動操作只試一次。`), "send")}
     <div class="page-tools"><button class="button button--outlined" type="button" data-action="refresh-outbox">${icon("refresh")}<span>${escapeHtml(tx("Refresh", "重新整理"))}</span></button></div>
-    <div class="record-list">${state.outboxItems.length ? state.outboxItems.map(item => `<article class="history-card" data-testid="outbox-card"><span class="history-card__icon">${icon("send")}</span><div><div class="record-meta"><span class="kind-badge">${escapeHtml(tx("Queued", "排隊中"))}</span><span>${item.attempts} ${escapeHtml(tx("attempts", "次嘗試"))}</span></div><h2>${escapeHtml(item.subject || tx("(No subject)", "（冇主旨）"))}</h2><p>${escapeHtml(item.lastError || item.preview || tx("Waiting for delivery.", "等緊傳送。"))}</p></div><div class="button-row"><button class="button button--text" type="button" data-action="retry-outbox" data-outbox-id="${escapeHtml(item.id)}">${escapeHtml(tx("Retry", "重試"))}</button><button class="button button--text" type="button" data-action="cancel-outbox" data-outbox-id="${escapeHtml(item.id)}">${escapeHtml(tx("Move to drafts", "移返草稿"))}</button></div></article>`).join("") : renderRecordEmpty("history")}</div>
+    ${state.pendingOperations.length ? `<section class="queue-section" aria-labelledby="pending-change-title"><h2 id="pending-change-title">${escapeHtml(tx("Pending flag and move changes", "待處理旗標同搬移更改"))} <span class="count-pill">${state.pendingOperations.length}</span></h2><div class="record-list">${pendingRows}</div></section>` : ""}
+    ${state.outboxItems.length ? `<section class="queue-section" aria-labelledby="queued-delivery-title"><h2 id="queued-delivery-title">${escapeHtml(tx("Queued deliveries", "排隊傳送"))} <span class="count-pill">${state.outboxItems.length}</span></h2><div class="record-list">${outboxRows}</div></section>` : ""}
+    ${!state.pendingOperations.length && !state.outboxItems.length ? renderRecordEmpty("history") : ""}
   </section>`;
 }
 
@@ -2276,6 +2314,13 @@ function renderConfirmation(): string {
     title = tx("Restore this workspace version?", "還原呢個工作空間版本？");
     body = tx(`Restore “${confirmation.label}”. The current state is preserved as another append-only version.`, `還原「${confirmation.label}」。目前狀態會保留做另一個只追加版本。`);
     confirmLabel = tx("Restore version", "還原版本");
+  } else if (confirmation.kind === "discard-pending-operation") {
+    title = tx("Discard this queued server change?", "捨棄呢個排隊伺服器更改？");
+    body = tx(
+      `${confirmation.label} will be removed from the queue without contacting the mail server. The next folder refresh will replace any optimistic local state with the server's authoritative state.`,
+      `${confirmation.label} 會由隊列移除，而且唔會聯絡郵件伺服器。下次重新整理資料夾時，伺服器權威狀態會取代任何本機預先顯示嘅狀態。`,
+    );
+    confirmLabel = tx("Discard queued change", "捨棄排隊更改");
   } else if (confirmation.kind === "delete-pim") {
     title = tx(`Delete ${confirmation.label}?`, `刪除 ${confirmation.label}？`);
     body = tx(`This local ${confirmation.entityKind.replaceAll("-", " ")} will be removed. Its append-only transaction snapshot remains available for restore.`, `呢個本機${confirmation.entityKind.replaceAll("-", " ")}會被移除。只追加交易快照仍然可以用嚟還原。`);
@@ -3182,6 +3227,20 @@ const handleConfirmation = async (): Promise<void> => {
     });
     return;
   }
+  if (confirmation.kind === "discard-pending-operation") {
+    await withBusy("queue-operation", async () => {
+      await api.discardPendingOperation(confirmation.accountId, confirmation.operationId);
+      await Promise.all([refreshDraftAndOutbox(), refreshMetadata()]);
+      pushToast(
+        "warning",
+        "Queued change discarded",
+        `${confirmation.label} was removed without contacting the server. Refreshing the folder will reconcile the visible message state.`,
+        "已捨棄排隊更改",
+        `${confirmation.label} 已經移除，冇聯絡伺服器。重新整理資料夾會對齊畫面同伺服器郵件狀態。`,
+      );
+    });
+    return;
+  }
   if (confirmation.kind === "remove-account") {
     await withBusy("remove-account", async () => {
       beginMailNavigation();
@@ -3459,16 +3518,52 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       await api.deleteDraft(account.id, id); await refreshDraftAndOutbox();
       break;
     }
+    case "retry-pending-operation": {
+      const account = activeAccount(); const id = button.dataset.operationId;
+      if (!account || !id) break;
+      await withBusy("queue-operation", async () => {
+        try {
+          await api.retryPendingOperation(account.id, id);
+          pushToast("success", "Queued change synchronized", "The queue head completed after exactly one manual attempt.", "排隊更改已同步", "隊首啱啱手動試咗一次，並已完成。 ");
+        } finally {
+          await Promise.all([refreshDraftAndOutbox(), refreshMetadata()]);
+        }
+      });
+      break;
+    }
+    case "request-discard-pending-operation": {
+      const account = activeAccount(); const id = button.dataset.operationId; const label = button.dataset.operationLabel;
+      if (account && id && label) showConfirmation({ kind: "discard-pending-operation", accountId: account.id, operationId: id, label }, `pending-operation-${id}`);
+      break;
+    }
     case "retry-outbox": {
       const account = activeAccount(); const id = button.dataset.outboxId;
       if (!account || !id) break;
-      await api.retryOutbox(account.id, id); await refreshDraftAndOutbox();
+      await withBusy("queue-operation", async () => {
+        try {
+          const result = await api.retryOutbox(account.id, id);
+          const disposition = classifyRendererDelivery(result);
+          pushToast(
+            disposition === "partial" ? "warning" : disposition === "rejected" ? "error" : "success",
+            disposition === "partial" ? "Outbox message partially accepted" : disposition === "rejected" ? "Outbox message returned to drafts" : "Outbox message accepted",
+            `${result.accepted.length} accepted; ${result.rejected.length} rejected. The manual retry made exactly one delivery attempt.`,
+            disposition === "partial" ? "寄件匣郵件部分獲接受" : disposition === "rejected" ? "寄件匣郵件已移返草稿" : "寄件匣郵件獲接受",
+            `${result.accepted.length} 個接受；${result.rejected.length} 個被拒絕。今次手動重試只做咗一次傳送嘗試。`,
+          );
+        } finally {
+          await Promise.all([refreshDraftAndOutbox(), refreshMetadata()]);
+        }
+      });
       break;
     }
     case "cancel-outbox": {
       const account = activeAccount(); const id = button.dataset.outboxId;
       if (!account || !id) break;
-      await api.cancelOutbox(account.id, id); await refreshDraftAndOutbox();
+      await withBusy("queue-operation", async () => {
+        await api.cancelOutbox(account.id, id);
+        await Promise.all([refreshDraftAndOutbox(), refreshMetadata()]);
+        pushToast("info", "Outbox message moved to drafts", "The queued delivery was cancelled without another server attempt.", "寄件匣郵件已移返草稿", "排隊傳送已取消，冇再試聯絡伺服器。 ");
+      });
       break;
     }
     case "sync": await syncCurrentAccount(); break;

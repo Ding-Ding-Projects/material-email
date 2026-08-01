@@ -37,7 +37,9 @@ import type {
   SyncResult,
   LocalDraftSummary,
   OutboxSummary,
+  PendingOperationSummary,
 } from "../shared/contracts.js";
+import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts.js";
 import { JsonStore } from "./storage.js";
 import { HistoryRepository } from "./history-repository.js";
 import { AccountDiscoveryService } from "./account-discovery.js";
@@ -45,7 +47,13 @@ import { PimService } from "./pim/index.js";
 import { MailService, type MailMoveResult, type RuntimeAccount } from "./mail-service.js";
 import { accountDraftSchema, composeDraftSchema, preferencesPatchSchema, preferencesSchema } from "./ipc-validation.js";
 import { AttachmentAuthorization, inspectEditorExecutable, sameWindowsPath } from "./local-file-authorization.js";
-import { parsePersistedState, type PersistedState, type StoredAccount } from "./persisted-state.js";
+import {
+  parsePersistedState,
+  type OutboxItem,
+  type PendingOperation,
+  type PersistedState,
+  type StoredAccount,
+} from "./persisted-state.js";
 import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
 
 const execFileAsync = promisify(execFile);
@@ -184,6 +192,7 @@ export class AppService {
   readonly #pim: PimService;
   readonly #attachmentAuthorization = new AttachmentAuthorization();
   readonly #detectedEditorPaths = new Set<string>();
+  readonly #queueFlights = new Set<string>();
 
   constructor(userDataPath: string) {
     this.#statePath = path.join(userDataPath, "material-email-state-v1.json");
@@ -346,7 +355,7 @@ export class AppService {
     }
     const account = this.#runtimeAccount(stored);
     try {
-      await this.#replayPending(account);
+      await this.#withQueueFlight(accountId, () => this.#replayPending(account));
       state = await this.#store.read();
       const folders = await this.#mail.listFolders(account);
       const selected = state.preferences.selectedFolderPath;
@@ -363,9 +372,6 @@ export class AppService {
           for (const [id, detail] of Object.entries(draft.details)) {
             if (detail.accountId === accountId && detail.folderPath === folder.path) delete draft.details[id];
           }
-          draft.pendingOperations = draft.pendingOperations.filter(
-            operation => !(operation.accountId === accountId && operation.folderPath === folder.path),
-          );
           this.#record(
             draft,
             "updated",
@@ -378,7 +384,7 @@ export class AppService {
             draft,
             "warning",
             "Folder identity changed",
-            `${folder.name} was safely reloaded because the mail server changed its UIDVALIDITY value. Pending operations for the old identity were not replayed.`,
+            `${folder.name} was safely reloaded because the mail server changed its UIDVALIDITY value. Pending operations for the old identity were preserved for explicit review and will fail closed until discarded.`,
           );
         }
         draft.folders[accountId] = folders;
@@ -727,40 +733,121 @@ export class AppService {
     return removed;
   }
 
+  async listPendingOperations(accountId: string): Promise<PendingOperationSummary[]> {
+    const state = await this.#store.read();
+    this.#requireAccount(state, accountId);
+    const head = this.#queueHead(state, accountId);
+    return state.pendingOperations.filter(item => item.accountId === accountId).map(item => {
+      const conflictReason = this.#pendingOperationConflict(state, item);
+      return {
+        id: item.id,
+        accountId: item.accountId,
+        kind: item.kind,
+        folderPath: item.folderPath,
+        uid: item.uid,
+        ...(item.uidValidity ? { uidValidity: item.uidValidity } : {}),
+        ...(item.patch ? { patch: structuredClone(item.patch) } : {}),
+        ...(item.destination ? { destination: item.destination } : {}),
+        createdAt: item.createdAt,
+        attempts: item.attempts,
+        lastError: item.lastError,
+        automaticAttemptLimit: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
+        automaticRetryPaused: item.attempts >= AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
+        isQueueHead: head?.kind === "pending" && head.id === item.id,
+        ...(conflictReason ? { conflictReason } : {}),
+      };
+    });
+  }
+
+  async retryPendingOperation(accountId: string, operationId: string): Promise<void> {
+    await this.#withQueueFlight(accountId, async () => {
+      const state = await this.#store.read();
+      const account = this.#runtimeAccount(this.#requireAccount(state, accountId));
+      const operation = state.pendingOperations.find(candidate => candidate.id === operationId && candidate.accountId === accountId);
+      if (!operation) throw new Error("That pending mail operation no longer exists.");
+      this.#assertQueueHead(state, accountId, "pending", operationId);
+      const conflict = this.#pendingOperationConflict(state, operation);
+      if (conflict) throw new Error(`${conflict} Discard this queued change or refresh the account before reviewing it again.`);
+      try {
+        await this.#performPendingOperation(account, operation);
+        await this.#store.update(next => {
+          this.#requireAccount(next, accountId);
+          next.pendingOperations = next.pendingOperations.filter(candidate => candidate.id !== operationId);
+          this.#notify(next, "success", "Queued change synchronized", "The queue head reached the mail server after one manual retry.");
+        });
+      } catch (error) {
+        await this.#recordPendingFailure(operationId, error);
+        throw error;
+      }
+    });
+  }
+
+  async discardPendingOperation(accountId: string, operationId: string): Promise<void> {
+    await this.#withQueueFlight(accountId, async () => {
+      await this.#store.update(state => {
+        this.#requireAccount(state, accountId);
+        const operation = state.pendingOperations.find(candidate => candidate.id === operationId && candidate.accountId === accountId);
+        if (!operation) throw new Error("That pending mail operation no longer exists.");
+        state.pendingOperations = state.pendingOperations.filter(candidate => candidate.id !== operationId);
+        this.#record(
+          state,
+          "deleted",
+          "message",
+          operation.id,
+          `Discarded queued ${operation.kind} change for ${operation.folderPath} UID ${operation.uid}`,
+          operation,
+        );
+        this.#notify(
+          state,
+          "warning",
+          "Queued change discarded",
+          "The server action was not performed. The next folder refresh will reconcile the local cache with the server.",
+        );
+      });
+    });
+  }
+
   async listOutbox(accountId: string): Promise<OutboxSummary[]> {
     const state = await this.#store.read();
     this.#requireAccount(state, accountId);
+    const head = this.#queueHead(state, accountId);
     return state.outbox.filter(item => item.draft.accountId === accountId).map(item => ({
       id: item.id, accountId, recipientCount: item.draft.to.length + item.draft.cc.length + item.draft.bcc.length,
       subject: item.draft.subject, preview: item.draft.text.slice(0, 240), attachmentCount: item.draft.attachments.length,
       createdAt: item.createdAt, attempts: item.attempts, lastError: item.lastError,
+      automaticAttemptLimit: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
+      automaticRetryPaused: item.attempts >= AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
+      isQueueHead: head?.kind === "outbox" && head.id === item.id,
     }));
   }
 
   async cancelOutbox(accountId: string, outboxId: string): Promise<ComposeDraft> {
-    let cancelled: ComposeDraft | undefined;
-    await this.#store.update(state => {
-      this.#requireAccount(state, accountId);
-      const item = state.outbox.find(candidate => candidate.id === outboxId && candidate.draft.accountId === accountId);
-      if (!item) throw new Error("That Outbox item no longer exists.");
-      cancelled = structuredClone(item.draft);
-      state.outbox = state.outbox.filter(candidate => candidate.id !== outboxId);
-      const existing = cancelled.id ? state.drafts.findIndex(candidate => candidate.id === cancelled!.id) : -1;
-      if (existing >= 0) state.drafts[existing] = cancelled!; else state.drafts.push(cancelled!);
-      this.#record(state, "updated", "draft", cancelled.id ?? "", `Moved Outbox message “${cancelled.subject || "(No subject)"}” back to drafts`, cancelled);
-      this.#notify(state, "info", "Outbox item cancelled", "The message is available again as a local draft.");
+    return this.#withQueueFlight(accountId, async () => {
+      let cancelled: ComposeDraft | undefined;
+      await this.#store.update(state => {
+        this.#requireAccount(state, accountId);
+        const item = state.outbox.find(candidate => candidate.id === outboxId && candidate.draft.accountId === accountId);
+        if (!item) throw new Error("That Outbox item no longer exists.");
+        cancelled = structuredClone(item.draft);
+        state.outbox = state.outbox.filter(candidate => candidate.id !== outboxId);
+        const existing = cancelled.id ? state.drafts.findIndex(candidate => candidate.id === cancelled!.id) : -1;
+        if (existing >= 0) state.drafts[existing] = cancelled!; else state.drafts.push(cancelled!);
+        this.#record(state, "updated", "draft", cancelled.id ?? "", `Moved Outbox message “${cancelled.subject || "(No subject)"}” back to drafts`, cancelled);
+        this.#notify(state, "info", "Outbox item cancelled", "The message is available again as a local draft.");
+      });
+      return cancelled!;
     });
-    return cancelled!;
   }
 
   async retryOutbox(accountId: string, outboxId: string): Promise<SendResult> {
-    const state = await this.#store.read();
-    this.#requireAccount(state, accountId);
-    const item = state.outbox.find(candidate => candidate.id === outboxId && candidate.draft.accountId === accountId);
-    if (!item) throw new Error("That Outbox item no longer exists.");
-    const result = await this.sendMessage(item.draft);
-    await this.#store.update(next => { next.outbox = next.outbox.filter(candidate => candidate.id !== outboxId); });
-    return result;
+    return this.#withQueueFlight(accountId, async () => {
+      const state = await this.#store.read();
+      const account = this.#runtimeAccount(this.#requireAccount(state, accountId));
+      const item = state.outbox.find(candidate => candidate.id === outboxId && candidate.draft.accountId === accountId);
+      if (!item) throw new Error("That Outbox item no longer exists.");
+      this.#assertQueueHead(state, accountId, "outbox", outboxId);
+      return this.#deliverOutboxItem(account, item);
+    });
   }
 
   async savePreferences(patch: Partial<Preferences>): Promise<Preferences> {
@@ -1062,87 +1149,162 @@ export class AppService {
     throw new Error("That executable has not been detected or approved through the native file picker.");
   }
 
+  async #withQueueFlight<T>(accountId: string, operation: () => Promise<T>): Promise<T> {
+    if (this.#queueFlights.has(accountId)) {
+      throw new Error("Another queued mail operation is already running for this account. Wait for it to finish before retrying or discarding.");
+    }
+    this.#queueFlights.add(accountId);
+    try {
+      return await operation();
+    } finally {
+      this.#queueFlights.delete(accountId);
+    }
+  }
+
+  #queueHead(state: PersistedState, accountId: string): { kind: "pending" | "outbox"; id: string } | undefined {
+    const pending = state.pendingOperations.find(item => item.accountId === accountId);
+    if (pending) return { kind: "pending", id: pending.id };
+    const outbox = state.outbox.find(item => item.draft.accountId === accountId);
+    return outbox ? { kind: "outbox", id: outbox.id } : undefined;
+  }
+
+  #assertQueueHead(state: PersistedState, accountId: string, kind: "pending" | "outbox", id: string): void {
+    const head = this.#queueHead(state, accountId);
+    if (!head || head.kind !== kind || head.id !== id) {
+      throw new Error("Only the account queue head can be retried. Resolve or discard the earlier queued item first.");
+    }
+  }
+
+  #pendingOperationConflict(state: PersistedState, operation: PendingOperation): string | undefined {
+    if (!operation.uidValidity) return "This queued change has no UIDVALIDITY identity and cannot be retried safely.";
+    const current = state.folders[operation.accountId]?.find(folder => folder.path === operation.folderPath)?.uidValidity;
+    if (current && current !== operation.uidValidity) {
+      return `The ${operation.folderPath} mailbox changed from UIDVALIDITY ${operation.uidValidity} to ${current}; UID ${operation.uid} may now identify a different message.`;
+    }
+    return undefined;
+  }
+
+  async #performPendingOperation(account: RuntimeAccount, operation: PendingOperation): Promise<void> {
+    if (!operation.uidValidity) throw new Error("The queued operation has no mailbox UIDVALIDITY and cannot be replayed safely.");
+    if (operation.kind === "flags" && operation.patch) {
+      await this.#mail.setFlags(account, operation.folderPath, operation.uid, operation.patch, operation.uidValidity);
+      return;
+    }
+    if (operation.kind === "move" && operation.destination) {
+      await this.#mail.moveMessage(account, operation.folderPath, operation.uid, operation.destination, operation.uidValidity);
+      return;
+    }
+    throw new Error("The queued operation is incomplete.");
+  }
+
+  async #recordPendingFailure(operationId: string, error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.#store.update(state => {
+      const item = state.pendingOperations.find(candidate => candidate.id === operationId);
+      if (!item) return;
+      item.attempts += 1;
+      item.lastError = message;
+      if (item.attempts === AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT) {
+        this.#notify(
+          state,
+          "warning",
+          "Automatic retries paused",
+          `Queued ${item.kind} change ${item.id} reached ${AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT} failed attempts. Review the queue head, retry it once manually, or discard it.`,
+        );
+      }
+    });
+  }
+
+  async #recordOutboxFailure(outboxId: string, error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.#store.update(state => {
+      const item = state.outbox.find(candidate => candidate.id === outboxId);
+      if (!item) return;
+      item.attempts += 1;
+      item.lastError = message;
+      if (item.attempts === AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT) {
+        this.#notify(
+          state,
+          "warning",
+          "Automatic retries paused",
+          `Outbox item ${item.id} reached ${AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT} failed attempts. Review the queue head, retry it once manually, or move it back to drafts.`,
+        );
+      }
+    });
+  }
+
+  async #deliverOutboxItem(account: RuntimeAccount, item: OutboxItem): Promise<SendResult> {
+    let sent: SendResult;
+    try {
+      sent = await this.#mail.sendMessage(account, item.draft);
+    } catch (error) {
+      await this.#recordOutboxFailure(item.id, error);
+      throw error;
+    }
+    const disposition = classifySendResult(sent);
+    await this.#store.update(state => {
+      this.#requireAccount(state, account.id);
+      const queued = state.outbox.find(candidate => candidate.id === item.id && candidate.draft.accountId === account.id);
+      if (!queued) throw new Error("That Outbox item changed while delivery was in flight; its local queue record was preserved for review.");
+      state.outbox = state.outbox.filter(candidate => candidate.id !== item.id);
+      if (disposition === "rejected") {
+        const currentDraft = queued.draft.id ? state.drafts.find(candidate => candidate.id === queued.draft.id) : undefined;
+        const retained = {
+          ...queued.draft,
+          id: queued.draft.id && (!currentDraft || sameDraftSnapshot(currentDraft, queued.draft)) ? queued.draft.id : randomUUID(),
+        };
+        const draftIndex = state.drafts.findIndex(candidate => candidate.id === retained.id);
+        if (draftIndex >= 0) state.drafts[draftIndex] = retained;
+        else state.drafts.push(retained);
+        this.#record(state, draftIndex >= 0 ? "updated" : "created", "draft", retained.id ?? "", `Kept rejected Outbox message “${queued.draft.subject || "(No subject)"}” as a draft`, {
+          queuedAt: queued.createdAt,
+          accepted: sent.accepted,
+          rejected: sent.rejected,
+        });
+        this.#notify(state, "error", "Outbox message not sent; draft kept", describeRecipientOutcome(sent));
+        return;
+      }
+      this.#record(state, "updated", "message", sent.messageId, `Delivered queued message “${queued.draft.subject || "(No subject)"}”`, {
+        queuedAt: queued.createdAt,
+        accepted: sent.accepted,
+        rejected: sent.rejected,
+      });
+      if (disposition === "partial") {
+        this.#notify(state, "warning", "Outbox message partially sent", describeRecipientOutcome(sent));
+      } else {
+        this.#notify(state, "success", "Outbox message sent", describeRecipientOutcome(sent));
+      }
+    });
+    return sent;
+  }
+
   async #replayPending(account: RuntimeAccount): Promise<void> {
     const snapshot = await this.#store.read();
     const operations = snapshot.pendingOperations.filter(item => item.accountId === account.id);
     for (const operation of operations) {
+      if (this.#pendingOperationConflict(snapshot, operation)) break;
+      if (operation.attempts >= AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT) break;
       try {
-        if (!operation.uidValidity) throw new Error("The queued operation has no mailbox UIDVALIDITY and cannot be replayed safely.");
-        if (operation.kind === "flags" && operation.patch) {
-          await this.#mail.setFlags(account, operation.folderPath, operation.uid, operation.patch, operation.uidValidity);
-        } else if (operation.kind === "move" && operation.destination) {
-          await this.#mail.moveMessage(account, operation.folderPath, operation.uid, operation.destination, operation.uidValidity);
-        } else {
-          throw new Error("The queued operation is incomplete.");
-        }
+        await this.#performPendingOperation(account, operation);
         await this.#store.update(state => {
           this.#requireAccount(state, account.id);
           state.pendingOperations = state.pendingOperations.filter(item => item.id !== operation.id);
           this.#notify(state, "success", "Queued change synchronized", `Operation from ${operation.createdAt} reached the mail server.`);
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await this.#store.update(state => {
-          const item = state.pendingOperations.find(candidate => candidate.id === operation.id);
-          if (item) {
-            item.attempts += 1;
-            item.lastError = message;
-          }
-        });
+        await this.#recordPendingFailure(operation.id, error);
         break;
       }
     }
 
     const afterOperations = await this.#store.read();
+    if (afterOperations.pendingOperations.some(item => item.accountId === account.id)) return;
     const outbox = afterOperations.outbox.filter(item => item.draft.accountId === account.id);
     for (const item of outbox) {
+      if (item.attempts >= AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT) break;
       try {
-        const sent = await this.#mail.sendMessage(account, item.draft);
-        const disposition = classifySendResult(sent);
-        if (disposition === "rejected") {
-          await this.#store.update(state => {
-            this.#requireAccount(state, account.id);
-            state.outbox = state.outbox.filter(candidate => candidate.id !== item.id);
-            const currentDraft = item.draft.id ? state.drafts.find(candidate => candidate.id === item.draft.id) : undefined;
-            const retained = {
-              ...item.draft,
-              id: item.draft.id && (!currentDraft || sameDraftSnapshot(currentDraft, item.draft)) ? item.draft.id : randomUUID(),
-            };
-            const draftIndex = state.drafts.findIndex(candidate => candidate.id === retained.id);
-            if (draftIndex >= 0) state.drafts[draftIndex] = retained;
-            else state.drafts.push(retained);
-            this.#record(state, draftIndex >= 0 ? "updated" : "created", "draft", retained.id ?? "", `Kept rejected Outbox message “${item.draft.subject || "(No subject)"}” as a draft`, {
-              queuedAt: item.createdAt,
-              accepted: sent.accepted,
-              rejected: sent.rejected,
-            });
-            this.#notify(state, "error", "Outbox message not sent; draft kept", describeRecipientOutcome(sent));
-          });
-          continue;
-        }
-        await this.#store.update(state => {
-          this.#requireAccount(state, account.id);
-          state.outbox = state.outbox.filter(candidate => candidate.id !== item.id);
-          this.#record(state, "updated", "message", sent.messageId, `Delivered queued message “${item.draft.subject || "(No subject)"}”`, {
-            queuedAt: item.createdAt,
-            accepted: sent.accepted,
-            rejected: sent.rejected,
-          });
-          if (disposition === "partial") {
-            this.#notify(state, "warning", "Outbox message partially sent", describeRecipientOutcome(sent));
-          } else {
-            this.#notify(state, "success", "Outbox message sent", describeRecipientOutcome(sent));
-          }
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await this.#store.update(state => {
-          const queued = state.outbox.find(candidate => candidate.id === item.id);
-          if (queued) {
-            queued.attempts += 1;
-            queued.lastError = message;
-          }
-        });
+        await this.#deliverOutboxItem(account, item);
+      } catch {
         break;
       }
     }
