@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountDraft, ComposeDraft, FolderSummary, MessageDetail, MessageSummary, SendResult } from "../src/shared/contracts";
 import type { MailMoveResult } from "../src/main/mail-service";
 import { MIME_SAFETY_LIMITS, MimeSafetyError } from "../src/main/mime-safety";
+import { unsignedMessageCryptography } from "../src/shared/message-cryptography";
 
 const serviceMocks = vi.hoisted(() => ({
   testAccount: vi.fn(),
@@ -103,6 +104,7 @@ const sourceDetail = (accountId: string): MessageDetail => ({
   remoteContentHtml: '<p>Old generation detail body.</p><img src="https://media.example.test/message.png" alt="Message preview">',
   remoteContentSources: [{ kind: "image", origin: "https://media.example.test", hostname: "media.example.test", protocol: "https:" }],
   remoteContentAllowed: false,
+  cryptography: unsignedMessageCryptography(),
   attachments: [],
   replyTo: [{ name: "Sender", address: "sender@example.test" }],
 });

@@ -62,7 +62,65 @@ describe("persisted application state schema", () => {
       remoteContentHtml: "",
       remoteContentSources: [],
       remoteContentAllowed: false,
+      cryptography: {
+        protocol: null,
+        container: "none",
+        state: "unsigned",
+        reason: "no-cryptographic-container",
+        signatureVerification: "not-performed",
+        contentDecryption: "not-performed",
+      },
     });
+  });
+
+  it("migrates accounts to an empty metadata-only cryptography profile", () => {
+    const parsed = parsePersistedState({
+      ...minimalState(),
+      accounts: [{
+        id: "demo",
+        displayName: "Demo",
+        email: "demo@example.test",
+        incoming: { host: "demo.local", port: 993, security: "tls", username: "demo" },
+        outgoing: { host: "demo.local", port: 465, security: "tls", username: "demo" },
+        authMode: "password",
+        kind: "demo",
+        createdAt: "2026-07-31T00:00:00.000Z",
+      }],
+    });
+
+    expect(parsed.accounts[0]?.messageCryptography).toEqual({ schemaVersion: 1, identities: [] });
+  });
+
+  it("rejects plaintext cryptographic material and verified metadata before persistence", () => {
+    const account = {
+      id: "demo",
+      displayName: "Demo",
+      email: "demo@example.test",
+      incoming: { host: "demo.local", port: 993, security: "tls", username: "demo" },
+      outgoing: { host: "demo.local", port: 465, security: "tls", username: "demo" },
+      authMode: "password",
+      kind: "demo",
+      createdAt: "2026-07-31T00:00:00.000Z",
+      messageCryptography: {
+        schemaVersion: 1,
+        identities: [{
+          id: "fixture",
+          protocol: "openpgp",
+          email: "demo@example.test",
+          displayName: "Fixture metadata",
+          fingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
+          trust: "unverified",
+          source: "local-metadata",
+          secretStorage: "none",
+          privateKey: "plaintext-fixture-private-key",
+        }],
+      },
+    };
+    expect(() => parsePersistedState({ ...minimalState(), accounts: [account] })).toThrow(/key material and secrets are never accepted/i);
+    const verified = structuredClone(account);
+    delete (verified.messageCryptography.identities[0] as { privateKey?: string }).privateKey;
+    verified.messageCryptography.identities[0]!.trust = "verified";
+    expect(() => parsePersistedState({ ...minimalState(), accounts: [verified] })).toThrow(/cannot claim cryptographic verification/i);
   });
 
   it("rejects unknown fields and renderer-shaped executable paths", () => {

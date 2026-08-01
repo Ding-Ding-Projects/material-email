@@ -90,6 +90,7 @@ import { runPop3Foundation } from "./pop3-foundation.js";
 import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-mail-index.js";
 import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
 import { inspectTlsCertificate } from "./tls-certificate-diagnostics.js";
+import { emptyMessageCryptoProfile, unsignedMessageCryptography } from "../shared/message-cryptography.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -154,6 +155,7 @@ const demoAccount = (): AccountSummary => ({
   authMode: "password",
   kind: "demo",
   createdAt: new Date().toISOString(),
+  messageCryptography: emptyMessageCryptoProfile(),
 });
 
 const demoFolders = (): FolderSummary[] => [
@@ -234,6 +236,7 @@ const demoMessages = (): { summaries: MessageSummary[]; details: MessageDetail[]
       remoteContentAllowed: false,
       attachments: [],
       replyTo: summary.from,
+      cryptography: unsignedMessageCryptography(),
     } satisfies MessageDetail;
   });
   return { summaries, details };
@@ -368,6 +371,7 @@ export class AppService {
       authMode: draft.authMode,
       kind: "imap",
       createdAt: new Date().toISOString(),
+      messageCryptography: emptyMessageCryptoProfile(),
       encryptedSecret: safeStorage.encryptString(draft.secret).toString("base64"),
     };
     await this.#mail.testAccount(this.#runtimeAccount(account));

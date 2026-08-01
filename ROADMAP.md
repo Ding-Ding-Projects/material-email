@@ -21,6 +21,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] MIME parsing and conservative HTML sanitization
 - [x] Bounded MIME fetch/parsing with raw-source, header, decoded-body, attachment-count, per-attachment, and combined-attachment ceilings plus stable retry-safe failures
 - [x] Default-deny per-message remote-image consent with persisted allow/revoke, exact source summary, and scoped reader CSP
+- [x] Bounded metadata-only OpenPGP/S/MIME top-level container assessment, strict public identity metadata, explicit unsigned/unverified/unsupported states, and bilingual accessible reader/compose indicators; no cryptographic operation or key persistence
 - [x] Demo account and fixture mail
 - [x] Serialized atomic JSON persistence
 - [x] Notification and history records
@@ -51,7 +52,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Give command-palette search its own plain-text-first model, adjacent anchored regex builder, invalid-pattern execution guard, and focused real-Electron proof
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
 - [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 47 files / 234 tests on the current tree; the focused POP3 foundation passed 1 / 1 real-Electron scenario; broader previously recorded Electron evidence remains listed in `HANDOFF.md`)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 49 files / 253 tests on the current tree; the focused message-cryptography trust-state and POP3 foundations each passed 1 / 1 real-Electron scenario; broader previously recorded Electron evidence remains listed in `HANDOFF.md`)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling matrices (the primary workspace-tab Arrow/Home/End slice alone is verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
@@ -79,6 +80,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Renderer/preload/IPC integration for contacts, mailing lists, calendars, tasks, vCard actions, and transaction recovery
 - [ ] CardDAV/CalDAV/ICS/task-provider synchronization and broad interoperability
 - [ ] OpenPGP and S/MIME signing/encryption with clear trust UX
+- [ ] Audited OpenPGP/S/MIME libraries, OS-backed key/certificate lifecycle, real signing/encryption/decryption/verification, revocation/expiry handling, and provider interoperability (the metadata-only trust-state foundation is not completion evidence)
 - [x] Pure external-link risk assessment (HTTP, credentials, host and Unicode deception signals)
 - [x] Phishing review dialog with normalized destination, risk reasons, one-time expiry, and trusted renderer confirmation
 - [x] Bounded local certificate-reference-name and TLS/port diagnostics before connection

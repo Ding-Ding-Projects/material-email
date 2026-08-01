@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AccountSummary, BootstrapState, Contact, MessageDetail, MessageSummary, Preferences } from "../../src/shared/contracts";
+import { unsignedMessageCryptography } from "../../src/shared/message-cryptography";
 
 let application: ElectronApplication;
 let page: Page;
@@ -123,6 +124,7 @@ test("late folder results cannot cross the selected account or persist a losing 
         remoteContentHtml: `<p>${item.subject} full private body</p>`,
         remoteContentSources: [],
         remoteContentAllowed: false,
+        cryptography: unsignedMessageCryptography(),
         attachments: [],
         replyTo: item.from,
       } satisfies MessageDetail;

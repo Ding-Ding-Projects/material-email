@@ -5,6 +5,7 @@ import {
   createCachedMailIndex,
   searchCachedMailIndex,
 } from "../src/shared/cached-mail-index";
+import { unsignedMessageCryptography } from "../src/shared/message-cryptography";
 
 const account = (id: string, name: string): AccountSummary => ({
   id,
@@ -51,6 +52,7 @@ const detail = (summary: MessageSummary, text: string): MessageDetail => ({
   remoteContentHtml: `<p>${text}</p>`,
   remoteContentSources: [],
   remoteContentAllowed: false,
+  cryptography: unsignedMessageCryptography(),
   attachments: [],
   replyTo: summary.from,
 });

@@ -478,6 +478,21 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .message-header h1 { margin-block-end: 8px; font-size: clamp(1.25rem, 2vw, 1.75rem); overflow-wrap: anywhere; }
 .message-header p { margin: 2px 0; color: var(--on-surface-variant); font-size: 0.8rem; overflow-wrap: anywhere; }
 .message-header > time { color: var(--on-surface-variant); font-size: 0.72rem; white-space: nowrap; }
+.message-crypto-trust { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: start; gap: 10px; margin: 0 16px 10px; padding: 11px 12px; border: 1px solid var(--outline-variant); border-radius: var(--radius-md); background: var(--surface-container-low); color: var(--on-surface); }
+.message-crypto-trust--unverified { border-color: color-mix(in srgb, var(--warning) 45%, var(--outline-variant)); background: color-mix(in srgb, var(--warning-container) 66%, var(--surface-container)); }
+.message-crypto-trust--unsupported { border-color: color-mix(in srgb, var(--error) 42%, var(--outline-variant)); background: color-mix(in srgb, var(--error-container) 70%, var(--surface-container)); }
+.message-crypto-trust__icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--surface-container-highest); color: var(--on-surface-variant); }
+.message-crypto-trust--unverified .message-crypto-trust__icon { color: var(--warning); }
+.message-crypto-trust--unsupported .message-crypto-trust__icon { color: var(--error); }
+.message-crypto-trust__icon .icon { width: 19px; height: 19px; }
+.message-crypto-trust__copy { min-width: 0; }
+.message-crypto-trust__heading { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+.message-crypto-trust h2, .message-crypto-trust h3 { margin: 0; font-size: 0.88rem; overflow-wrap: anywhere; }
+.message-crypto-trust p { margin: 4px 0; color: var(--on-surface-variant); font-size: 0.72rem; line-height: 1.45; overflow-wrap: anywhere; }
+.message-crypto-trust small { display: block; color: var(--on-surface-variant); font-size: 0.66rem; line-height: 1.4; overflow-wrap: anywhere; }
+.trust-state-badge { flex: 0 0 auto; padding: 3px 8px; border: 1px solid var(--outline-variant); border-radius: 999px; background: var(--surface-container-highest); color: var(--on-surface); font-size: 0.66rem; font-weight: 750; letter-spacing: 0.02em; }
+.trust-state-badge--unverified { border-color: color-mix(in srgb, var(--warning) 48%, var(--outline-variant)); background: var(--warning-container); }
+.trust-state-badge--unsupported { border-color: color-mix(in srgb, var(--error) 48%, var(--outline-variant)); background: var(--error-container); color: var(--on-error-container); }
 .attachment-strip { margin: 0 16px 10px; padding: 9px; border-radius: var(--radius-md); background: var(--surface-container-low); }
 .attachment-strip__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .attachment-strip__heading strong { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; }
@@ -1148,6 +1163,17 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .compose-header h2 { max-width: 470px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compose-header__actions { display: flex; }
 .compose-fields { display: flex; flex-direction: column; }
+.compose-crypto-trust { flex: 0 0 auto; max-height: 230px; margin: 8px 12px; overflow: auto; background: var(--surface-container); }
+.message-crypto-capabilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+.message-crypto-capabilities > div { min-width: 0; padding: 7px 8px; border-radius: var(--radius-sm); background: var(--surface-container-lowest); }
+.message-crypto-capabilities dt { font-size: 0.7rem; font-weight: 750; }
+.message-crypto-capabilities dd { margin: 2px 0 0; color: var(--on-surface-variant); font-size: 0.66rem; line-height: 1.4; }
+.message-crypto-empty { padding: 6px 8px; border: 1px dashed var(--outline-variant); border-radius: var(--radius-sm); }
+.message-crypto-identities { margin: 7px 0; font-size: 0.7rem; }
+.message-crypto-identities summary { cursor: pointer; font-weight: 700; }
+.message-crypto-identities ul { display: grid; gap: 6px; margin: 7px 0; padding: 0; list-style: none; }
+.message-crypto-identities li { display: grid; gap: 2px; padding: 7px 8px; border-radius: var(--radius-sm); background: var(--surface-container-lowest); }
+.message-crypto-identities li > span, .message-crypto-identities code { overflow-wrap: anywhere; font-size: 0.66rem; }
 .recipient-row { display: grid; grid-template-columns: 66px minmax(0, 1fr) auto; align-items: center; min-height: 46px; padding: 3px 12px; border-bottom: 1px solid var(--outline-variant); }
 .recipient-row label { color: var(--on-surface-variant); font-size: 0.78rem; }
 .recipient-row input { min-height: 38px; padding: 5px 8px; border: 0; border-radius: 0; box-shadow: none !important; }
@@ -1157,7 +1183,7 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .compose-footer { min-height: 58px; display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-top: 1px solid var(--outline-variant); background: var(--surface-container-low); }
 .compose-footer .button--filled kbd { background: transparent; color: inherit; border-color: color-mix(in srgb, currentColor 40%, transparent); }
 .compose-sheet.is-minimized { width: min(420px, calc(100vw - 90px)); height: 62px; }
-.compose-sheet.is-minimized .compose-fields, .compose-sheet.is-minimized .compose-body, .compose-sheet.is-minimized .compose-attachments, .compose-sheet.is-minimized .compose-footer { display: none; }
+.compose-sheet.is-minimized .compose-fields, .compose-sheet.is-minimized .compose-crypto-trust, .compose-sheet.is-minimized .compose-body, .compose-sheet.is-minimized .compose-attachments, .compose-sheet.is-minimized .compose-footer { display: none; }
 
 .palette-layer { align-items: start; padding-top: min(15vh, 130px); }
 .command-palette { width: min(660px, 94vw); max-height: min(650px, 75vh); display: flex; flex-direction: column; overflow: visible; border: 1px solid var(--outline); border-radius: var(--radius-lg); background: var(--surface-container-high); box-shadow: var(--elevation-3); }

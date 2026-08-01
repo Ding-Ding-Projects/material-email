@@ -8,6 +8,7 @@
 | [Cached conversation grouping](conversation-grouping.md) | Verified bounded slice | Local subject/reference grouping over visible cached summaries |
 | [Bounded cached-mail search index](cached-mail-search-index.md) | Verified bounded slice | Cross-cache plain/regex search with account, folder, and conversation attribution |
 | [Reading and message safety](reading-and-message-safety.md) | Bounded parser and per-message remote-image consent verified locally | MIME fetch/decode ceilings, sanitized display data, host summary, and default-deny image loading |
+| [Message cryptography trust states](message-cryptography-trust-states.md) | Verified bounded metadata-only foundation | OpenPGP/S/MIME container labels, strict public identity metadata, and honest unsigned/unverified/unsupported UI |
 | [Compose, drafts, and sending](compose-drafts-and-sending.md) | Foundation | Local drafts and SMTP submission |
 
 Advisory autoconfiguration, queued mail actions/outbox replay, attachment handling, cached local views, an OAuth callback foundation, a provider-gated Windows token vault, a mock-only token lifecycle, and a deterministic local-only POP3 fixture/state machine now exist. Production provider registration, exchange, refresh/revocation clients, connected OAuth accounts, and interoperability remain open. The POP3 runner opens no network path and provides no deletion, persistence, polling, provider login, or full synchronization. Local PIM features remain documented separately.

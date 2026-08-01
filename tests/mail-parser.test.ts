@@ -88,9 +88,40 @@ describe("mail content boundary", () => {
     expect(parsed.html).not.toContain("script");
     expect(parsed.remoteContentAllowed).toBe(false);
     expect(parsed.remoteContentSources).toEqual([]);
+    expect(parsed.cryptography).toMatchObject({ state: "unsigned", protocol: null, signatureVerification: "not-performed" });
     expect(parsed.attachments).toEqual([
       expect.objectContaining({ filename: "notes.txt", contentType: "text/plain", size: 5 }),
     ]);
+  });
+
+  it("carries detected OpenPGP signature-container metadata without claiming verification", async () => {
+    const source = [
+      "From: sender@example.test",
+      "To: demo@example.test",
+      "Subject: Signed-container fixture",
+      "MIME-Version: 1.0",
+      'Content-Type: multipart/signed; protocol="application/pgp-signature"; boundary="signed"',
+      "",
+      "--signed",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      "Readable fixture body",
+      "--signed",
+      "Content-Type: application/pgp-signature",
+      "",
+      "not-a-real-signature",
+      "--signed--",
+    ].join("\r\n");
+
+    const parsed = await parseMessageSource("account", "Inbox", 49, source);
+    expect(parsed.cryptography).toEqual({
+      protocol: "openpgp",
+      container: "signed",
+      state: "unverified",
+      reason: "openpgp-signed-container",
+      signatureVerification: "not-performed",
+      contentDecryption: "not-performed",
+    });
   });
 
   it("rejects raw MIME above the byte ceiling before parsing and keeps retry guidance stable", async () => {

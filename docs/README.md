@@ -18,6 +18,7 @@ Material Email documentation is organized by feature area. Every article records
 - [Cached conversation grouping](mail/conversation-grouping.md)
 - [Bounded cached-mail search index](mail/cached-mail-search-index.md)
 - [Reading and message safety](mail/reading-and-message-safety.md)
+- [Message cryptography trust states](mail/message-cryptography-trust-states.md)
 - [Compose, drafts, and sending](mail/compose-drafts-and-sending.md)
 
 ## Experience

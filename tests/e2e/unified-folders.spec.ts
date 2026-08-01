@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AccountSummary, BootstrapState, MessageDetail, MessageSummary, Preferences } from "../../src/shared/contracts";
+import { unsignedMessageCryptography } from "../../src/shared/message-cryptography";
 
 let application: ElectronApplication;
 let page: Page;
@@ -148,6 +149,7 @@ test("shows cached cross-account folders with attribution, shared regex search, 
         remoteContentHtml: `<p>${message.subject} body</p>`,
         remoteContentSources: [],
         remoteContentAllowed: false,
+        cryptography: unsignedMessageCryptography(),
         attachments: [],
         replyTo: message.from,
       } satisfies MessageDetail;

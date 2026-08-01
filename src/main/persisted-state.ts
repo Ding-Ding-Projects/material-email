@@ -19,6 +19,14 @@ import {
   preferencesSchema,
 } from "./ipc-validation.js";
 import { classifyAttachment } from "../shared/attachment-safety.js";
+import {
+  emptyMessageCryptoProfile,
+  parseMessageCryptoProfile,
+  parseMessageCryptographyAssessment,
+  unsignedMessageCryptography,
+  type MessageCryptoProfile,
+  type MessageCryptographyAssessment,
+} from "../shared/message-cryptography.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -73,6 +81,8 @@ const timestampSchema = z
   .max(64)
   .refine(value => Number.isFinite(Date.parse(value)), "An ISO-compatible timestamp is required.");
 const boundedString = (maximum: number) => z.string().max(maximum);
+const messageCryptoProfileSchema = z.unknown().transform(parseMessageCryptoProfile) as z.ZodType<MessageCryptoProfile>;
+const messageCryptographyAssessmentSchema = z.unknown().transform(parseMessageCryptographyAssessment) as z.ZodType<MessageCryptographyAssessment>;
 const addressSchema = z.strictObject({ name: boundedString(2_048), address: boundedString(2_048) });
 const remoteContentOriginSchema = z
   .string()
@@ -118,6 +128,7 @@ const accountSchema = z
     createdAt: timestampSchema,
     lastSyncAt: timestampSchema.optional(),
     syncError: boundedString(32_768).optional(),
+    messageCryptography: messageCryptoProfileSchema.default(emptyMessageCryptoProfile()),
     encryptedSecret: z.string().min(1).max(131_072).optional(),
   })
   .refine(account => account.kind === "demo" || Boolean(account.encryptedSecret), "Stored mail accounts require an encrypted credential.");
@@ -189,6 +200,7 @@ const messageDetailSchema = z.strictObject({
   remoteContentHtml: boundedString(16 * 1024 * 1024).default(""),
   remoteContentSources: z.array(remoteContentSourceSchema).max(1_000).default([]),
   remoteContentAllowed: z.boolean().default(false),
+  cryptography: messageCryptographyAssessmentSchema.default(unsignedMessageCryptography()),
   attachments: z.array(attachmentSummarySchema).max(1_000),
   replyTo: z.array(addressSchema).max(1_000),
 });

@@ -4,6 +4,7 @@ import nodemailer from "nodemailer";
 import sanitizeHtml from "sanitize-html";
 import { randomUUID } from "node:crypto";
 import { classifyAttachment } from "../shared/attachment-safety.js";
+import { assessMessageCryptography } from "../shared/message-cryptography.js";
 import {
   assertMimeAttachmentSizes,
   assertMimeSourceSize,
@@ -20,6 +21,7 @@ import type {
   MessageSummary,
   RemoteContentSource,
   SendResult,
+  MessageCryptographyAssessment,
 } from "../shared/contracts.js";
 
 export interface RuntimeAccount extends AccountSummary {
@@ -249,6 +251,7 @@ const parsedMessageToDetail = (
   parsed: ParsedMail,
   flags: Set<string>,
   size: number,
+  cryptography: MessageCryptographyAssessment,
   uidValidity?: string,
 ): MessageDetail => {
   const text = parsed.text?.trim() ?? "";
@@ -276,6 +279,7 @@ const parsedMessageToDetail = (
     starred: flags.has("\\Flagged"),
     hasAttachments: parsed.attachments.length > 0,
     size,
+    cryptography,
     text,
     ...sanitized,
     remoteContentAllowed: false,
@@ -297,7 +301,7 @@ export const parseMessageSource = async (
   flags = new Set<string>(),
 ): Promise<MessageDetail> => {
   const parsed = await parseBoundedMimeSource(source);
-  return parsedMessageToDetail(accountId, folderPath, uid, parsed, flags, Buffer.byteLength(source));
+  return parsedMessageToDetail(accountId, folderPath, uid, parsed, flags, Buffer.byteLength(source), assessMessageCryptography(source));
 };
 
 export class MailService {
@@ -390,6 +394,7 @@ export class MailService {
           parsed,
           fetched.flags ?? new Set(),
           fetched.size ?? fetched.source.length,
+          assessMessageCryptography(fetched.source),
           expectedUidValidity,
         );
       } finally {

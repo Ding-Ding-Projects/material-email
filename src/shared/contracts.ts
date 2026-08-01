@@ -23,6 +23,7 @@ import type {
   OAuthTokenVaultActionResult,
   OAuthTokenVaultSnapshot,
 } from "./oauth.js";
+import type { MessageCryptoProfile, MessageCryptographyAssessment } from "./message-cryptography.js";
 
 export type {
   CalendarEvent,
@@ -62,6 +63,16 @@ export type {
   OAuthTokenVaultProviderState,
   OAuthTokenVaultSnapshot,
 } from "./oauth.js";
+export type {
+  MessageCryptoAssessmentReason,
+  MessageCryptoCapability,
+  MessageCryptoContainer,
+  MessageCryptoIdentityMetadata,
+  MessageCryptoProfile,
+  MessageCryptoProtocol,
+  MessageCryptographyAssessment,
+  MessageCryptoTrustState,
+} from "./message-cryptography.js";
 
 export type LanguageMode = "en" | "yue" | "bilingual";
 export type ThemeMode = "light" | "dark" | "system";
@@ -206,6 +217,7 @@ export interface AccountSummary {
   createdAt: string;
   lastSyncAt?: string;
   syncError?: string;
+  messageCryptography?: MessageCryptoProfile;
 }
 
 export interface FolderSummary {
@@ -300,6 +312,7 @@ export interface MessageDetail extends MessageSummary {
   remoteContentAllowed: boolean;
   attachments: AttachmentSummary[];
   replyTo: Address[];
+  cryptography: MessageCryptographyAssessment;
 }
 
 export interface CachedMailSearchQuery {

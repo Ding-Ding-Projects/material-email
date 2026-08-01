@@ -97,6 +97,15 @@ import {
   type ConnectionDiagnostic,
   type MailConnectionSettings,
 } from "../shared/connection-diagnostics";
+import {
+  MESSAGE_CRYPTO_CAPABILITIES,
+  emptyMessageCryptoProfile,
+  formatMessageCryptoFingerprint,
+  parseMessageCryptoProfile,
+  unsignedMessageCryptography,
+  type MessageCryptoProtocol,
+  type MessageCryptographyAssessment,
+} from "../shared/message-cryptography";
 
 type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
 type ToastKind = NotificationRecord["kind"];
@@ -2196,6 +2205,79 @@ const attachmentSaveReview = (detail: MessageDetail, target: number | "all"): At
   };
 };
 
+const messageCryptoProtocolLabel = (protocol: MessageCryptoProtocol | null): string => protocol === "openpgp"
+  ? "OpenPGP"
+  : protocol === "smime"
+    ? "S/MIME"
+    : tx("Unknown format", "未知格式");
+
+const safeMessageCryptoProfile = (account: AccountSummary | null) => {
+  try {
+    return parseMessageCryptoProfile(account?.messageCryptography ?? emptyMessageCryptoProfile());
+  } catch {
+    return emptyMessageCryptoProfile();
+  }
+};
+
+function renderReaderCryptographyTrust(input: MessageCryptographyAssessment | undefined): string {
+  const assessment = input ?? unsignedMessageCryptography();
+  const protocol = messageCryptoProtocolLabel(assessment.protocol);
+  const title = assessment.state === "unsigned"
+    ? tx("Unsigned message", "未簽署郵件")
+    : assessment.state === "unverified"
+      ? tx(`${protocol} signature not verified`, `${protocol} 簽署未驗證`)
+      : assessment.container === "encrypted"
+        ? tx(`${protocol} encrypted content unsupported`, `${protocol} 加密內容未支援`)
+        : tx("Cryptographic container unsupported", "密碼學容器未支援");
+  const stateLabel = assessment.state === "unsigned"
+    ? tx("Unsigned", "未簽署")
+    : assessment.state === "unverified"
+      ? tx("Unverified", "未驗證")
+      : tx("Unsupported", "未支援");
+  const description = assessment.state === "unsigned"
+    ? tx(
+        "No supported signature or encryption container was detected in the bounded top-level MIME header. This does not prove sender identity or message integrity.",
+        "有限頂層 MIME 標頭入面冇偵測到支援嘅簽署或者加密容器。呢個唔可以證明寄件人身份或者郵件完整性。",
+      )
+    : assessment.state === "unverified"
+      ? tx(
+          `A ${protocol} signature container was detected, but this build did not cryptographically verify the signature, signer identity, key or certificate, or message content.`,
+          `偵測到 ${protocol} 簽署容器，但呢個版本冇用密碼學方法驗證簽署、簽署者身份、金鑰／憑證或者郵件內容。`,
+        )
+      : assessment.container === "encrypted"
+        ? tx(
+            `A ${protocol} encrypted container was detected. This build cannot decrypt or authenticate it; any displayed fallback content remains untrusted.`,
+            `偵測到 ${protocol} 加密容器。呢個版本唔可以解密或者驗證；任何顯示嘅後備內容仍然唔可信。`,
+          )
+        : tx(
+            "A cryptographic MIME container was detected, but its format is not supported. No verification or decryption was attempted.",
+            "偵測到密碼學 MIME 容器，但格式未支援。冇嘗試驗證或者解密。",
+          );
+  const evidence = tx(
+    "Local header assessment only · Signature verification not performed · Content decryption not performed",
+    "只做本機標頭評估 · 冇驗證簽署 · 冇解密內容",
+  );
+  return `<section class="message-crypto-trust message-crypto-trust--${assessment.state}" data-testid="reader-crypto-trust" data-state="${assessment.state}" role="region" aria-labelledby="reader-crypto-title" aria-describedby="reader-crypto-description reader-crypto-evidence">
+    <span class="message-crypto-trust__icon" aria-hidden="true">${icon(assessment.state === "unsigned" ? "info" : "warning")}</span>
+    <div class="message-crypto-trust__copy"><div class="message-crypto-trust__heading"><h2 id="reader-crypto-title">${escapeHtml(title)}</h2><span class="trust-state-badge trust-state-badge--${assessment.state}" data-testid="reader-crypto-state">${escapeHtml(stateLabel)}</span></div><p id="reader-crypto-description">${escapeHtml(description)}</p><small id="reader-crypto-evidence">${escapeHtml(evidence)}</small></div>
+  </section>`;
+}
+
+function renderComposeCryptographyTrust(account: AccountSummary | null): string {
+  const profile = safeMessageCryptoProfile(account);
+  const identitySummary = profile.identities.length
+    ? `<details class="message-crypto-identities"><summary>${escapeHtml(tx(`${profile.identities.length} unverified local identity metadata record${profile.identities.length === 1 ? "" : "s"}`, `${profile.identities.length} 個未驗證本機身份中繼資料記錄`))}</summary><ul>${profile.identities.map(identity => `<li><strong>${escapeHtml(identity.displayName)}</strong><span>${messageCryptoProtocolLabel(identity.protocol)} · <bdi>${escapeHtml(identity.email)}</bdi></span><code><bdi>${escapeHtml(formatMessageCryptoFingerprint(identity.fingerprint))}</bdi></code>${identity.expiresAt ? `<small>${escapeHtml(tx("Metadata expiry", "中繼資料到期"))}: ${escapeHtml(formatDate(identity.expiresAt))}</small>` : ""}</li>`).join("")}</ul></details>`
+    : `<p class="message-crypto-empty">${escapeHtml(tx("No local identity metadata is configured for this account.", "呢個帳戶未設定本機身份中繼資料。"))}</p>`;
+  return `<section class="message-crypto-trust compose-crypto-trust message-crypto-trust--unsigned" data-testid="compose-crypto-trust" data-state="unsigned" role="region" aria-labelledby="compose-crypto-title" aria-describedby="compose-crypto-description compose-crypto-boundary">
+    <span class="message-crypto-trust__icon" aria-hidden="true">${icon("warning")}</span>
+    <div class="message-crypto-trust__copy"><div class="message-crypto-trust__heading"><h3 id="compose-crypto-title">${escapeHtml(tx("Sending unsigned", "將會未簽署寄出"))}</h3><span class="trust-state-badge trust-state-badge--unsigned" data-testid="compose-crypto-state">${escapeHtml(tx("Unsigned", "未簽署"))}</span></div><p id="compose-crypto-description">${escapeHtml(tx("The current SMTP path will send this draft without an OpenPGP or S/MIME signature and without message-content encryption.", "目前 SMTP 路徑會寄出呢份草稿，冇 OpenPGP 或者 S/MIME 簽署，亦冇郵件內容加密。"))}</p>
+      <dl class="message-crypto-capabilities">${MESSAGE_CRYPTO_CAPABILITIES.map(capability => `<div><dt>${messageCryptoProtocolLabel(capability.protocol)}</dt><dd>${escapeHtml(tx("Container detection only; sign, encrypt, verify, and decrypt are unsupported.", "只偵測容器；簽署、加密、驗證同解密全部未支援。"))}</dd></div>`).join("")}</dl>
+      ${identitySummary}
+      <small id="compose-crypto-boundary">${escapeHtml(tx("Identity records are validated public metadata only. Keys, passphrases, and plaintext cryptographic secrets are neither accepted nor persisted.", "身份記錄只係已驗證格式嘅公開中繼資料。唔接受亦唔會保存金鑰、密碼句或者明文密碼學秘密。"))}</small>
+    </div>
+  </section>`;
+}
+
 function renderReaderPane(): string {
   const message = activeMessage();
   if (!message) return `<article class="reader-pane reader-pane--empty" aria-label="${escapeHtml(tx("Message reader", "郵件閱讀器"))}"><span class="hero-icon">${icon("mail")}</span><h2>${escapeHtml(tx("Choose a message", "揀一封郵件"))}</h2><p>${escapeHtml(tx("The message reader keeps remote content isolated from the app.", "郵件閱讀器會將遠端內容同應用程式隔離。"))}</p></article>`;
@@ -2222,6 +2304,7 @@ function renderReaderPane(): string {
       <div class="message-header__copy"><p class="eyebrow">${escapeHtml(tx("MESSAGE", "郵件"))}</p><h1>${escapeHtml(detail.subject)}</h1><p><strong>${escapeHtml(addressLine(detail.from) || tx("Unknown sender", "未知寄件人"))}</strong> <span>&lt;${escapeHtml(detail.from[0]?.address ?? "")}‌&gt;</span></p><p>${escapeHtml(tx("To", "寄給"))}: ${escapeHtml(addressLine(detail.to))}${detail.cc.length ? ` · ${escapeHtml(tx("Cc", "副本"))}: ${escapeHtml(addressLine(detail.cc))}` : ""}</p></div>
       <time datetime="${escapeHtml(detail.date)}">${escapeHtml(formatDate(detail.date))}</time>
     </header>
+    ${renderReaderCryptographyTrust(detail.cryptography)}
     ${detail.attachments.length ? `<section class="attachment-strip" aria-label="${escapeHtml(tx("Attachments", "附件"))}"><div class="attachment-strip__heading"><strong>${icon("attach")} ${detail.attachments.length} ${escapeHtml(tx("attachments", "個附件"))}</strong><button class="button button--text" type="button" data-action="save-all-attachments" data-focus-key="save-all-attachments" ${isBusy("save-attachment") ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Save all", "全部儲存"))}</span></button></div>${detail.attachments.map(renderAttachmentChip).join("")}</section>` : ""}
     ${renderRemoteContentControl(detail)}
     <div class="reader-security-note">${icon("check")}<span>${escapeHtml(detail.remoteContentAllowed ? tx("Message HTML stays sandboxed. Only the listed image origins are allowed; scripts, forms, frames, connections, and same-origin access remain blocked.", "郵件 HTML 仍然喺沙盒入面。只准上面列出嘅圖片來源；指令碼、表單、框架、連線同同源存取仍然全部封鎖。") : tx("Message HTML is isolated in a sandbox. Scripts, forms, remote images, connections, and same-origin access are blocked.", "郵件 HTML 放喺沙盒隔離。指令碼、表單、遠端圖片、連線同同源存取全部被封鎖。"))}</span></div>
@@ -3056,6 +3139,7 @@ function renderComposer(): string {
         ${composer.showCopies || draft.cc.length || draft.bcc.length ? `<div class="recipient-row"><label for="compose-cc">${escapeHtml(tx("Cc", "副本"))}</label><input id="compose-cc" name="cc" value="${escapeHtml(draft.cc.join(", "))}" data-compose-field="cc" autocomplete="off" spellcheck="false"/></div><div class="recipient-row"><label for="compose-bcc">${escapeHtml(tx("Bcc", "密件副本"))}</label><input id="compose-bcc" name="bcc" value="${escapeHtml(draft.bcc.join(", "))}" data-compose-field="bcc" autocomplete="off" spellcheck="false"/></div>` : ""}
         <div class="recipient-row"><label for="compose-subject">${escapeHtml(tx("Subject", "主旨"))}</label><input id="compose-subject" name="subject" value="${escapeHtml(draft.subject)}" data-compose-field="subject" maxlength="998"/></div>
       </div>
+      ${renderComposeCryptographyTrust(sourceAccount ?? null)}
       <label class="visually-hidden" for="compose-body">${escapeHtml(tx("Message body", "郵件內容"))}</label><textarea class="compose-body" id="compose-body" name="text" data-compose-field="text" placeholder="${escapeHtml(tx("Write a message…", "撰寫郵件……"))}" spellcheck="true">${escapeHtml(draft.text)}</textarea>
       ${draft.attachments.length ? `<div class="compose-attachments" aria-label="${escapeHtml(tx("Attached files", "已附加檔案"))}">${draft.attachments.map((file, index) => `<span class="attachment-chip">${icon("attach")}<span>${escapeHtml(file.split(/[\\/]/).pop() ?? file)}</span><button class="icon-button icon-button--small" type="button" data-action="remove-compose-attachment" data-attachment-index="${index}" aria-label="${escapeHtml(tx("Remove attachment", "移除附件"))}">${icon("close")}</button></span>`).join("")}</div>` : ""}
       <footer class="compose-footer"><button class="button button--filled" type="submit" data-compose-submit="send" ${isBusy("send") || isBusy("save-draft") ? "disabled" : ""}>${icon("send", isBusy("send") ? "is-spinning" : "")}<span>${escapeHtml(isBusy("send") ? tx("Sending or queueing…", "寄出或者排隊緊……") : tx("Send", "寄出"))}</span><kbd>Ctrl+Enter</kbd></button><button class="icon-button" type="button" data-action="choose-attachments" aria-label="${escapeHtml(tx("Attach files", "附加檔案"))}" data-tooltip="${escapeHtml(tx("Attach files", "附加檔案"))}">${icon("attach")}</button><span class="action-spacer"></span><button class="button button--outlined" type="submit" data-compose-submit="draft" ${isBusy("send") || isBusy("save-draft") ? "disabled" : ""}>${icon("archive")}<span>${escapeHtml(isBusy("save-draft") ? tx("Saving…", "儲存緊……") : tx("Save draft", "儲存草稿"))}</span></button></footer>
