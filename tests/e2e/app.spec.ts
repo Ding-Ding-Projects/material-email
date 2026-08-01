@@ -326,6 +326,13 @@ test("resets live appearance controls without changing language", async () => {
   await expect(page.locator('[data-pref="fontScale"]')).toHaveValue("1");
   await expect(page.locator('[data-pref="fontWeight"]')).toHaveValue("400");
   await expect(page.locator('[data-pref="language"]')).toHaveValue("bilingual");
+  await application.close();
+  await launch();
+  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await page.getByRole("tab", { name: /Settings/i }).click();
+  await expect(page.locator('[data-pref="theme"]')).toHaveValue("system");
+  await expect(page.locator('[data-pref="density"]')).toHaveValue("comfortable");
+  await expect(page.locator('[data-pref="language"]')).toHaveValue("bilingual");
 });
 
 test("keeps native Windows notifications opt-in and persists the setting", async () => {
