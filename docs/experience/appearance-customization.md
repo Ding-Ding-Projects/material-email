@@ -12,6 +12,8 @@ The editor reports text/background contrast against the WCAG AA normal-text targ
 
 Right-clicking a workspace tab exposes **Edit tab appearance…**. <kbd>Shift</kbd>+right-click opens the editor directly, <kbd>Shift</kbd>+<kbd>F10</kbd> opens the keyboard-operable tab menu, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> opens the editor for the focused tab. Opening moves focus into the editor; <kbd>Escape</kbd> or **Done** returns focus to that same tab. Each property can return to the inherited tab style independently, while **Reset tab** removes all overrides. The context menu and editor recompute their anchored position after viewport or scroll changes, while CSS viewport clamps keep their scrollable bounds usable even when a synthetic Electron viewport change does not emit a native resize event.
 
+The editor's supporting copy follows English, Hong Kong Cantonese, or semantic bilingual mode and selects English and Cantonese tone independently at levels 1–5. Every variant still states that preview is immediate and scoped to the current tab; humor changes only the surrounding voice.
+
 The Appearance card also provides a persisted global reset for theme, density, accent, interface font, font scale, and font weight; language, humor, narrator, notification, account, folder, and dim-sum preferences are preserved. The broader completion target remains an anchored, non-modal editor available from every rendered element, with keyboard access, focus return, per-property reset, presets, and theme export/import.
 
 ## Configuration
@@ -34,6 +36,8 @@ Theme files are untrusted structured data. Validate sizes, numeric ranges, ident
 ## Verification
 
 Six focused unit cases verify normalization of untrusted local tab state, bounded accent/background/text overrides, malformed-JSON fallback, one-property reset, preview resolution, HEX/RGB/HSL conversion, alpha preservation, invalid-channel rejection, and contrast math. One real Electron scenario verifies keyboard context-menu entry, direct keyboard entry, initial focus, computed live RGB background/HEX foreground/HSL accent styling under the renderer CSP, contrast status, per-property reset, restart persistence, full reset, and exact focus return. A second real-Electron responsive scenario verifies editor containment, internal overflow, stable initial focus, reachable completion controls, exact focus return, and reduced-motion delay suppression at 760 × 560 plus 608 × 448, 507 × 373, and 380 × 280 effective CSS viewports. The smaller sizes are layout stress simulations, not native Windows display-scale certification.
+
+A separate focused language/humor Electron matrix verifies the editor at English 1, Cantonese 5, bilingual English 1/Cantonese 5, and the inverse bilingual English 5/Cantonese 1 combination. Renderer model tests cover all five table entries and fallback behavior.
 
 Numeric alpha entry outside HEX8; named colors; RGB/A and HSL/A controls; HSV/HSB, HWB, Lab/LCH, OKLab/OKLCH, and CMYK translation; gamut/clipping warnings; installed-font previews; Word-depth typography; editor self-customization; import/export; and every-element context menus remain open.
 

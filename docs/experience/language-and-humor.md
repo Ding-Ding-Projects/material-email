@@ -2,7 +2,7 @@
 
 ## Status
 
-**Preference and renderer foundation.** Complete string separation and every-message audit remain open.
+**Preference foundation plus a focused five-level renderer matrix.** The appearance editor, both advanced date pickers, notification centre, renderer toasts, and notification severity labels now use the active language and independent per-language humor levels. Complete string separation and an every-message audit remain open.
 
 ## Behavior
 
@@ -13,6 +13,8 @@ The defaults are English, English humor level 2, and Cantonese humor level 3. Pr
 ## Configuration
 
 Language and humor controls live in Settings and apply at runtime. The HTML language metadata follows the primary language. Locale-sensitive dates use English (Canada) or Hong Kong Chinese formatting according to the selected mode.
+
+The focused appearance, History date-picker, Changelog date-picker, and notification copy each provide five factual variants per language. Renderer toasts preserve their original event facts and add only level-selected surrounding voice. Missing or blank variants fall back to the nearest lower available level, then the next available level, and finally the other language rather than leaving an empty control.
 
 ## Failure modes
 
@@ -28,7 +30,7 @@ Humor never changes consent, destructive impact, credential guidance, financial 
 
 ## Verification
 
-The preference types, defaults, persistence, renderer selection function, locale switch, and semantic bilingual spans exist. Electron coverage verifies representative mail, Settings, PIM, and error copy with `en`/`zh-HK` segments at 760 × 560 without document-width overflow. A full inventory proving every rendered message has English, Cantonese, and bilingual behavior at all five independent levels has not been completed; native screen-reader and the full display-scale matrix remain open.
+The preference types, defaults, persistence, renderer selection function, locale switch, and semantic bilingual spans exist. Focused renderer tests cover active-language isolation, inverse bilingual levels, all target-surface tone tables, blank/missing fallback, factual toast preservation, and localized notification severity. A real-Electron matrix verifies English, Cantonese, and bilingual rendering across appearance, History, Changelog, and Notifications; it also flips bilingual levels from English 1/Cantonese 5 to English 5/Cantonese 1 and checks a live toast. Existing Electron coverage verifies representative mail, Settings, PIM, and error copy with `en`/`zh-HK` segments at 760 × 560 without document-width overflow. A full inventory proving every other rendered message has all five independent levels has not been completed; native screen-reader and the full display-scale matrix remain open.
 
 ## Suggested articles
 

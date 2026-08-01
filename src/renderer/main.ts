@@ -64,6 +64,13 @@ import {
 import { icon, type IconName } from "./lib/icons";
 import { DEFAULT_APPEARANCE } from "./lib/appearance";
 import {
+  localizedNotificationKind,
+  localizedSurfaceTone,
+  localizedTone,
+  notificationToastToneScale,
+  type SurfaceTone,
+} from "./lib/localization";
+import {
   TAB_STYLE_KEYS,
   normalizeTabColor,
   parseTabPreferences,
@@ -557,13 +564,11 @@ const tx = (english: string, cantonese: string): string => {
 };
 
 const tone = (english: readonly [string, string, string, string, string], cantonese: readonly [string, string, string, string, string]): string => {
-  const prefs = preferences();
-  const en = english[prefs.funnyEnglish - 1] ?? english[0];
-  const yue = cantonese[prefs.funnyCantonese - 1] ?? cantonese[0];
-  if (prefs.language === "yue") return yue;
-  if (prefs.language === "bilingual") return bilingualText(en, yue);
-  return en;
+  return localizedTone(preferences(), { english, cantonese }, bilingualText);
 };
+
+const surfaceTone = (surface: SurfaceTone): string =>
+  localizedSurfaceTone(surface, preferences(), bilingualText);
 
 const applyBilingualSemantics = (root: ParentNode): void => {
   if (preferences().language !== "bilingual") return;
@@ -716,7 +721,12 @@ const dismissToast = (id: string): void => {
 };
 
 const pushToast = (kind: ToastKind, title: string, body: string, cantoneseTitle = title, cantoneseBody = body): void => {
-  const item: LocalToast = { id: crypto.randomUUID(), kind, title: tx(title, cantoneseTitle), body: tx(body, cantoneseBody) };
+  const item: LocalToast = {
+    id: crypto.randomUUID(),
+    kind,
+    title: tx(title, cantoneseTitle),
+    body: localizedTone(preferences(), notificationToastToneScale(body, cantoneseBody), bilingualText),
+  };
   state.toasts = [...state.toasts.slice(-3), item];
   renderToasts();
   if (kind === "error") announce(`${item.title}. ${item.body}`);
@@ -2839,8 +2849,9 @@ function renderNotificationsPage(): string {
   const unread = records.filter(item => !item.read).length;
   return `<section class="standard-page" data-testid="notifications-page" id="panel-notifications" role="tabpanel" aria-labelledby="tab-notifications">
     ${renderPageHeader("INBOX FOR THE APP", tx("Notification centre", "通知中心"), tx("Informational messages stay reviewable after their corner toasts disappear.", "角落提示消失之後，資訊訊息仍然可以喺呢度翻查。"), "notifications")}
+    <p class="supporting-copy" data-testid="notifications-tone">${escapeHtml(surfaceTone("notifications"))}</p>
     <div class="page-tools"><div class="page-search">${renderSearchField("notifications", tx("Search notification title, body, or kind", "搜尋通知標題、內容或者類型"))}</div><span class="count-pill">${unread} ${escapeHtml(tx("unread", "未讀"))}</span><button class="button button--outlined" type="button" data-action="request-clear-notifications" ${records.length === 0 ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Clear history", "清除記錄"))}</span></button></div>
-    <div class="record-list">${records.length ? records.map(item => `<article class="notification-card notification-card--${item.kind}${item.read ? " is-read" : ""}"><span class="notification-card__icon">${icon(item.kind === "success" ? "check" : item.kind === "warning" ? "warning" : item.kind === "error" ? "error" : "info")}</span><div><div class="record-meta"><span class="kind-badge">${escapeHtml(item.kind)}</span><time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(formatDate(item.createdAt))}</time></div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.body)}</p></div><button class="button button--text" type="button" data-action="toggle-notification-read" data-notification-id="${escapeHtml(item.id)}" data-read="${item.read}">${escapeHtml(item.read ? tx("Mark unread", "標示為未讀") : tx("Mark read", "標示為已讀"))}</button></article>`).join("") : renderRecordEmpty("notifications")}</div>
+    <div class="record-list">${records.length ? records.map(item => `<article class="notification-card notification-card--${item.kind}${item.read ? " is-read" : ""}"><span class="notification-card__icon">${icon(item.kind === "success" ? "check" : item.kind === "warning" ? "warning" : item.kind === "error" ? "error" : "info")}</span><div><div class="record-meta"><span class="kind-badge">${escapeHtml(localizedNotificationKind(item.kind, preferences(), bilingualText))}</span><time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(formatDate(item.createdAt))}</time></div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.body)}</p></div><button class="button button--text" type="button" data-action="toggle-notification-read" data-notification-id="${escapeHtml(item.id)}" data-read="${item.read}">${escapeHtml(item.read ? tx("Mark unread", "標示為未讀") : tx("Mark read", "標示為已讀"))}</button></article>`).join("") : renderRecordEmpty("notifications")}</div>
   </section>`;
 }
 
@@ -3053,7 +3064,7 @@ function renderHistoryCalendar(range: ReturnType<typeof validateDateRange>): str
       : tx("Choose the start date for the history range.", "請揀歷史日期範圍嘅開始日期。 ");
   return `<aside class="changelog-calendar" id="history-calendar" role="dialog" aria-modal="false" aria-labelledby="history-calendar-title" aria-describedby="history-calendar-instructions" data-testid="history-calendar">
     <header class="changelog-calendar__header"><div><p class="eyebrow">${escapeHtml(tx("DATE RANGE", "日期範圍"))}</p><h2 id="history-calendar-title">${escapeHtml(tx("Choose history dates", "選擇歷史日期"))}</h2></div><button class="icon-button" type="button" data-action="close-history-calendar" aria-label="${escapeHtml(tx("Close date picker", "關閉日期選擇器"))}">${icon("close")}</button></header>
-    <p class="changelog-calendar__instructions" id="history-calendar-instructions">${escapeHtml(tx("Pick a start and end date, use a preset, or keep typing in either field. Date, action, and text filters stay composed locally.", "揀開始同結束日期、用預設，或者繼續喺欄位打字。日期、操作同文字篩選會喺本機保持組合。"))}</p>
+    <p class="changelog-calendar__instructions" id="history-calendar-instructions" data-testid="history-calendar-tone">${escapeHtml(surfaceTone("historyDatePicker"))}</p>
     <div class="preset-row" role="group" aria-label="${escapeHtml(tx("History date-range presets", "歷史日期範圍預設"))}">${presets.map(preset => {
       const value = changelogDateRangeForPreset(preset.id, today);
       const active = state.filters.historyFrom === value.from && state.filters.historyTo === value.to;
@@ -3240,7 +3251,7 @@ function renderChangelogCalendar(range: ReturnType<typeof validateDateRange>): s
       : tx("Choose the start date for the release range.", "請揀發佈日期範圍嘅開始日期。 ");
   return `<aside class="changelog-calendar" id="changelog-calendar" role="dialog" aria-modal="false" aria-labelledby="changelog-calendar-title" aria-describedby="changelog-calendar-instructions" data-testid="changelog-calendar">
     <header class="changelog-calendar__header"><div><p class="eyebrow">${escapeHtml(tx("DATE RANGE", "日期範圍"))}</p><h2 id="changelog-calendar-title">${escapeHtml(tx("Choose release dates", "選擇發佈日期"))}</h2></div><button class="icon-button" type="button" data-action="close-changelog-calendar" aria-label="${escapeHtml(tx("Close date picker", "關閉日期選擇器"))}">${icon("close")}</button></header>
-    <p class="changelog-calendar__instructions" id="changelog-calendar-instructions">${escapeHtml(tx("Pick a start and end date, use a preset, or keep typing in either field. Dates stay local to this app.", "揀開始同結束日期、用預設，或者繼續喺欄位打字。日期只會留喺呢個 App 本機。"))}</p>
+    <p class="changelog-calendar__instructions" id="changelog-calendar-instructions" data-testid="changelog-calendar-tone">${escapeHtml(surfaceTone("changelogDatePicker"))}</p>
     <div class="preset-row" role="group" aria-label="${escapeHtml(tx("Date-range presets", "日期範圍預設"))}">${presets.map(preset => {
       const value = changelogDateRangeForPreset(preset.id, today);
       const active = state.changelogDates.from === value.from && state.changelogDates.to === value.to;
@@ -3513,9 +3524,10 @@ function renderTabAppearanceEditor(): string {
   const textContrast = tabColorContrastRatio(style.foreground, style.background);
   const accentContrast = tabColorContrastRatio(style.accent, style.background);
   const alphaEstimate = [style.accent, style.background, style.foreground].some(color => color.length === 9);
-  return `<section class="appearance-editor" data-testid="tab-appearance-editor" role="dialog" aria-modal="false" aria-labelledby="appearance-editor-title" aria-describedby="appearance-editor-note">
+  return `<section class="appearance-editor" data-testid="tab-appearance-editor" role="dialog" aria-modal="false" aria-labelledby="appearance-editor-title" aria-describedby="appearance-editor-tone appearance-editor-note">
     <header class="popover-header"><div><p class="eyebrow">${escapeHtml(tx("ANCHORED TO TAB", "固定喺分頁旁邊"))}</p><h2 id="appearance-editor-title">${escapeHtml(tx(`Edit ${tab.en} appearance`, `編輯${tab.yue}外觀`))}</h2></div><button class="icon-button" type="button" data-action="close-tab-appearance" aria-label="${escapeHtml(tx("Close appearance editor", "關閉外觀編輯器"))}">${icon("close")}</button></header>
     <div class="appearance-editor__preview" data-testid="tab-appearance-preview">${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span></div>
+    <p class="engine-note" id="appearance-editor-tone" data-testid="appearance-tone">${escapeHtml(surfaceTone("appearance"))}</p>
     <section class="contrast-readout" role="status" aria-live="polite" aria-atomic="true" aria-label="${escapeHtml(tx("Tab color contrast", "分頁顏色對比"))}">
       ${renderTabContrastMetric("tab-text-contrast", tx("Text / background", "文字／背景"), textContrast, 4.5)}
       ${renderTabContrastMetric("tab-accent-contrast", tx("Accent / background", "重點色／背景"), accentContrast, 3)}

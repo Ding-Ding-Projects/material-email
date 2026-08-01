@@ -10,6 +10,8 @@ Mail sync, account changes, drafts, queued operations, sends, moves, attachment 
 
 The renderer presents non-decision feedback as corner toasts with dismiss controls and a separate Notifications page. Warnings and errors should remain until dismissed; ordinary status may auto-dismiss. Clearing the history is a deliberate action.
 
+The Notifications page's supporting copy, severity badges, and renderer-created toast copy follow English, Hong Kong Cantonese, or semantic bilingual mode. Toast bodies retain the original event facts and select five levels of surrounding voice independently for English and Cantonese. Persisted service-record titles and bodies remain the factual text recorded when the event occurred; the renderer does not rewrite stored history when a preference changes.
+
 ## Configuration
 
 Notification language and tone follow the global language and independent humor settings. Narration, if enabled, is separate and off by default. Native Windows summaries are separately opt-in and never include subject, sender, recipient, message, attachment, credential, or account-identifying details.
@@ -30,7 +32,7 @@ Do not put secrets, access tokens, full message bodies, attachment contents, or 
 
 ## Verification
 
-Source inspection confirms record creation, the 500-record cap, read/clear operations, toasts, live regions, a Notifications tab, authenticated native-notification IPC, opt-in persistence, generic summaries, language modes, and funny-level styling. Timing, stacking, persistent warning/error behavior, screen-reader announcements, action validity, deduplication, and packaged lock-screen behavior remain open.
+Source inspection confirms record creation, the 500-record cap, read/clear operations, toasts, live regions, a Notifications tab, authenticated native-notification IPC, opt-in persistence, and generic summaries. Focused renderer tests verify three-mode severity labels, factual toast preservation, independent inverse humor levels, and fallback behavior. A real-Electron matrix verifies all three language modes, both inverse bilingual level combinations, and a live bilingual toast. Timing, stacking, persistent warning/error behavior, screen-reader announcements, action validity, deduplication, stored-record translation, and packaged lock-screen behavior remain open.
 
 ## Suggested articles
 
