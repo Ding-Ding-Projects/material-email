@@ -7,13 +7,13 @@ This matrix records evidence for the current development tree. It is not release
 | Area | Evidence | Current result | Remaining proof |
 | --- | --- | --- | --- |
 | Dependencies | `npm ci` | Reported pass | Reproduce in CI |
-| Electron runtime | Playwright Electron E2E | 15 / 15 scenarios passed, including two restarts, redirect/foreign-WebContents denial, dirty/focus decisions, mail-navigation and editor concurrency, bilingual minimum-width semantics, and PIM error/retry | Repeat in CI; clean VM, screen reader, and full display-scale matrix |
+| Electron runtime | Playwright Electron E2E | Previously recorded suite: 15 / 15; this change's focused consent/restart and bilingual scenarios: 2 / 2. The expanded full suite was not rerun in this pass. | Run the expanded full suite in CI; clean VM, screen reader, and full display-scale matrix |
 | Types | `npm run typecheck` | Passed in the final local `npm run check` gate | Repeat in CI |
-| Tests | `npm test` | 30 files / 143 tests passed in the final local gate, including 4 focused installer-upgrade contract tests | Repeat in CI |
+| Tests | `npm test` | 34 files / 160 tests passed in the final local gate, including remote-content sanitizer, persistence, IPC, and CSP assertions | Repeat in CI |
 | Bundled images | `npm run verify:assets` | 10 unique 1254 × 1254 PNGs decode and match the catalog | Repeat in CI and release workflow |
 | Dependency audit | `npm audit` | 0 known vulnerabilities reported at scan time | Continuous scan; audit is not a security review |
 | Build | `npm run build` | Passed; Vite transformed 8 renderer modules | Repeat exact source in CI |
-| Message safety | MIME/sanitizer tests | Pass reported | Adversarial corpus and reader sandbox |
+| Message safety | MIME/sanitizer, persistence/IPC, and real-Electron consent tests | Default-deny image removal, bounded exact-origin summary, persisted per-message allow/revoke, scoped image CSP, focus return, restart, and bilingual semantics passed locally | Adversarial corpus, live image servers, certificate UX, full reader accessibility matrix |
 | Persistence | JSON/history recovery, cleanup tests, and restart E2E | Account removal purges live cache/drafts/outbox/pending operations while append-only history remains; two Electron restart paths passed | disk-full, real power-loss, antivirus-lock timing, migration, DPAPI |
 | IPC and local files | sender-authentication, strict-schema, path-authorization, and Electron coverage | Every channel authenticates current main `WebContents`, top frame, and exact trusted renderer location; a second real `WebContents` and a loopback redirect were denied, mailto delivery remained trust-gated, and same-file fragment navigation remained trusted | packaged native-dialog matrix and adversarial IPC fuzzing |
 | Account discovery | parser tests | Pass reported | live provider discovery and consent/error UX |

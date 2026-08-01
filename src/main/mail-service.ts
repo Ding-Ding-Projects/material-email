@@ -11,6 +11,7 @@ import type {
   FolderSummary,
   MessageDetail,
   MessageSummary,
+  RemoteContentSource,
   SendResult,
 } from "../shared/contracts.js";
 
@@ -74,13 +75,82 @@ const permanentRecipientRejections = (error: unknown): string[] | null => {
   return allPermanent ? rejected : null;
 };
 
+const messageTags = ["p", "br", "div", "span", "strong", "b", "em", "i", "u", "s", "ul", "ol", "li", "blockquote", "pre", "code", "table", "thead", "tbody", "tr", "th", "td", "a", "h1", "h2", "h3", "h4", "hr"];
+const messageAttributes = { a: ["href", "title"], td: ["colspan", "rowspan"], th: ["colspan", "rowspan"] };
+
+export interface SanitizedMessageContent {
+  html: string;
+  remoteContentHtml: string;
+  remoteContentSources: RemoteContentSource[];
+}
+
 export const sanitizeMessageHtml = (source: string): string =>
   sanitizeHtml(source, {
-    allowedTags: ["p", "br", "div", "span", "strong", "b", "em", "i", "u", "s", "ul", "ol", "li", "blockquote", "pre", "code", "table", "thead", "tbody", "tr", "th", "td", "a", "h1", "h2", "h3", "h4", "hr"],
-    allowedAttributes: { a: ["href", "title"], td: ["colspan", "rowspan"], th: ["colspan", "rowspan"] },
+    allowedTags: messageTags,
+    allowedAttributes: messageAttributes,
     allowedSchemes: ["http", "https", "mailto"],
+    allowProtocolRelative: false,
     disallowedTagsMode: "discard",
+    nestingLimit: 100,
+    parseStyleAttributes: false,
   });
+
+const remoteImage = (raw: string | undefined): URL | null => {
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw.trim());
+    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const sanitizeMessageContent = (source: string): SanitizedMessageContent => {
+  const remoteContentSources: RemoteContentSource[] = [];
+  const remoteContentHtml = sanitizeHtml(source, {
+    allowedTags: [...messageTags, "img"],
+    allowedAttributes: {
+      ...messageAttributes,
+      img: ["src", "alt", "title", "loading", "referrerpolicy"],
+    },
+    allowedSchemes: ["http", "https", "mailto"],
+    allowedSchemesByTag: { a: ["http", "https", "mailto"], img: ["http", "https"] },
+    allowProtocolRelative: false,
+    disallowedTagsMode: "discard",
+    nestingLimit: 100,
+    parseStyleAttributes: false,
+    transformTags: {
+      img: (_tagName, attributes) => {
+        const sourceUrl = remoteImage(attributes.src);
+        if (!sourceUrl || remoteContentSources.length >= 1_000) {
+          return { tagName: "span", attribs: {}, text: attributes.alt?.slice(0, 2_048) ?? "" };
+        }
+        remoteContentSources.push({
+          kind: "image",
+          origin: sourceUrl.origin,
+          hostname: sourceUrl.hostname,
+          protocol: sourceUrl.protocol as "http:" | "https:",
+        });
+        return {
+          tagName: "img",
+          attribs: {
+            src: sourceUrl.href,
+            alt: attributes.alt?.slice(0, 2_048) ?? "",
+            ...(attributes.title ? { title: attributes.title.slice(0, 2_048) } : {}),
+            loading: "lazy",
+            referrerpolicy: "no-referrer",
+          },
+        };
+      },
+    },
+  });
+  return {
+    html: sanitizeMessageHtml(source),
+    remoteContentHtml,
+    remoteContentSources,
+  };
+};
 
 const parsedMessageToDetail = (
   accountId: string,
@@ -93,6 +163,7 @@ const parsedMessageToDetail = (
 ): MessageDetail => {
   const text = parsed.text?.trim() ?? "";
   const htmlSource = typeof parsed.html === "string" ? parsed.html : text.replace(/\n/g, "<br>");
+  const sanitized = sanitizeMessageContent(htmlSource);
   return {
     id: `${accountId}:${folderPath}:${uid}`,
     accountId,
@@ -112,7 +183,8 @@ const parsedMessageToDetail = (
     hasAttachments: parsed.attachments.length > 0,
     size,
     text,
-    html: sanitizeMessageHtml(htmlSource),
+    ...sanitized,
+    remoteContentAllowed: false,
     attachments: parsed.attachments.map(item => ({
       filename: item.filename ?? "attachment",
       contentType: item.contentType,

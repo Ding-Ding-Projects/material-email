@@ -111,6 +111,13 @@ describe("non-PIM IPC validation", () => {
     expect(() => ipcPayloadSchemas.editorOpen.parse(["notepad.exe"])).toThrow();
   });
 
+  it("accepts only an explicit boolean remote-content decision for a bounded message identity", () => {
+    expect(ipcPayloadSchemas.remoteContentConsent.parse(["account-1", "Inbox", 8, true])).toEqual(["account-1", "Inbox", 8, true]);
+    expect(() => ipcPayloadSchemas.remoteContentConsent.parse(["account-1", "Inbox", 8, "true"])).toThrow();
+    expect(() => ipcPayloadSchemas.remoteContentConsent.parse(["account-1", "Inbox", 0, true])).toThrow();
+    expect(() => ipcPayloadSchemas.remoteContentConsent.parse(["account-1", "Inbox", 8, true, "surplus"])).toThrow();
+  });
+
   it("does not echo a rejected account secret in validation errors", () => {
     const secret = "do-not-echo-this-value".repeat(1_000);
     let message = "";

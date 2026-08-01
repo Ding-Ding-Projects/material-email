@@ -80,6 +80,9 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("mail:message", ipcPayloadSchemas.accountFolderMessage, ([accountId, folderPath, uid]) =>
     service.getMessage(accountId, folderPath, uid),
   );
+  handleValidated("mail:remote-content", ipcPayloadSchemas.remoteContentConsent, ([accountId, folderPath, uid, allowed]) =>
+    service.setRemoteContentAllowed(accountId, folderPath, uid, allowed),
+  );
   handleValidated("mail:save-attachment", ipcPayloadSchemas.saveAttachment, ([accountId, folderPath, uid, index, review]) =>
     service.saveAttachment(accountId, folderPath, uid, index, review),
   );

@@ -82,6 +82,44 @@ test("onboards into a live three-pane demo and isolates message content", async 
   expect(await frame.contentFrame().locator("body").evaluate(() => typeof window.materialEmail)).toBe("undefined");
 });
 
+test("loads remote images only after per-message consent and persists revocation-ready state", async () => {
+  await ensureDemo();
+  await page.getByTestId("message-list").locator(".message-row").first().locator(".message-row__main").click();
+
+  const control = page.getByTestId("remote-content-control");
+  await expect(control.getByRole("heading", { name: "Remote images blocked" })).toBeVisible();
+  await expect(control).toContainText("https://updates.example.invalid");
+  await expect(control).toContainText(/Consent applies only to this message and is saved locally/i);
+  let frame = page.getByTestId("reader-iframe");
+  await expect(frame.contentFrame().locator("img")).toHaveCount(0);
+  expect(await frame.contentFrame().locator('meta[http-equiv="Content-Security-Policy"]').getAttribute("content")).not.toContain("updates.example.invalid");
+
+  let toggle = control.getByRole("button", { name: /Load for this message/i });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  toggle = page.getByTestId("remote-content-control").getByRole("button", { name: /Block remote images again/i });
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(toggle).toBeFocused();
+  frame = page.getByTestId("reader-iframe");
+  const remoteImage = frame.contentFrame().locator('img[alt="Launch checklist preview"]');
+  await expect(remoteImage).toHaveCount(1);
+  await expect(remoteImage).toHaveAttribute("src", "https://updates.example.invalid/mail/launch-checklist.png?demo=1");
+  await expect(remoteImage).toHaveAttribute("referrerpolicy", "no-referrer");
+  const allowedPolicy = await frame.contentFrame().locator('meta[http-equiv="Content-Security-Policy"]').getAttribute("content");
+  expect(allowedPolicy).toContain("img-src data: https://updates.example.invalid");
+  expect(allowedPolicy).toContain("script-src 'none'");
+  expect(allowedPolicy).toContain("connect-src 'none'");
+  expect(allowedPolicy).toContain("frame-src 'none'");
+
+  await restart();
+  await expect(page.getByTestId("remote-content-control").getByRole("button", { name: /Block remote images again/i })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("reader-iframe").contentFrame().locator('img[alt="Launch checklist preview"]')).toHaveCount(1);
+
+  await page.getByTestId("remote-content-control").getByRole("button", { name: /Block remote images again/i }).click();
+  await expect(page.getByTestId("remote-content-control").getByRole("button", { name: /Load for this message/i })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("reader-iframe").contentFrame().locator("img")).toHaveCount(0);
+});
+
 test("preserves the active reader document across message chrome updates", async () => {
   await ensureDemo();
   const messages = page.getByTestId("message-list").locator(".message-row");
@@ -758,6 +796,9 @@ test("marks bilingual visible copy with language semantics across mail, settings
 
   await page.locator('[role="tab"][data-tab-id="mail"]').click();
   await expect(page.getByTestId("tab-strip").locator('span[lang="zh-HK"]')).not.toHaveCount(0);
+  await page.getByTestId("message-list").locator(".message-row").first().locator(".message-row__main").click();
+  await expect(page.getByTestId("remote-content-control").locator('span[lang="zh-HK"]')).not.toHaveCount(0);
+  await expect(page.getByTestId("remote-content-control").getByRole("button", { name: /Load for this message/i })).toHaveAttribute("aria-pressed", "false");
   await openWorkspaceTab(/^Contacts/i, "contacts-page");
   await expect(page.getByTestId("contacts-page").locator('span[lang="zh-HK"]')).not.toHaveCount(0);
 

@@ -475,6 +475,18 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .attachment-risk-badge { display: inline-flex; align-items: center; flex: 0 0 auto; min-height: 19px; padding: 1px 6px; border-radius: 999px; font-size: 0.66rem; font-weight: 750; line-height: 1.2; }
 .attachment-risk-badge--caution { background: var(--warning-container); color: color-mix(in srgb, var(--warning) 78%, var(--on-surface)); }
 .attachment-risk-badge--dangerous { background: var(--error-container); color: var(--error); }
+.remote-content-control { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: start; gap: 10px; margin: 0 16px 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--outline-variant)); border-radius: var(--radius-md); background: var(--warning-container); color: var(--on-surface); }
+.remote-content-control.is-allowed { border-color: color-mix(in srgb, var(--error) 42%, var(--outline-variant)); background: color-mix(in srgb, var(--error-container) 72%, var(--surface-container)); }
+.remote-content-control__icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: color-mix(in srgb, var(--warning) 18%, var(--surface-container-highest)); color: var(--warning); }
+.remote-content-control.is-allowed .remote-content-control__icon { background: color-mix(in srgb, var(--error) 16%, var(--surface-container-highest)); color: var(--error); }
+.remote-content-control__copy { min-width: 0; }
+.remote-content-control h2 { margin: 0 0 3px; font-size: 0.9rem; }
+.remote-content-control p { margin: 3px 0; font-size: 0.72rem; color: var(--on-surface-variant); overflow-wrap: anywhere; }
+.remote-content-origins { display: flex; flex-wrap: wrap; gap: 4px; margin: 7px 0; padding: 0; list-style: none; }
+.remote-content-origins code { display: block; max-width: 100%; padding: 3px 7px; border-radius: 999px; background: var(--surface-container-highest); color: var(--on-surface); font-size: 0.68rem; overflow-wrap: anywhere; }
+.remote-content-warning { display: flex; align-items: flex-start; gap: 5px; color: var(--error) !important; }
+.remote-content-warning .icon { width: 15px; height: 15px; flex: 0 0 auto; }
+.remote-content-control > .button { align-self: center; max-width: 210px; white-space: normal; text-align: center; }
 .reader-security-note { display: flex; align-items: flex-start; gap: 7px; margin: 0 16px 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--success-container); color: color-mix(in srgb, var(--success) 72%, var(--on-surface)); font-size: 0.7rem; }
 .reader-security-note .icon { width: 16px; height: 16px; }
 .message-frame { min-height: 260px; flex: 1; margin: 0 14px 14px; border: 0; border-radius: var(--radius-md); background: Canvas; color-scheme: light dark; }
@@ -1065,6 +1077,8 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
   .mail-workspace { overflow-y: auto; }
   .mail-layout { flex: 0 0 auto; min-height: calc(100vh - 155px); grid-template-columns: 210px minmax(320px, 1fr); grid-template-rows: minmax(520px, calc(100vh - 155px)) minmax(520px, 70vh); }
   .reader-pane { grid-column: 1 / -1; }
+  .remote-content-control { grid-template-columns: 36px minmax(0, 1fr); }
+  .remote-content-control > .button { grid-column: 2; justify-self: start; max-width: 100%; }
   .settings-grid, .tool-grid { grid-template-columns: 1fr; }
   .settings-card--wide, .tool-card--wide, .about-card { grid-column: 1; }
   .setup-dialog { grid-template-columns: 1fr; }

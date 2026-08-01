@@ -13,7 +13,7 @@ The application divides trust into four layers:
 3. Every IPC operation first authenticates the current main window's `WebContents`, requires its top frame, and matches its exact trusted renderer URL/path. The main process then validates every non-PIM IPC argument with strict, bounded schemas, performs network and file operations, and strips secrets from public account summaries. PIM calls use the same sender gate before continuing through the PIM service's own strict schemas.
 4. Remote mail servers, messages, attachments, configuration XML, links, filenames, and imported/exported content are untrusted inputs.
 
-Account secrets are encrypted with Electron `safeStorage` before the JSON state file is written. Message MIME is parsed in the main process. HTML bodies are reduced to an allowlist; scripts, styles, images, event handlers, frames, forms, and unsafe schemes are removed. The reader builds a separate document with a restrictive content-security policy.
+Account secrets are encrypted with Electron `safeStorage` before the JSON state file is written. Message MIME is parsed in the main process. HTML bodies are reduced to a default image-free allowlist plus a separately sanitized HTTP(S)-image variant with normalized origin metadata. The reader builds an opaque sandboxed document with a restrictive content-security policy. Remote images remain absent until the user stores an explicit decision for that message; then only its listed image origins enter `img-src`, while scripts, forms, frames, objects, media, connections, base URLs, referrers, and same-origin access remain denied.
 
 Attachment paths are capabilities, not renderer assertions. A path can enter a new compose draft only after the native file picker approves it. A saved draft may continue using its own previously approved attachment paths after restart, but changing the draft identifier does not transfer that approval. Sending also verifies that each authorized path still names a regular file.
 
@@ -32,6 +32,7 @@ External editor launch accepts only a real Windows `.exe` with an executable sig
 - `safeStorage` may be unavailable; account creation and secret decryption then fail closed.
 - A corrupted or incompatible state file fails closed. A valid backup or interrupted-rename copy is promoted when available, while the corrupt original is quarantined; defaults are created only when no state or recovery material exists.
 - Sanitization can remove legitimate message formatting.
+- Loading a consented remote image can disclose network address and open timing. An HTTP warning is not certificate diagnostics, and certificate UX remains unimplemented.
 - Keeping HTTP(S) links does not make their destinations trustworthy.
 - Attachment contents can still be malicious even when filenames are normalized.
 - Regex risk detection is heuristic and not a hard execution timeout.
@@ -46,7 +47,7 @@ The local Git history validates snapshots before commit and accepts restores onl
 
 ## Verification
 
-The final local gate passed 22 files / 96 tests. Coverage includes active/remote HTML removal, MIME metadata, authentication of every IPC channel's sender/frame/location, denial of a real second `WebContents`, denial of a cross-origin development redirect, trusted-location gating for mailto delivery, bounded runtime payload validation, attachment/editor path authorization, serialized state writes, corruption recovery, snapshot validation, and local-revision identifiers. No penetration test, malicious attachment-content matrix, live certificate failure matrix, OAuth audit, OpenPGP/S/MIME review, or clean-machine privacy audit has been completed.
+The final local gate passed 34 files / 160 tests. Coverage includes active HTML removal, default-deny and exact-origin remote-image handling, persisted allow/revoke state, MIME metadata, authentication of every IPC channel's sender/frame/location, denial of a real second `WebContents`, denial of a cross-origin development redirect, trusted-location gating for mailto delivery, bounded runtime payload validation, attachment/editor path authorization, serialized state writes, corruption recovery, snapshot validation, and local-revision identifiers. Focused real-Electron consent/restart and bilingual scenarios passed 2 / 2. No penetration test, malicious attachment-content matrix, live image-server or certificate-failure matrix, OAuth audit, OpenPGP/S/MIME review, or clean-machine privacy audit has been completed.
 
 ## Suggested articles
 

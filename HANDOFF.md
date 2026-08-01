@@ -10,6 +10,8 @@ Mail mutation handling now treats false IMAP results as failures, refuses unsafe
 
 External message links now use a deny-by-default review flow. Electron denies every popup, the main process keeps only a short-lived single-use opaque request, and the trusted renderer shows a bilingual confirmation with the normalized URL, hostname, risk, and factual warning reasons. Confirmation revalidates expiry and HTTP(S) protocol before `shell.openExternal`; cancellation, expiry, duplicate use, and browser-launch failures do not open the link.
 
+Remote HTML images now use a separate default-deny, per-message consent flow. The main-process sanitizer keeps the ordinary reader HTML image-free and builds a second bounded variant containing only normalized absolute HTTP(S) images plus their origin/host/protocol summary. The reader lists those exact origins in accessible English, Hong Kong Cantonese, or bilingual copy before loading anything. Consent is persisted on the cached message, survives restart, can be revoked, and resets when a new mailbox generation replaces the cached detail. The application CSP is unchanged; a consented opaque message frame adds only those origins to `img-src` while scripts, forms, frames, objects, media, connections, referrers, and same-origin access stay denied. HTTP receives a transport warning, not a certificate diagnostic.
+
 Caution and dangerous received attachments now enter local quarantine before any user-selected save destination. The main process stores bytes under randomized `.quarantine` names and persists original metadata, source UID/UIDVALIDITY provenance, risk reasons, byte size, timestamp, and SHA-256 integrity. The Tools panel provides keyboard-accessible English, playful Hong Kong-style Cantonese, and bilingual Release/Delete decisions. Release rechecks size/hash and uses a native destination dialog; delete never releases a copy. Ordinary batch members still use the native folder chooser. This is not antivirus scanning, and no malware-clean verdict is produced.
 
 Compose and PIM editors use saved/loaded dirty baselines. Their discard decision is accessible and restores focus, replacement attempts are guarded, and the unload guard covers either dirty editor so a whole-window close cannot silently discard the form. Send/Save operations are mutually exclusive; edits made during an in-flight operation remain visible and unsaved, while the main process preserves newer same-ID draft versions. PIM saves are bound to their originating editor and keep a retryable, factual state if post-save refresh fails. Mail account/folder/message requests use monotonic ownership so late results cannot overwrite the current view.
@@ -23,12 +25,13 @@ The consolidated current-tree gates pass locally. This evidence covers the sourc
 | Check | Result |
 | --- | --- |
 | Focused regression coverage | Process/IPC trust, mail mutation and SMTP outcomes, account cleanup, renderer dirty/load state, bilingual semantics, and keyboard focus |
-| `npm run check` | Passed: typecheck; 30 files / 143 tests; 10 bundled-image checks; site/source-policy checks; production build with 12 renderer modules |
+| `npm run check` | Passed: typecheck; 34 files / 160 tests; 10 bundled-image checks; site/source-policy checks; production build with 14 renderer modules |
 | Local NSIS upgrade | Published `0.19.1` → disposable `0.999.1` passed in one isolated install directory; both smoke versions matched; candidate uninstall removed the executable; probe SHA-256 stayed unchanged through upgrade and uninstall |
 | Focused external-link tests | Passed: 4 existing safety tests plus 5 queue tests and IPC validation; 22 tests across 4 files |
+| Focused remote-content tests | Passed: sanitizer/default-deny, strict IPC, cache migration, persisted allow/revoke, reader CSP, focus, restart, and bilingual semantics; real Electron consent and bilingual scenarios passed 2 / 2 |
 | Focused tab-appearance tests | Passed: 4 pure normalization/reset cases plus 1 real-Electron workflow covering context-menu/direct keyboard access, persistence, both reset scopes, and focus return |
 | Focused local-history tests | Repository/model/IPC cases cover labels, parent diff, redaction, search, and bilingual semantics; one real-Electron workflow covers diff expansion, label save, search, and restore review |
-| `npm run test:e2e` | Passed: 15 / 15 real-Electron scenarios in one worker, including two restart paths and four deterministic concurrency cases |
+| Real-Electron coverage | Previously recorded full suite: 15 / 15; focused new remote-content consent/restart and bilingual scenarios: 2 / 2. The expanded full suite was not rerun in this pass. |
 | Clean-machine and assistive-technology matrices | Not completed |
 
 The coverage targets JSON/persistence behavior, process and IPC trust boundaries, MIME/HTML, regex behavior, exact mail mutation and recipient outcomes, account cleanup, PIM save/load state, bilingual semantics, and discard handling. Public-provider interoperability, clean-machine packaged behavior, the full screen-reader/scaling matrix, remote PIM synchronization, and release delivery remain unproved.
@@ -40,10 +43,10 @@ The coverage targets JSON/persistence behavior, process and IPC trust boundaries
 - Packaged renderer startup ignores the development URL environment variable; unpackaged development permits only exact HTTP loopback hosts.
 - Every IPC operation authenticates the current main `WebContents`, top frame, and exact trusted renderer URL/path before validating its bounded payload.
 - Account secrets are encrypted through Electron `safeStorage` before JSON persistence and omitted from public account summaries.
-- Message HTML is allowlisted and removes scripts, styles, images, event attributes, and unsafe schemes.
+- Message HTML is allowlisted. Its default document removes images; its separate consent variant retains only normalized HTTP(S) images and loads exact listed origins after a persisted per-message decision.
 - State writes use a same-directory temporary file and rename and serialize concurrent updates.
 
-Open security work includes broader IPC payload testing, certificate diagnostics and safe-link preview, antivirus/content scanning and reputation integration, OAuth browser flow review, cryptographic messaging, migration testing, and PIM at-rest encryption decisions.
+Open security work includes broader IPC payload testing, certificate diagnostics and safe-link preview, live-server remote-image failure coverage, antivirus/content scanning and reputation integration, OAuth browser flow review, cryptographic messaging, migration testing, and PIM at-rest encryption decisions.
 
 ## Documentation delivered in this pass
 
@@ -55,7 +58,7 @@ Open security work includes broader IPC payload testing, certificate diagnostics
 
 ## Next verification sequence
 
-1. Repeat `npm run check` and the 15-scenario Electron suite in hosted CI against the exact committed tree.
+1. Repeat `npm run check` and the expanded Electron suite in hosted CI against the exact committed tree.
 2. Exercise demo account, settings, every search/regex surface, history, notifications, compose, local-organizer pages, attachment saving, and export using full keyboard-only and screen-reader workflows.
 3. Test real IMAP/SMTP behavior through secure credential intake without recording private data.
 4. Perform adversarial message, attachment, regex, IPC, and persistence tests.

@@ -120,6 +120,9 @@ test("late folder results cannot cross the selected account or persist a losing 
         ...item,
         text: `${item.subject} full private body`,
         html: `<p>${item.subject} full private body</p>`,
+        remoteContentHtml: `<p>${item.subject} full private body</p>`,
+        remoteContentSources: [],
+        remoteContentAllowed: false,
         attachments: [],
         replyTo: item.from,
       } satisfies MessageDetail;

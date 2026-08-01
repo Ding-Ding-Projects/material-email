@@ -32,6 +32,7 @@ describe("Electron security boundary", () => {
       "mail:folders",
       "mail:messages",
       "mail:message",
+      "mail:remote-content",
       "mail:save-attachment",
       "mail:save-all-attachments",
       "quarantine:release",
@@ -118,6 +119,9 @@ describe("Electron security boundary", () => {
     expect(renderer).not.toMatch(/sandbox="[^"]*allow-scripts/);
     expect(renderer).not.toMatch(/sandbox="[^"]*allow-same-origin/);
     expect(renderer).toContain("default-src 'none'");
+    expect(renderer).toContain("script-src 'none'");
+    expect(renderer).toContain("connect-src 'none'");
+    expect(renderer).toContain("frame-src 'none'");
     expect(renderer).toContain('referrerpolicy="no-referrer"');
     expect(renderer).toContain('anchor.rel = "noopener noreferrer"');
   });

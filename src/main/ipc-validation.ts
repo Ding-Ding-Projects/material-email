@@ -147,6 +147,7 @@ export const ipcPayloadSchemas = {
   accountId: z.tuple([identifierSchema]),
   accountFolder: z.tuple([identifierSchema, folderPathSchema]),
   accountFolderMessage: z.tuple([identifierSchema, folderPathSchema, messageUidSchema]),
+  remoteContentConsent: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, z.boolean()]),
   saveAttachment: z.union([
     z.tuple([identifierSchema, folderPathSchema, messageUidSchema, attachmentIndexSchema]),
     z.tuple([identifierSchema, folderPathSchema, messageUidSchema, attachmentIndexSchema, attachmentSaveReviewSchema]),

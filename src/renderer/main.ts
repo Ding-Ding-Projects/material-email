@@ -1833,7 +1833,10 @@ function renderMessageRow(message: MessageSummary): string {
 
 function safeMessageDocument(detail: MessageDetail): string {
   const parser = new DOMParser();
-  const parsed = parser.parseFromString(detail.html || "", "text/html");
+  const allowedImageOrigins = detail.remoteContentAllowed
+    ? new Set(detail.remoteContentSources.map(source => source.origin))
+    : new Set<string>();
+  const parsed = parser.parseFromString(detail.remoteContentAllowed ? detail.remoteContentHtml : detail.html || "", "text/html");
   for (const blocked of parsed.querySelectorAll("script, style, link, meta, base, form, iframe, object, embed, video, audio, source")) blocked.remove();
   for (const element of parsed.querySelectorAll<HTMLElement>("*")) {
     element.removeAttribute("style");
@@ -1850,8 +1853,49 @@ function safeMessageDocument(detail: MessageDetail): string {
       anchor.referrerPolicy = "no-referrer";
     }
   }
+  for (const image of parsed.querySelectorAll<HTMLImageElement>("img")) {
+    try {
+      const source = new URL(image.getAttribute("src") ?? "");
+      if ((source.protocol !== "http:" && source.protocol !== "https:")
+        || source.username
+        || source.password
+        || !allowedImageOrigins.has(source.origin)) {
+        image.remove();
+        continue;
+      }
+      image.src = source.href;
+      image.referrerPolicy = "no-referrer";
+      image.loading = "lazy";
+      image.removeAttribute("srcset");
+    } catch {
+      image.remove();
+    }
+  }
   const content = parsed.body.innerHTML.trim() || `<pre>${escapeHtml(detail.text)}</pre>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light dark"><style>:root{font:15px/1.6 system-ui,sans-serif;color-scheme:light dark}body{margin:0;padding:4px;color:CanvasText;background:Canvas;overflow-wrap:anywhere}a{color:LinkText;text-underline-offset:3px}pre{white-space:pre-wrap;font:inherit}blockquote{margin-inline:0;padding-inline-start:16px;border-inline-start:3px solid GrayText}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid GrayText;padding:6px}</style></head><body>${content}</body></html>`;
+  const imagePolicy = [...allowedImageOrigins].join(" ");
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:${imagePolicy ? ` ${imagePolicy}` : ""}; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light dark"><style>:root{font:15px/1.6 system-ui,sans-serif;color-scheme:light dark}body{margin:0;padding:4px;color:CanvasText;background:Canvas;overflow-wrap:anywhere}a{color:LinkText;text-underline-offset:3px}img{display:block;max-width:100%;height:auto;margin-block:12px}pre{white-space:pre-wrap;font:inherit}blockquote{margin-inline:0;padding-inline-start:16px;border-inline-start:3px solid GrayText}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid GrayText;padding:6px}</style></head><body>${content}</body></html>`;
+}
+
+function renderRemoteContentControl(detail: MessageDetail): string {
+  if (!detail.remoteContentSources.length) return "";
+  const origins = [...new Set(detail.remoteContentSources.map(source => source.origin))];
+  const imageCount = detail.remoteContentSources.length;
+  const insecureCount = detail.remoteContentSources.filter(source => source.protocol === "http:").length;
+  const title = detail.remoteContentAllowed
+    ? tx("Remote images loaded for this message", "呢封郵件已載入遠端圖片")
+    : tx("Remote images blocked", "遠端圖片已封鎖");
+  const summary = tx(
+    `${imageCount} remote image${imageCount === 1 ? "" : "s"} from ${origins.length} source${origins.length === 1 ? "" : "s"}:`,
+    `${imageCount} 張遠端圖片，來自 ${origins.length} 個來源：`,
+  );
+  const privacy = detail.remoteContentAllowed
+    ? tx("Those sources can learn that this message was opened. Block them again to stop future requests from this reader.", "呢啲來源可以知道你開過呢封郵件。再次封鎖就會停止呢個閱讀器之後嘅請求。")
+    : tx("Loading can tell those sources that you opened this message. Consent applies only to this message and is saved locally.", "載入可能會令呢啲來源知道你開過呢封郵件。同意只適用於呢封郵件，並會儲存喺本機。 ");
+  return `<section class="remote-content-control${detail.remoteContentAllowed ? " is-allowed" : ""}" data-testid="remote-content-control" role="region" aria-labelledby="remote-content-title" aria-describedby="remote-content-summary remote-content-privacy">
+    <span class="remote-content-control__icon" aria-hidden="true">${icon(detail.remoteContentAllowed ? "warning" : "unread")}</span>
+    <div class="remote-content-control__copy"><h2 id="remote-content-title">${escapeHtml(title)}</h2><p id="remote-content-summary">${escapeHtml(summary)}</p><ul class="remote-content-origins" aria-label="${escapeHtml(tx("Remote image sources", "遠端圖片來源"))}">${origins.map(origin => `<li><code>${escapeHtml(origin)}</code></li>`).join("")}</ul><p id="remote-content-privacy">${escapeHtml(privacy)}</p>${insecureCount ? `<p class="remote-content-warning">${icon("warning")}<span>${escapeHtml(tx(`${insecureCount} image source${insecureCount === 1 ? " uses" : "s use"} unencrypted HTTP. This is a transport warning, not a certificate diagnostic.`, `${insecureCount} 個圖片來源使用未加密 HTTP。呢個係傳輸警告，唔係憑證診斷。`))}</span></p>` : ""}</div>
+    <button class="button ${detail.remoteContentAllowed ? "button--outlined" : "button--tonal"}" type="button" data-action="toggle-remote-content" data-focus-key="remote-content-toggle" aria-pressed="${detail.remoteContentAllowed}" aria-describedby="remote-content-summary remote-content-privacy" ${isBusy(`remote-content-${detail.id}`) ? "disabled" : ""}>${icon(detail.remoteContentAllowed ? "close" : "download")}<span>${escapeHtml(detail.remoteContentAllowed ? tx("Block remote images again", "再次封鎖遠端圖片") : tx("Load for this message", "只為呢封郵件載入"))}</span></button>
+  </section>`;
 }
 
 const attachmentRiskReasonLabel = (reason: AttachmentRiskReason): string => {
@@ -1935,7 +1979,8 @@ function renderReaderPane(): string {
       <time datetime="${escapeHtml(detail.date)}">${escapeHtml(formatDate(detail.date))}</time>
     </header>
     ${detail.attachments.length ? `<section class="attachment-strip" aria-label="${escapeHtml(tx("Attachments", "附件"))}"><div class="attachment-strip__heading"><strong>${icon("attach")} ${detail.attachments.length} ${escapeHtml(tx("attachments", "個附件"))}</strong><button class="button button--text" type="button" data-action="save-all-attachments" data-focus-key="save-all-attachments" ${isBusy("save-attachment") ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Save all", "全部儲存"))}</span></button></div>${detail.attachments.map(renderAttachmentChip).join("")}</section>` : ""}
-    <div class="reader-security-note">${icon("check")}<span>${escapeHtml(tx("Message HTML is isolated in a sandbox. Scripts, forms, remote images, and same-origin access are blocked.", "郵件 HTML 放喺沙盒隔離。指令碼、表單、遠端圖片同同源存取全部被封鎖。"))}</span></div>
+    ${renderRemoteContentControl(detail)}
+    <div class="reader-security-note">${icon("check")}<span>${escapeHtml(detail.remoteContentAllowed ? tx("Message HTML stays sandboxed. Only the listed image origins are allowed; scripts, forms, frames, connections, and same-origin access remain blocked.", "郵件 HTML 仍然喺沙盒入面。只准上面列出嘅圖片來源；指令碼、表單、框架、連線同同源存取仍然全部封鎖。") : tx("Message HTML is isolated in a sandbox. Scripts, forms, remote images, connections, and same-origin access are blocked.", "郵件 HTML 放喺沙盒隔離。指令碼、表單、遠端圖片、連線同同源存取全部被封鎖。"))}</span></div>
     <iframe class="message-frame" data-testid="reader-iframe" data-reader-document="${readerDocumentRevision}" sandbox="allow-popups" referrerpolicy="no-referrer" title="${escapeHtml(tx(`Message body: ${detail.subject}`, `郵件內容：${detail.subject}`))}" srcdoc="${escapeHtml(safeMessageDocument(detail))}"></iframe>
   </article>`;
 }
@@ -3980,6 +4025,27 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "toggle-row-star": if (button.dataset.messageId) await toggleRowStar(button.dataset.messageId); break;
     case "toggle-selected-star": await toggleSelectedFlag("starred"); break;
     case "toggle-selected-unread": await toggleSelectedFlag("unread"); break;
+    case "toggle-remote-content": {
+      const detail = state.detail;
+      if (!detail?.remoteContentSources.length) break;
+      const allowed = !detail.remoteContentAllowed;
+      const detailId = detail.id;
+      await withBusy(`remote-content-${detailId}`, async () => {
+        const updated = await api.setRemoteContentAllowed(detail.accountId, detail.folderPath, detail.uid, allowed);
+        if (state.detail?.id !== detailId) return;
+        state.detail = updated;
+        readerDocumentRevision += 1;
+        pendingFocusKey = "remote-content-toggle";
+        pushToast(
+          allowed ? "warning" : "success",
+          allowed ? "Remote images allowed for this message" : "Remote images blocked again",
+          allowed ? "Only the listed image origins can receive requests; this message-level choice is stored locally." : "The reader returned to its no-remote-image document.",
+          allowed ? "呢封郵件已准許遠端圖片" : "遠端圖片已再次封鎖",
+          allowed ? "只有列出嘅圖片來源可以收到請求；呢個逐封郵件選擇會儲存喺本機。" : "閱讀器已返回唔包含遠端圖片嘅文件。",
+        );
+      });
+      break;
+    }
     case "archive-message": {
       const destination = folderByRole("archive");
       if (destination) await moveSelectedMessage(destination); else pushToast("warning", "Archive unavailable", "This account has no archive folder.", "封存不可用", "呢個帳戶冇封存資料夾。 ");

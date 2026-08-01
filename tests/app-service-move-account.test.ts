@@ -99,6 +99,9 @@ const sourceDetail = (accountId: string): MessageDetail => ({
   ...sourceMessage(accountId),
   text: "Old generation detail body.",
   html: "<p>Old generation detail body.</p>",
+  remoteContentHtml: '<p>Old generation detail body.</p><img src="https://media.example.test/message.png" alt="Message preview">',
+  remoteContentSources: [{ kind: "image", origin: "https://media.example.test", hostname: "media.example.test", protocol: "https:" }],
+  remoteContentAllowed: false,
   attachments: [],
   replyTo: [{ name: "Sender", address: "sender@example.test" }],
 });
@@ -249,6 +252,24 @@ describe("AppService move identity and account removal", () => {
     const state = await readState();
     expect(state.details[`${accountId}:Inbox:41`]).toBeUndefined();
     expect(state.messages[`${accountId}\u0000Inbox`]).toEqual([replacement]);
+  });
+
+  it("persists an explicit per-message remote-content decision and permits revocation", async () => {
+    const { service, accountId } = await createService();
+    serviceMocks.getMessage.mockResolvedValueOnce(sourceDetail(accountId));
+
+    expect((await service.getMessage(accountId, "Inbox", 41)).remoteContentAllowed).toBe(false);
+    const allowed = await service.setRemoteContentAllowed(accountId, "Inbox", 41, true);
+    expect(allowed.remoteContentAllowed).toBe(true);
+    expect((await readState()).details[`${accountId}:Inbox:41`]?.remoteContentAllowed).toBe(true);
+
+    const restarted = new AppService(directory);
+    expect((await restarted.getMessage(accountId, "Inbox", 41)).remoteContentAllowed).toBe(true);
+    expect(serviceMocks.getMessage).toHaveBeenCalledTimes(1);
+
+    const blocked = await restarted.setRemoteContentAllowed(accountId, "Inbox", 41, false);
+    expect(blocked.remoteContentAllowed).toBe(false);
+    expect((await readState()).details[`${accountId}:Inbox:41`]?.remoteContentAllowed).toBe(false);
   });
 
   it("does not remove a replacement UID when an older-generation MOVE completes after reconciliation", async () => {

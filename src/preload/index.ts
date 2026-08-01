@@ -25,6 +25,7 @@ const api: MaterialEmailApi = {
   listFolders: accountId => ipcRenderer.invoke("mail:folders", accountId),
   listMessages: (accountId, folderPath) => ipcRenderer.invoke("mail:messages", accountId, folderPath),
   getMessage: (accountId, folderPath, uid) => ipcRenderer.invoke("mail:message", accountId, folderPath, uid),
+  setRemoteContentAllowed: (accountId, folderPath, uid, allowed) => ipcRenderer.invoke("mail:remote-content", accountId, folderPath, uid, allowed),
   saveAttachment: (accountId, folderPath, uid, index, review) => review
     ? ipcRenderer.invoke("mail:save-attachment", accountId, folderPath, uid, index, review)
     : ipcRenderer.invoke("mail:save-attachment", accountId, folderPath, uid, index),

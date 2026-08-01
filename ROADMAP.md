@@ -14,6 +14,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] IMAP folder/message listing, message retrieval, flags, and moves
 - [x] SMTP sending and local draft persistence
 - [x] MIME parsing and conservative HTML sanitization
+- [x] Default-deny per-message remote-image consent with persisted allow/revoke, exact source summary, and scoped reader CSP
 - [x] Demo account and fixture mail
 - [x] Serialized atomic JSON persistence
 - [x] Notification and history records
@@ -42,7 +43,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Integrate the mail/settings/history/notifications/changelog/tools renderer with the preload API
 - [x] Integrate Contacts, Mailing Lists, Calendar, Tasks, and PIM transaction history with typed preload/IPC operations
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
-- [x] Run the consolidated type, unit, integration, build, and real-Electron E2E verification (`npm run check`: 30 files / 143 tests on the current tree; the previously recorded Electron suite passed 15 / 15 scenarios)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 34 files / 160 tests on the current tree; the previously recorded Electron suite passed 15 / 15 scenarios and the new focused remote-content/bilingual run passed 2 / 2)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run keyboard, screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling checks
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
@@ -69,7 +70,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] OpenPGP and S/MIME signing/encryption with clear trust UX
 - [x] Pure external-link risk assessment (HTTP, credentials, host and Unicode deception signals)
 - [x] Phishing review dialog with normalized destination, risk reasons, one-time expiry, and trusted renderer confirmation
-- [ ] Certificate diagnostics and opt-in remote-content controls
+- [ ] Certificate diagnostics
 
 ## Data and platform open
 

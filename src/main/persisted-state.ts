@@ -74,6 +74,32 @@ const timestampSchema = z
   .refine(value => Number.isFinite(Date.parse(value)), "An ISO-compatible timestamp is required.");
 const boundedString = (maximum: number) => z.string().max(maximum);
 const addressSchema = z.strictObject({ name: boundedString(2_048), address: boundedString(2_048) });
+const remoteContentOriginSchema = z
+  .string()
+  .min(1)
+  .max(2_048)
+  .refine(value => {
+    try {
+      const parsed = new URL(value);
+      return (parsed.protocol === "http:" || parsed.protocol === "https:")
+        && parsed.origin === value
+        && !parsed.username
+        && !parsed.password;
+    } catch {
+      return false;
+    }
+  }, "A plain HTTP(S) origin is required.");
+const remoteContentSourceSchema = z
+  .strictObject({
+    kind: z.literal("image"),
+    origin: remoteContentOriginSchema,
+    hostname: z.string().min(1).max(253),
+    protocol: z.enum(["http:", "https:"]),
+  })
+  .refine(source => {
+    const parsed = new URL(source.origin);
+    return source.hostname === parsed.hostname && source.protocol === parsed.protocol;
+  }, "The remote-content summary must match its origin.");
 const serverSettingsSchema = z.strictObject({
   host: z.string().min(1).max(255),
   port: z.number().int().min(1).max(65_535),
@@ -158,6 +184,9 @@ const messageDetailSchema = z.strictObject({
   ...messageSummaryShape,
   text: boundedString(16 * 1024 * 1024),
   html: boundedString(16 * 1024 * 1024),
+  remoteContentHtml: boundedString(16 * 1024 * 1024).default(""),
+  remoteContentSources: z.array(remoteContentSourceSchema).max(1_000).default([]),
+  remoteContentAllowed: z.boolean().default(false),
   attachments: z.array(attachmentSummarySchema).max(1_000),
   replyTo: z.array(addressSchema).max(1_000),
 });

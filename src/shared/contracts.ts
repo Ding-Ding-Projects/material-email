@@ -163,9 +163,19 @@ export interface MessageSummary {
   size: number;
 }
 
+export interface RemoteContentSource {
+  kind: "image";
+  origin: string;
+  hostname: string;
+  protocol: "http:" | "https:";
+}
+
 export interface MessageDetail extends MessageSummary {
   text: string;
   html: string;
+  remoteContentHtml: string;
+  remoteContentSources: RemoteContentSource[];
+  remoteContentAllowed: boolean;
   attachments: AttachmentSummary[];
   replyTo: Address[];
 }
@@ -342,6 +352,7 @@ export interface MaterialEmailApi {
   listFolders(accountId: string): Promise<FolderSummary[]>;
   listMessages(accountId: string, folderPath: string): Promise<MessageSummary[]>;
   getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail>;
+  setRemoteContentAllowed(accountId: string, folderPath: string, uid: number, allowed: boolean): Promise<MessageDetail>;
   saveAttachment(accountId: string, folderPath: string, uid: number, index: number, review?: AttachmentSaveReview): Promise<AttachmentSaveOutcome>;
   saveAllAttachments(accountId: string, folderPath: string, uid: number, review?: AttachmentSaveReview): Promise<AttachmentBatchSaveOutcome>;
   releaseQuarantinedAttachment(id: string): Promise<string | null>;

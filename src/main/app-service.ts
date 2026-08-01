@@ -56,7 +56,7 @@ import { DEFAULT_APPEARANCE_PREFERENCES } from "../shared/appearance.js";
 import { HistoryRepository } from "./history-repository.js";
 import { AccountDiscoveryService } from "./account-discovery.js";
 import { PimService } from "./pim/index.js";
-import { MailService, type AttachmentContent, type MailMoveResult, type RuntimeAccount } from "./mail-service.js";
+import { MailService, sanitizeMessageContent, type AttachmentContent, type MailMoveResult, type RuntimeAccount } from "./mail-service.js";
 import { accountDraftSchema, composeDraftSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
 import { AttachmentAuthorization, inspectEditorExecutable, sameWindowsPath } from "./local-file-authorization.js";
 import {
@@ -197,13 +197,21 @@ const demoMessages = (): { summaries: MessageSummary[]; details: MessageDetail[]
     hasAttachments: false,
     size: row.text.length,
   } satisfies MessageSummary));
-  const details = summaries.map((summary, index) => ({
-    ...summary,
-    text: rows[index]?.text ?? "",
-    html: `<p>${(rows[index]?.text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`,
-    attachments: [],
-    replyTo: summary.from,
-  } satisfies MessageDetail));
+  const details = summaries.map((summary, index) => {
+    const text = rows[index]?.text ?? "";
+    const textHtml = `<p>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
+    const source = index === 0
+      ? `${textHtml}<p><img src="https://updates.example.invalid/mail/launch-checklist.png?demo=1" alt="Launch checklist preview"></p>`
+      : textHtml;
+    return {
+      ...summary,
+      text,
+      ...sanitizeMessageContent(source),
+      remoteContentAllowed: false,
+      attachments: [],
+      replyTo: summary.from,
+    } satisfies MessageDetail;
+  });
   return { summaries, details };
 };
 
@@ -478,6 +486,21 @@ export class AppService {
       if (message) message.preview = detail.preview;
     });
     return detail;
+  }
+
+  async setRemoteContentAllowed(accountId: string, folderPath: string, uid: number, allowed: boolean): Promise<MessageDetail> {
+    const id = `${accountId}:${folderPath}:${uid}`;
+    const next = await this.#store.update(state => {
+      const account = this.#requireAccount(state, accountId);
+      if (account.kind !== "demo") this.#requireCurrentMessage(state, accountId, folderPath, uid);
+      const detail = state.details[id];
+      if (!detail) throw new Error("Open the message before changing its remote-content consent.");
+      if (allowed && detail.remoteContentSources.length === 0) {
+        throw new Error("This message has no sanitized remote images to load.");
+      }
+      detail.remoteContentAllowed = allowed;
+    });
+    return next.details[id]!;
   }
 
   async saveAttachment(

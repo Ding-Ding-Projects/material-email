@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseMessageSource, sanitizeMessageHtml } from "../src/main/mail-service";
+import { parseMessageSource, sanitizeMessageContent, sanitizeMessageHtml } from "../src/main/mail-service";
 
 describe("mail content boundary", () => {
   it("removes active and remote content while keeping safe message structure", () => {
@@ -15,6 +15,28 @@ describe("mail content boundary", () => {
     expect(output).not.toMatch(/script|style|img|onclick|javascript/i);
     expect(output).toContain("<strong>world</strong>");
     expect(output).toContain('href="mailto:friend@example.test"');
+  });
+
+  it("keeps a separate bounded remote-image variant and a factual origin summary", () => {
+    const content = sanitizeMessageContent(`
+      <p>Newsletter</p>
+      <img src="https://media.example.test/news.png?message=42" alt="News" onerror="steal()" srcset="https://tracker.example.test/2x.png 2x">
+      <img src="http://tracker.example.test:8080/pixel.gif" alt="Tracker">
+      <img src="https://user:secret@private.example.test/pixel.gif" alt="Credential URL">
+      <img src="//protocol-relative.example.test/pixel.gif" alt="Relative URL">
+      <iframe src="https://frames.example.test/"></iframe>
+      <script>steal()</script>
+    `);
+
+    expect(content.html).not.toContain("<img");
+    expect(content.remoteContentHtml).toContain('src="https://media.example.test/news.png?message=42"');
+    expect(content.remoteContentHtml).toContain('src="http://tracker.example.test:8080/pixel.gif"');
+    expect(content.remoteContentHtml).toContain('referrerpolicy="no-referrer"');
+    expect(content.remoteContentHtml).not.toMatch(/onerror|srcset|iframe|script|user:secret|protocol-relative/i);
+    expect(content.remoteContentSources).toEqual([
+      { kind: "image", origin: "https://media.example.test", hostname: "media.example.test", protocol: "https:" },
+      { kind: "image", origin: "http://tracker.example.test:8080", hostname: "tracker.example.test", protocol: "http:" },
+    ]);
   });
 
   it("parses MIME headers, flags, text, and attachment metadata", async () => {
@@ -48,9 +70,10 @@ describe("mail content boundary", () => {
     expect(parsed.starred).toBe(true);
     expect(parsed.html).toContain("<b>mail</b>");
     expect(parsed.html).not.toContain("script");
+    expect(parsed.remoteContentAllowed).toBe(false);
+    expect(parsed.remoteContentSources).toEqual([]);
     expect(parsed.attachments).toEqual([
       expect.objectContaining({ filename: "notes.txt", contentType: "text/plain", size: 5 }),
     ]);
   });
 });
-
