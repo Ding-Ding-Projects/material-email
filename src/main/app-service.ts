@@ -56,7 +56,14 @@ import { DEFAULT_APPEARANCE_PREFERENCES } from "../shared/appearance.js";
 import { HistoryRepository } from "./history-repository.js";
 import { AccountDiscoveryService } from "./account-discovery.js";
 import { PimService } from "./pim/index.js";
-import { MailService, sanitizeMessageContent, type AttachmentContent, type MailMoveResult, type RuntimeAccount } from "./mail-service.js";
+import {
+  MailService,
+  sanitizeMessageContent,
+  type AttachmentContent,
+  type MailMoveResult,
+  type RuntimeAccount,
+} from "./mail-service.js";
+import { assertMimeSourceSize } from "./mime-safety.js";
 import { accountDraftSchema, composeDraftSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
 import { AttachmentAuthorization, inspectEditorExecutable, sameWindowsPath } from "./local-file-authorization.js";
 import {
@@ -472,8 +479,9 @@ export class AppService {
     const cached = state.details[id];
     if (account.kind === "demo" && cached) return cached;
     if (account.kind === "demo") throw new Error("The demo message is no longer available.");
-    const { uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
     if (cached?.uidValidity === uidValidity) return cached;
+    assertMimeSourceSize(message.size);
     const detail = {
       ...(await this.#mail.getMessage(this.#runtimeAccount(account), folderPath, uid, uidValidity)),
       uidValidity,
@@ -514,6 +522,7 @@ export class AppService {
     const account = this.#requireAccount(state, accountId);
     if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
     const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    assertMimeSourceSize(message.size);
     const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
     const attachment = attachments[index];
     if (!attachment) throw new Error("That attachment no longer exists.");
@@ -558,6 +567,7 @@ export class AppService {
     const account = this.#requireAccount(state, accountId);
     if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
     const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    assertMimeSourceSize(message.size);
     const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
     const currentReview = createAttachmentSaveReview(attachments);
     requireAttachmentSaveReview(currentReview.riskyAttachments, review);

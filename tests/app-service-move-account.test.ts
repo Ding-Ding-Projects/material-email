@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountDraft, ComposeDraft, FolderSummary, MessageDetail, MessageSummary, SendResult } from "../src/shared/contracts";
 import type { MailMoveResult } from "../src/main/mail-service";
+import { MIME_SAFETY_LIMITS, MimeSafetyError } from "../src/main/mime-safety";
 
 const serviceMocks = vi.hoisted(() => ({
   testAccount: vi.fn(),
@@ -270,6 +271,22 @@ describe("AppService move identity and account removal", () => {
     const blocked = await restarted.setRemoteContentAllowed(accountId, "Inbox", 41, false);
     expect(blocked.remoteContentAllowed).toBe(false);
     expect((await readState()).details[`${accountId}:Inbox:41`]?.remoteContentAllowed).toBe(false);
+  });
+
+  it("refuses a known oversized message before network parsing and leaves the cache unchanged", async () => {
+    serviceMocks.listMessages.mockImplementation((account: { id: string }, folderPath: string) =>
+      Promise.resolve(folderPath === "Inbox" ? [{
+        ...sourceMessage(account.id),
+        size: MIME_SAFETY_LIMITS.sourceBytes + 1,
+      }] : []),
+    );
+    const { service, accountId } = await createService();
+
+    const error = await service.getMessage(accountId, "Inbox", 41).catch(caught => caught);
+    expect(error).toBeInstanceOf(MimeSafetyError);
+    expect(error).toMatchObject({ code: "MIME_SOURCE_TOO_LARGE" });
+    expect(serviceMocks.getMessage).not.toHaveBeenCalled();
+    expect((await readState()).details[`${accountId}:Inbox:41`]).toBeUndefined();
   });
 
   it("does not remove a replacement UID when an older-generation MOVE completes after reconciliation", async () => {

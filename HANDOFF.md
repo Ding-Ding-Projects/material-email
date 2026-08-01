@@ -6,6 +6,8 @@ Material Email is an unreleased Windows-only Electron foundation. Main-process a
 
 The command palette now uses the same independent plain-text-first search model and adjacent bounded JavaScript-regex builder as the audited Settings, semantic and whole-workspace History, Notifications, and Tab Manager fields. It matches the visible English and Cantonese command labels, exposes invalid regex state, returns no executable result for invalid or risky patterns, and limits <kbd>Enter</kbd> activation to its search input. <kbd>Escape</kbd> closes the nested builder before dismissing the palette. This focused slice does not close the broader every-surface, Unicode, multiline, adversarial-timeout, assistive-technology, or display-scale matrices.
 
+Raw MIME now passes through one main-process safety policy before detail or attachment parsing. A new parse with a known server size above 32 MiB is refused before the mail service runs; IMAP source requests cap the returned range at 32 MiB plus one detection byte. The parser also rejects header blocks above 64 KiB, physical header lines above 8 KiB, header NUL bytes, decoded text above 2 MiB, decoded HTML above 4 MiB, more than 100 attachments, one decoded attachment above 20 MiB, or decoded attachments above 24 MiB combined. CID links are kept as links and synthesized text-to-HTML output is disabled to avoid needless in-memory amplification. Stable failures omit parser internals, leave the cache and message unchanged, and flow through the existing non-modal reader error with safe retry guidance. This is a local bounded-parser slice, not live-provider interoperability, a comprehensive malformed corpus, a parser hard timeout, or antivirus analysis.
+
 A PIM service under `src/main/pim/` covers contacts, mailing lists, bounded vCard import/export, a local Home calendar, events, tasks, append-only transactions, generation recovery, cross-instance/process locking, and stale-refresh protection. It is integrated through typed preload/IPC operations and Material renderer pages. It remains local-only: no CardDAV, CalDAV, ICS, invitation, alarm-delivery, or task-provider integration is claimed.
 
 Mail mutation handling now treats false IMAP results as failures, refuses unsafe copy/delete fallback on servers without MOVE, adopts the server-returned destination UID and UIDVALIDITY without recycling the source UID, and waits for refresh when an offline or unmapped destination cannot be updated authoritatively. A permanent all-recipient SMTP 5xx returns the exact rejected recipients and keeps the draft rather than entering an outbox retry. Removing an account purges its live cache, drafts, outbox entries, and pending operations while append-only history remains available.
@@ -27,7 +29,8 @@ The consolidated current-tree gates pass locally. This evidence covers the sourc
 | Check | Result |
 | --- | --- |
 | Focused regression coverage | Process/IPC trust, mail mutation and SMTP outcomes, account cleanup, renderer dirty/load state, bilingual semantics, and keyboard focus |
-| `npm run check` | Passed: typecheck; 35 files / 164 tests; 10 bundled-image checks; site/source-policy checks; production build with 15 renderer modules |
+| `npm run check` | Passed: typecheck; 36 files / 178 tests; 10 bundled-image checks; site/source-policy checks; production build |
+| Focused MIME safety | Passed: 4 files / 32 tests covering bounded IMAP ranges, known-size preflight, raw/header/text/HTML ceilings, NUL headers, attachment count/bytes, stable errors, cache preservation, unterminated multipart, and unchanged sanitization |
 | Local NSIS upgrade | Published `0.19.1` → disposable `0.999.1` passed in one isolated install directory; both smoke versions matched; candidate uninstall removed the executable; probe SHA-256 stayed unchanged through upgrade and uninstall |
 | Focused external-link tests | Passed: 4 existing safety tests plus 5 queue tests and IPC validation; 22 tests across 4 files |
 | Focused remote-content tests | Passed: sanitizer/default-deny, strict IPC, cache migration, persisted allow/revoke, reader CSP, focus, restart, and bilingual semantics; real Electron consent and bilingual scenarios passed 2 / 2 |
@@ -38,7 +41,7 @@ The consolidated current-tree gates pass locally. This evidence covers the sourc
 | Real-Electron coverage | Previously recorded full suite: 15 / 15; focused remote-content consent/restart and bilingual scenarios: 2 / 2; focused workspace-tab accessibility scenario: 1 / 1; focused command-palette search scenario: 1 / 1. The expanded full suite was not rerun in this pass. |
 | Clean-machine and assistive-technology matrices | Not completed |
 
-The coverage targets JSON/persistence behavior, process and IPC trust boundaries, MIME/HTML, regex behavior, exact mail mutation and recipient outcomes, account cleanup, PIM save/load state, bilingual semantics, and discard handling. Public-provider interoperability, clean-machine packaged behavior, the full screen-reader/scaling matrix, remote PIM synchronization, and release delivery remain unproved.
+The coverage targets JSON/persistence behavior, process and IPC trust boundaries, bounded MIME/HTML behavior, regex behavior, exact mail mutation and recipient outcomes, account cleanup, PIM save/load state, bilingual semantics, and discard handling. Public-provider interoperability, a broad malformed-message corpus, parser wall-time isolation, clean-machine packaged behavior, the full screen-reader/scaling matrix, remote PIM synchronization, and release delivery remain unproved.
 
 ## Security facts
 
@@ -48,6 +51,7 @@ The coverage targets JSON/persistence behavior, process and IPC trust boundaries
 - Every IPC operation authenticates the current main `WebContents`, top frame, and exact trusted renderer URL/path before validating its bounded payload.
 - Account secrets are encrypted through Electron `safeStorage` before JSON persistence and omitted from public account summaries.
 - Message HTML is allowlisted. Its default document removes images; its separate consent variant retains only normalized HTTP(S) images and loads exact listed origins after a persisted per-message decision.
+- Raw MIME reads and decoded parser output have fixed local safety ceilings; refusal leaves message/cache state unchanged and does not expose parser internals.
 - State writes use a same-directory temporary file and rename and serialize concurrent updates.
 
 Open security work includes broader IPC payload testing, certificate diagnostics and safe-link preview, live-server remote-image failure coverage, antivirus/content scanning and reputation integration, OAuth browser flow review, cryptographic messaging, migration testing, and PIM at-rest encryption decisions.
@@ -65,7 +69,7 @@ Open security work includes broader IPC payload testing, certificate diagnostics
 1. Repeat `npm run check` and the expanded Electron suite in hosted CI against the exact committed tree.
 2. Exercise demo account, settings, every search/regex surface, history, notifications, compose, local-organizer pages, attachment saving, and export using full keyboard-only and screen-reader workflows.
 3. Test real IMAP/SMTP behavior through secure credential intake without recording private data.
-4. Perform adversarial message, attachment, regex, IPC, and persistence tests.
+4. Expand the focused MIME safety cases into broad malformed-message, parser wall-time/isolation, attachment-content, regex, IPC, and persistence matrices.
 5. Let the new hosted prior-release upgrade gate exercise the exact candidate, then repeat install, interactive first launch, upgrade, uninstall, and retained-data checks on a clean disposable Windows environment.
 6. Verify CI/release automation, then publish only after the exact run and artifact are verified.
 7. Deploy the documentation site, verify its base path and assets, and only then set the repository homepage.

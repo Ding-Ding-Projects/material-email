@@ -69,6 +69,7 @@ vi.mock("imapflow", () => ({
 vi.mock("nodemailer", () => ({ default: { createTransport: vi.fn() } }));
 
 import { MailboxGenerationMismatchError, MailService, type RuntimeAccount } from "../src/main/mail-service";
+import { MIME_SAFETY_LIMITS, MimeSafetyError } from "../src/main/mime-safety";
 
 const account: RuntimeAccount = {
   id: "move-test",
@@ -142,5 +143,49 @@ describe("MailService server mutation truth", () => {
     expect(imapMocks.messageFlagsRemove).not.toHaveBeenCalled();
     expect(imapMocks.messageMove).not.toHaveBeenCalled();
     expect(imapMocks.release).toHaveBeenCalledTimes(4);
+  });
+
+  it("requests only a bounded raw MIME range for detail and attachment reads", async () => {
+    const source = Buffer.from([
+      "From: Sender <sender@example.test>",
+      "Subject: Bounded fetch",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      "Small body",
+    ].join("\r\n"));
+    imapMocks.fetchOne
+      .mockResolvedValueOnce({ uid: 41, source, flags: new Set<string>(), size: source.length })
+      .mockResolvedValueOnce({ uid: 41, source, size: source.length });
+    const service = new MailService();
+
+    await expect(service.getMessage(account, "Inbox", 41, "777")).resolves.toMatchObject({ subject: "Bounded fetch" });
+    await expect(service.getAttachments(account, "Inbox", 41, "777")).resolves.toEqual([]);
+
+    const boundedSource = { start: 0, maxLength: MIME_SAFETY_LIMITS.sourceBytes + 1 };
+    expect(imapMocks.fetchOne).toHaveBeenNthCalledWith(1, 41, {
+      uid: true,
+      source: boundedSource,
+      envelope: true,
+      flags: true,
+      size: true,
+    }, { uid: true });
+    expect(imapMocks.fetchOne).toHaveBeenNthCalledWith(2, 41, {
+      source: boundedSource,
+      size: true,
+    }, { uid: true });
+  });
+
+  it("rejects an oversized server-reported MIME size with a stable safety error", async () => {
+    imapMocks.fetchOne.mockResolvedValueOnce({
+      uid: 41,
+      source: Buffer.from("Subject: Truncated\r\n\r\nsmall partial source"),
+      flags: new Set<string>(),
+      size: MIME_SAFETY_LIMITS.sourceBytes + 1,
+    });
+
+    const error = await new MailService().getMessage(account, "Inbox", 41, "777").catch(caught => caught);
+    expect(error).toBeInstanceOf(MimeSafetyError);
+    expect(error).toMatchObject({ code: "MIME_SOURCE_TOO_LARGE" });
+    expect((error as Error).message).toContain("left unopened and unchanged");
   });
 });

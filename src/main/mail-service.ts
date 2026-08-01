@@ -4,6 +4,13 @@ import nodemailer from "nodemailer";
 import sanitizeHtml from "sanitize-html";
 import { randomUUID } from "node:crypto";
 import { classifyAttachment } from "../shared/attachment-safety.js";
+import {
+  assertMimeAttachmentSizes,
+  assertMimeSourceSize,
+  byteLabel,
+  MIME_SAFETY_LIMITS,
+  mimeSafetyError,
+} from "./mime-safety.js";
 import type {
   AccountSummary,
   Address,
@@ -42,6 +49,79 @@ export class MailboxGenerationMismatchError extends Error {
     this.name = "MailboxGenerationMismatchError";
   }
 }
+
+const headerLength = (source: Buffer): number => {
+  const endings = [source.indexOf("\r\n\r\n"), source.indexOf("\n\n"), source.indexOf("\r\r")]
+    .filter(index => index >= 0);
+  return endings.length ? Math.min(...endings) : source.length;
+};
+
+const assertMimeHeaderSafety = (source: Buffer): void => {
+  const length = headerLength(source);
+  if (length > MIME_SAFETY_LIMITS.headerBytes) {
+    throw mimeSafetyError(
+      "MIME_HEADERS_TOO_LARGE",
+      `This message's MIME header block exceeds the ${byteLabel(MIME_SAFETY_LIMITS.headerBytes)} safety limit.`,
+    );
+  }
+  const nullByte = source.indexOf(0);
+  if (nullByte >= 0 && nullByte < length) {
+    throw mimeSafetyError("MIME_HEADERS_MALFORMED", "This message has a malformed MIME header block.");
+  }
+  let currentLineBytes = 0;
+  for (let index = 0; index < length; index += 1) {
+    const byte = source[index];
+    if (byte === 0x0a || byte === 0x0d) {
+      currentLineBytes = 0;
+      continue;
+    }
+    currentLineBytes += 1;
+    if (currentLineBytes > MIME_SAFETY_LIMITS.headerLineBytes) {
+      throw mimeSafetyError(
+        "MIME_HEADER_LINE_TOO_LONG",
+        `This message has a MIME header line longer than the ${byteLabel(MIME_SAFETY_LIMITS.headerLineBytes)} safety limit.`,
+      );
+    }
+  }
+};
+
+const assertParsedMimeSafety = (parsed: ParsedMail): void => {
+  const textLength = parsed.text?.length ?? 0;
+  if (textLength > MIME_SAFETY_LIMITS.textCharacters) {
+    throw mimeSafetyError(
+      "MIME_TEXT_TOO_LARGE",
+      `This message's decoded text body exceeds the ${byteLabel(MIME_SAFETY_LIMITS.textCharacters)} safety limit.`,
+    );
+  }
+  const htmlLength = typeof parsed.html === "string" ? parsed.html.length : 0;
+  if (htmlLength > MIME_SAFETY_LIMITS.htmlCharacters) {
+    throw mimeSafetyError(
+      "MIME_HTML_TOO_LARGE",
+      `This message's decoded HTML body exceeds the ${byteLabel(MIME_SAFETY_LIMITS.htmlCharacters)} safety limit.`,
+    );
+  }
+  assertMimeAttachmentSizes(parsed.attachments.map(attachment => attachment.content.length));
+};
+
+const parseBoundedMimeSource = async (source: Buffer | string): Promise<ParsedMail> => {
+  const sourceBytes = Buffer.isBuffer(source) ? source.length : Buffer.byteLength(source);
+  assertMimeSourceSize(sourceBytes);
+  const input = Buffer.isBuffer(source) ? source : Buffer.from(source);
+  assertMimeHeaderSafety(input);
+  let parsed: ParsedMail;
+  try {
+    parsed = await simpleParser(input, {
+      keepCidLinks: true,
+      maxHtmlLengthToParse: MIME_SAFETY_LIMITS.htmlCharacters,
+      skipTextLinks: true,
+      skipTextToHtml: true,
+    });
+  } catch {
+    throw mimeSafetyError("MIME_PARSE_FAILED", "Material Email could not safely parse this message's MIME structure.");
+  }
+  assertParsedMimeSafety(parsed);
+  return parsed;
+};
 
 const addressList = (value?: AddressObject | AddressObject[] | null): Address[] => {
   if (!value) return [];
@@ -188,7 +268,7 @@ const parsedMessageToDetail = (
     attachments: parsed.attachments.map(item => ({
       filename: item.filename ?? "attachment",
       contentType: item.contentType,
-      size: item.size,
+      size: item.content.length,
       risk: classifyAttachment(item.filename ?? "attachment", item.contentType),
       ...(item.cid ? { contentId: item.cid } : {}),
     })),
@@ -202,7 +282,7 @@ export const parseMessageSource = async (
   source: Buffer | string,
   flags = new Set<string>(),
 ): Promise<MessageDetail> => {
-  const parsed = await simpleParser(source);
+  const parsed = await parseBoundedMimeSource(source);
   return parsedMessageToDetail(accountId, folderPath, uid, parsed, flags, Buffer.byteLength(source));
 };
 
@@ -277,9 +357,16 @@ export class MailService {
       const lock = await client.getMailboxLock(folderPath);
       try {
         this.#assertMailboxGeneration(client, folderPath, expectedUidValidity);
-        const fetched = await client.fetchOne(uid, { uid: true, source: true, envelope: true, flags: true, size: true }, { uid: true });
+        const fetched = await client.fetchOne(uid, {
+          uid: true,
+          source: { start: 0, maxLength: MIME_SAFETY_LIMITS.sourceBytes + 1 },
+          envelope: true,
+          flags: true,
+          size: true,
+        }, { uid: true });
         if (!fetched || !fetched.source) throw new Error("The message is no longer available on the server.");
-        const parsed = await simpleParser(fetched.source);
+        if (fetched.size !== undefined) assertMimeSourceSize(fetched.size);
+        const parsed = await parseBoundedMimeSource(fetched.source);
         return parsedMessageToDetail(
           account.id,
           folderPath,
@@ -300,9 +387,13 @@ export class MailService {
       const lock = await client.getMailboxLock(folderPath);
       try {
         this.#assertMailboxGeneration(client, folderPath, expectedUidValidity);
-        const fetched = await client.fetchOne(uid, { source: true }, { uid: true });
+        const fetched = await client.fetchOne(uid, {
+          source: { start: 0, maxLength: MIME_SAFETY_LIMITS.sourceBytes + 1 },
+          size: true,
+        }, { uid: true });
         if (!fetched || !fetched.source) throw new Error("The message is no longer available on the server.");
-        const parsed = await simpleParser(fetched.source);
+        if (fetched.size !== undefined) assertMimeSourceSize(fetched.size);
+        const parsed = await parseBoundedMimeSource(fetched.source);
         return parsed.attachments.map((attachment, index) => ({
           filename: attachment.filename || `attachment-${index + 1}`,
           contentType: attachment.contentType,

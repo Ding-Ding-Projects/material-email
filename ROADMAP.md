@@ -14,6 +14,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] IMAP folder/message listing, message retrieval, flags, and moves
 - [x] SMTP sending and local draft persistence
 - [x] MIME parsing and conservative HTML sanitization
+- [x] Bounded MIME fetch/parsing with raw-source, header, decoded-body, attachment-count, per-attachment, and combined-attachment ceilings plus stable retry-safe failures
 - [x] Default-deny per-message remote-image consent with persisted allow/revoke, exact source summary, and scoped reader CSP
 - [x] Demo account and fixture mail
 - [x] Serialized atomic JSON persistence
@@ -52,7 +53,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] Verify plain-text and regex search from every search surface, including invalid, Unicode, multiline, capture, zero-width, and adversarial cases (the command-palette literal/invalid/activation slice is verified)
 - [ ] Test a real IMAP/SMTP account without exposing credentials or private messages in evidence
 - [x] Add focused sandbox/CSP, navigation, HTML-sanitization, and IPC-surface boundary tests
-- [ ] Expand adversarial IPC payload, malformed MIME, and phishing test matrices
+- [ ] Expand adversarial IPC payload, malformed MIME, and phishing test matrices (focused oversized source/header/body, NUL-header, attachment-fan-out, decoded-attachment, and unterminated-multipart cases are verified; broad corpora and hard parser wall-time isolation remain open)
 - [x] Prove a strict local NSIS baseline-to-candidate upgrade with both artifact hashes, installed smoke versions, same-directory replacement, uninstall, and unchanged isolated user-data hash
 - [ ] Prove clean-machine/default-profile install, interactive first launch, upgrade, uninstall, retained data, signature posture, and artifact integrity for the exact release candidate
 
