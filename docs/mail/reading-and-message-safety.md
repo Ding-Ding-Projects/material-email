@@ -24,7 +24,7 @@ Allowed message structures include common text blocks, emphasis, lists, quotatio
 
 ## Security considerations
 
-Sanitized HTML remains untrusted. Keep it outside the application DOM, keep script execution and network access disabled, and never interpolate raw headers into markup. Add phishing warnings, Unicode-domain handling, safe link previews, attachment scanner integration, and explicit remote-content consent before loosening the boundary.
+Sanitized HTML remains untrusted. Keep it outside the application DOM, keep script execution and network access disabled, and never interpolate raw headers into markup. The shared safety layer assesses external URLs for HTTP, embedded credentials, IP literals, non-default ports, punycode, bidi/control characters, and visible-host mismatches. A user-facing phishing review dialog, certificate diagnostics, safe-link preview, and explicit remote-content consent remain open before loosening the boundary.
 
 ## Verification
 

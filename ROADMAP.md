@@ -64,7 +64,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Renderer/preload/IPC integration for contacts, mailing lists, calendars, tasks, vCard actions, and transaction recovery
 - [ ] CardDAV/CalDAV/ICS/task-provider synchronization and broad interoperability
 - [ ] OpenPGP and S/MIME signing/encryption with clear trust UX
-- [ ] Phishing indicators, certificate diagnostics, and opt-in remote-content controls
+- [x] Pure external-link risk assessment (HTTP, credentials, host and Unicode deception signals)
+- [ ] Phishing review dialog, certificate diagnostics, and opt-in remote-content controls
 
 ## Data and platform open
 
