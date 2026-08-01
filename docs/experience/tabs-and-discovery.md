@@ -8,11 +8,11 @@
 
 Material Email separates Mail, Settings, Changelog, History, Notifications, and Tools into browser-style tabs. A pinned region stays ahead of ordinary tabs. Tab order, closed tabs, pinned tabs, group order, collapsed state, and per-tab appearance are persisted locally. <kbd>Left</kbd>/<kbd>Right</kbd> and <kbd>Home</kbd>/<kbd>End</kbd> automatically activate a tab while keeping keyboard focus in the tab strip; one selected tab remains in the sequential focus order. Pointer and command activation retain their existing move-into-panel behavior.
 
-The required search scopes are distinct: current strip, individual group, group names, and all application tabs. Search results identify the tab, group, and pinned state. Bulk close supports both containing and not-containing predicates, uses visible tab labels, previews affected tabs, excludes pinned tabs by default, and refuses empty or invalid queries. Each workspace tab also has a validated, restart-persistent appearance override with pointer, context-menu, and direct keyboard access plus per-property and whole-tab reset.
+The required search scopes are distinct: current strip, individual group, group names, and all application tabs. Search results identify the tab, group, and pinned state. Bulk close supports both containing and not-containing predicates, uses visible tab labels, previews affected tabs, excludes pinned tabs by default, and refuses empty or invalid queries. Each workspace tab also has a validated, restart-persistent appearance override with pointer, context-menu, and direct keyboard access plus per-property and whole-tab reset. Accent, background, and text colors expose synchronized HEX/HEX8, RGB, and HSL values, a continuous native color field, live target-tab preview, and text/accent contrast readouts.
 
 ## Configuration
 
-Groups are Workspace, Records, and System in the current fixed feature set. Each search owns its own plain/regex model. Pinned inclusion for bulk close is an explicit opt-in. Per-tab background, foreground, size, weight, and radius overrides persist; absent properties inherit the tab strip. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> edits the focused tab, and closing returns focus to it.
+Groups are Workspace, Records, and System in the current fixed feature set. Each search owns its own plain/regex model. Pinned inclusion for bulk close is an explicit opt-in. Per-tab accent, background, foreground, size, weight, and radius overrides persist; absent properties inherit the tab strip. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> edits the focused tab, and closing returns focus to it.
 
 ## Failure modes
 
@@ -29,7 +29,7 @@ Tab search matches visible labels only, not hidden page content. Bulk actions mu
 
 ## Verification
 
-Source inspection confirms semantic tab roles, pinned rendering, persisted tab state, independent search keys, and preview-oriented bulk-close state. Focused unit and Electron tests cover validation, appearance persistence/reset, context-menu keyboard entry, and exact editor focus return. A focused real-Electron test additionally verifies <kbd>Right</kbd>, <kbd>Home</kbd>, and <kbd>End</kbd> focus retention, a single roving `tabindex="0"`, reciprocal tab/tabpanel IDs, and a computed solid 3 px inset focus indicator. This is not native screen-reader, high-contrast, narrow-width, or display-scale certification; those matrices, drag/keyboard reorder equivalence, all four searches, group management, and unsaved-work protection outside this editor remain open.
+Source inspection confirms semantic tab roles, pinned rendering, persisted tab state, independent search keys, and preview-oriented bulk-close state. Six focused unit cases and one real-Electron workflow cover color conversion/contrast, validation, appearance persistence/reset, synchronized RGB/HSL/HEX editing, live target styling, context-menu keyboard entry, and exact editor focus return. A focused real-Electron test additionally verifies <kbd>Right</kbd>, <kbd>Home</kbd>, and <kbd>End</kbd> focus retention, a single roving `tabindex="0"`, reciprocal tab/tabpanel IDs, and a computed solid 3 px inset focus indicator. This is not native screen-reader, high-contrast, narrow-width, or display-scale certification; those matrices, drag/keyboard reorder equivalence, all four searches, group management, and unsaved-work protection outside this editor remain open.
 
 ## Suggested articles
 

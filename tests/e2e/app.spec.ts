@@ -436,10 +436,33 @@ test("edits one workspace tab with validated persistence, per-property reset, an
   let tabContainer = settingsTab.locator("..");
   await expect(tabContainer).toHaveAttribute("style", /--tab-custom-size:19px/);
 
-  const backgroundValue = editor.locator('input[type="text"][data-tab-style="background"]');
-  await backgroundValue.fill("#336699");
-  await backgroundValue.blur();
-  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-bg:#336699/);
+  const backgroundRgb = (channel: "red" | "green" | "blue") => editor.locator(`input[data-tab-color-property="background"][data-tab-color-model="rgb"][data-tab-color-channel="${channel}"]`);
+  await backgroundRgb("red").fill("24");
+  await backgroundRgb("red").blur();
+  await backgroundRgb("green").fill("32");
+  await backgroundRgb("green").blur();
+  await backgroundRgb("blue").fill("40");
+  await backgroundRgb("blue").blur();
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-bg:#182028/);
+
+  const foregroundHex = editor.locator('input[data-tab-color-property="foreground"][data-tab-color-model="hex"]');
+  await foregroundHex.fill("#FFFFFF");
+  await foregroundHex.blur();
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-fg:#FFFFFF/);
+
+  const accentHsl = (channel: "hue" | "saturation" | "lightness") => editor.locator(`input[data-tab-color-property="accent"][data-tab-color-model="hsl"][data-tab-color-channel="${channel}"]`);
+  await accentHsl("hue").fill("210");
+  await accentHsl("hue").blur();
+  await accentHsl("saturation").fill("50");
+  await accentHsl("saturation").blur();
+  await accentHsl("lightness").fill("40");
+  await accentHsl("lightness").blur();
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-accent:#336699/);
+  await expect(editor.getByTestId("tab-appearance-preview")).toHaveAttribute("style", /--tab-preview-accent:#336699/);
+  await expect(editor.getByTestId("tab-text-contrast")).toContainText(/Text \/ background/);
+  await expect(editor.getByTestId("tab-text-contrast")).toHaveAttribute("data-contrast-status", "pass");
+  await expect(editor.getByTestId("tab-accent-contrast")).toContainText(/Accent \/ background/);
+
   await editor.getByRole("button", { name: /Use inherited background for this tab/i }).click();
   await expect(tabContainer).not.toHaveAttribute("style", /--tab-custom-bg/);
   await expect(tabContainer).toHaveAttribute("style", /--tab-custom-size:19px/);
@@ -452,6 +475,8 @@ test("edits one workspace tab with validated persistence, per-property reset, an
   settingsTab = page.locator('[role="tab"][data-tab-id="settings"]');
   tabContainer = settingsTab.locator("..");
   await expect(tabContainer).toHaveAttribute("style", /--tab-custom-size:19px/);
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-fg:#FFFFFF/);
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-accent:#336699/);
   await settingsTab.focus();
   await page.keyboard.press("Control+Shift+E");
   editor = page.getByTestId("tab-appearance-editor");

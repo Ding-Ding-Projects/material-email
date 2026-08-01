@@ -70,6 +70,10 @@ import {
   resetTabStyleProperty,
   resolveTabStyle,
   setTabStyleProperty,
+  tabColorContrastRatio,
+  tabColorFromHsl,
+  tabColorFromRgb,
+  translateTabColor,
   type TabPreferences,
   type TabStyleKey,
 } from "./lib/tab-appearance";
@@ -1546,6 +1550,7 @@ function tabStyleAttribute(id: PageId): string {
   const style = state.tabPreferences.styles[id];
   if (!style) return "";
   const declarations: string[] = [];
+  if (style.accent !== undefined) declarations.push(`--tab-custom-accent:${safeColor(style.accent, "var(--primary)")}`);
   if (style.background !== undefined) declarations.push(`--tab-custom-bg:${safeColor(style.background, "transparent")}`);
   if (style.foreground !== undefined) declarations.push(`--tab-custom-fg:${safeColor(style.foreground, "currentColor")}`);
   if (style.fontSize !== undefined) declarations.push(`--tab-custom-size:${style.fontSize}px`);
@@ -1557,7 +1562,8 @@ function tabStyleAttribute(id: PageId): string {
 function renderWorkspaceTab(id: PageId, pinned: boolean): string {
   const tab = tabDefinition(id);
   const selected = state.activeTab === id;
-  return `<div class="workspace-tab${selected ? " is-active" : ""}${pinned ? " is-pinned" : ""}" draggable="true" data-drag-tab="${id}" data-tab-context="${id}"${tabStyleAttribute(id)}>
+  const appearanceTarget = state.appearanceEditor?.tabId === id;
+  return `<div class="workspace-tab${selected ? " is-active" : ""}${pinned ? " is-pinned" : ""}${appearanceTarget ? " is-appearance-target" : ""}" draggable="true" data-drag-tab="${id}" data-tab-context="${id}"${tabStyleAttribute(id)}>
     <button class="workspace-tab__main" type="button" role="tab" id="tab-${id}" aria-selected="${selected}" aria-controls="panel-${id}" aria-keyshortcuts="Control+Shift+E" tabindex="${selected ? "0" : "-1"}" data-action="activate-tab" data-tab-id="${id}" data-focus-key="${tabFocusKey(id)}">
       ${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span>${pinned ? `<span class="visually-hidden">${escapeHtml(tx("Pinned", "已釘選"))}</span>` : ""}
     </button>
@@ -3420,6 +3426,22 @@ function renderTabContextMenu(): string {
 const isTabStyleKey = (value: string | undefined): value is TabStyleKey =>
   value !== undefined && TAB_STYLE_KEYS.includes(value as TabStyleKey);
 
+type TabColorStyleKey = Extract<TabStyleKey, "accent" | "background" | "foreground">;
+
+const isTabColorStyleKey = (value: string | undefined): value is TabColorStyleKey =>
+  value === "accent" || value === "background" || value === "foreground";
+
+const tabStylePropertyLabel = (key: TabStyleKey): string => {
+  switch (key) {
+    case "accent": return tx("Accent", "重點色");
+    case "background": return tx("Background", "背景");
+    case "foreground": return tx("Text color", "文字顏色");
+    case "fontSize": return tx("Font size", "字體大小");
+    case "fontWeight": return tx("Font weight", "字體粗幼");
+    case "radius": return tx("Corner radius", "圓角半徑");
+  }
+};
+
 function renderTabStyleReset(
   tabId: PageId,
   key: TabStyleKey,
@@ -3430,28 +3452,95 @@ function renderTabStyleReset(
   return `<button class="appearance-property__reset" type="button" data-action="reset-tab-style-property" data-tab-id="${tabId}" data-tab-style-key="${key}" data-focus-key="tab-style-${tabId}-${key}-reset" ${inherited ? "disabled" : ""} aria-label="${escapeHtml(tx(`Use inherited ${label.toLocaleLowerCase()} for this tab`, `呢個分頁使用繼承嘅${label}`))}">${icon("refresh")}<span>${escapeHtml(inherited ? tx("Inherited", "已繼承") : tx("Use inherited", "使用繼承值"))}</span></button>`;
 }
 
+function renderTabColorProperty(
+  tabId: PageId,
+  key: TabColorStyleKey,
+  value: string,
+  overrides: TabStyleOverrides,
+): string {
+  const channels = translateTabColor(value);
+  if (!channels) return "";
+  const label = tabStylePropertyLabel(key);
+  const noteId = `tab-color-${tabId}-${key}-note`;
+  const labelPrefix = tx(`Tab ${label.toLocaleLowerCase()}`, `分頁${label}`);
+  const numericNote = channels.alpha < 1
+    ? tx(`Alpha ${Math.round(channels.alpha * 100)}% is preserved when RGB or HSL changes.`, `RGB 或 HSL 改動會保留 ${Math.round(channels.alpha * 100)}% 透明度。`)
+    : tx("HEX, RGB, and HSL stay synchronized in local sRGB.", "HEX、RGB 同 HSL 會喺本機 sRGB 入面同步。 ");
+  const numberInput = (
+    model: "rgb" | "hsl",
+    channel: "red" | "green" | "blue" | "hue" | "saturation" | "lightness",
+    shortLabel: string,
+    numberValue: number,
+    minimum: number,
+    maximum: number,
+    step: number,
+    accessibleLabel: string,
+  ): string => `<label class="field tab-color-channel"><span>${escapeHtml(shortLabel)}</span><input type="number" min="${minimum}" max="${maximum}" step="${step}" value="${numberValue}" data-tab-color-property="${key}" data-tab-color-model="${model}" data-tab-color-channel="${channel}" data-focus-key="tab-style-${tabId}-${key}-${channel}" aria-label="${escapeHtml(accessibleLabel)}" aria-describedby="${noteId}" inputmode="decimal"/></label>`;
+  return `<div class="appearance-property appearance-property--color">
+    <fieldset class="tab-color-control" data-tab-color-control="${key}">
+      <legend>${escapeHtml(label)}</legend>
+      <div class="tab-color-primary-entry">
+        <label class="field tab-color-picker"><span>${escapeHtml(tx("Continuous field", "連續選色"))}</span><input type="color" value="${escapeHtml(channels.hex.slice(0, 7))}" data-tab-style="${key}" data-tab-color-property="${key}" data-tab-color-model="picker" data-focus-key="tab-style-${tabId}-${key}-picker" aria-label="${escapeHtml(tx(`Choose ${labelPrefix} with the continuous color field`, `用連續選色欄揀${labelPrefix}`))}" aria-describedby="${noteId}"/></label>
+        <label class="field tab-color-hex"><span>HEX / HEX8</span><input type="text" value="${escapeHtml(channels.hex)}" data-tab-color-property="${key}" data-tab-color-model="hex" data-focus-key="tab-style-${tabId}-${key}-hex" maxlength="9" pattern="#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?" autocomplete="off" spellcheck="false" aria-label="${escapeHtml(tx(`${labelPrefix} HEX or HEX8 value`, `${labelPrefix} HEX 或 HEX8 數值`))}" aria-describedby="${noteId}"/></label>
+      </div>
+      <div class="tab-color-channels" role="group" aria-label="${escapeHtml(tx(`${labelPrefix} RGB channels`, `${labelPrefix} RGB 色道`))}">
+        ${numberInput("rgb", "red", "R", channels.red, 0, 255, 1, tx(`${labelPrefix} red channel`, `${labelPrefix}紅色色道`))}
+        ${numberInput("rgb", "green", "G", channels.green, 0, 255, 1, tx(`${labelPrefix} green channel`, `${labelPrefix}綠色色道`))}
+        ${numberInput("rgb", "blue", "B", channels.blue, 0, 255, 1, tx(`${labelPrefix} blue channel`, `${labelPrefix}藍色色道`))}
+      </div>
+      <div class="tab-color-channels" role="group" aria-label="${escapeHtml(tx(`${labelPrefix} HSL channels`, `${labelPrefix} HSL 色道`))}">
+        ${numberInput("hsl", "hue", "H°", channels.hue, 0, 360, 0.1, tx(`${labelPrefix} hue in degrees`, `${labelPrefix}色相角度`))}
+        ${numberInput("hsl", "saturation", "S%", channels.saturation, 0, 100, 0.1, tx(`${labelPrefix} saturation percent`, `${labelPrefix}飽和度百分比`))}
+        ${numberInput("hsl", "lightness", "L%", channels.lightness, 0, 100, 0.1, tx(`${labelPrefix} lightness percent`, `${labelPrefix}亮度百分比`))}
+      </div>
+      <small class="tab-color-note" id="${noteId}">${escapeHtml(numericNote)}</small>
+    </fieldset>
+    ${renderTabStyleReset(tabId, key, label, overrides)}
+  </div>`;
+}
+
+function renderTabContrastMetric(
+  testId: string,
+  label: string,
+  ratio: number | undefined,
+  threshold: number,
+): string {
+  const passes = ratio !== undefined && ratio >= threshold;
+  const ratioLabel = ratio === undefined ? tx("Unavailable", "未能提供") : `${ratio.toFixed(2)}:1`;
+  const verdict = passes ? tx("Pass", "合格") : tx("Check", "要檢查");
+  return `<div class="contrast-metric" data-testid="${testId}" data-contrast-status="${passes ? "pass" : "check"}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(ratioLabel)}</strong><small>${escapeHtml(tx(`${verdict} · target ${threshold}:1`, `${verdict} · 目標 ${threshold}:1`))}</small></div>`;
+}
+
 function renderTabAppearanceEditor(): string {
   const editor = state.appearanceEditor;
   if (!editor) return "";
   const tab = tabDefinition(editor.tabId);
   const overrides = state.tabPreferences.styles[editor.tabId] ?? {};
-  const style = resolveTabStyle(overrides);
-  const backgroundLabel = tx("Background", "背景");
-  const foregroundLabel = tx("Text color", "文字顏色");
-  const fontSizeLabel = tx("Font size", "字體大小");
-  const fontWeightLabel = tx("Font weight", "字體粗幼");
-  const radiusLabel = tx("Corner radius", "圓角半徑");
+  const inheritedAccent = normalizeTabColor(preferences().accent) ?? "#6750A4";
+  const style = resolveTabStyle({ ...overrides, accent: overrides.accent ?? inheritedAccent });
+  const fontSizeLabel = tabStylePropertyLabel("fontSize");
+  const fontWeightLabel = tabStylePropertyLabel("fontWeight");
+  const radiusLabel = tabStylePropertyLabel("radius");
+  const textContrast = tabColorContrastRatio(style.foreground, style.background);
+  const accentContrast = tabColorContrastRatio(style.accent, style.background);
+  const alphaEstimate = [style.accent, style.background, style.foreground].some(color => color.length === 9);
   return `<section class="appearance-editor" data-testid="tab-appearance-editor" role="dialog" aria-modal="false" aria-labelledby="appearance-editor-title" aria-describedby="appearance-editor-note" style="left:${Math.max(12, editor.x)}px;top:${Math.max(60, editor.y)}px">
     <header class="popover-header"><div><p class="eyebrow">${escapeHtml(tx("ANCHORED TO TAB", "固定喺分頁旁邊"))}</p><h2 id="appearance-editor-title">${escapeHtml(tx(`Edit ${tab.en} appearance`, `編輯${tab.yue}外觀`))}</h2></div><button class="icon-button" type="button" data-action="close-tab-appearance" aria-label="${escapeHtml(tx("Close appearance editor", "關閉外觀編輯器"))}">${icon("close")}</button></header>
-    <div class="appearance-editor__preview" style="background:${escapeHtml(safeColor(style.background, "#EADDFF"))};color:${escapeHtml(safeColor(style.foreground, "#21005D"))};font-size:${Math.min(22, Math.max(11, style.fontSize))}px;font-weight:${Math.min(800, Math.max(300, style.fontWeight))};border-radius:${Math.min(28, Math.max(0, style.radius))}px">${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span></div>
+    <div class="appearance-editor__preview" data-testid="tab-appearance-preview" style="--tab-preview-accent:${escapeHtml(safeColor(style.accent, "#6750A4"))};background:${escapeHtml(safeColor(style.background, "#EADDFF"))};color:${escapeHtml(safeColor(style.foreground, "#21005D"))};font-size:${Math.min(22, Math.max(11, style.fontSize))}px;font-weight:${Math.min(800, Math.max(300, style.fontWeight))};border-radius:${Math.min(28, Math.max(0, style.radius))}px">${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span></div>
+    <section class="contrast-readout" role="status" aria-live="polite" aria-atomic="true" aria-label="${escapeHtml(tx("Tab color contrast", "分頁顏色對比"))}">
+      ${renderTabContrastMetric("tab-text-contrast", tx("Text / background", "文字／背景"), textContrast, 4.5)}
+      ${renderTabContrastMetric("tab-accent-contrast", tx("Accent / background", "重點色／背景"), accentContrast, 3)}
+      ${alphaEstimate ? `<p>${escapeHtml(tx("Transparent values are estimated over white; verify them against the live theme surface.", "透明值會以白色底估算；請再喺即時主題表面核對。"))}</p>` : ""}
+    </section>
     <div class="form-grid appearance-editor__properties">
-      <div class="appearance-property"><label class="field field--color"><span>${escapeHtml(backgroundLabel)}</span><span class="color-input"><input type="color" value="${escapeHtml(style.background.slice(0, 7))}" data-tab-style="background" data-focus-key="tab-style-${tab.id}-background-picker" aria-label="${escapeHtml(tx("Choose tab background", "選擇分頁背景"))}"/><input type="text" value="${escapeHtml(style.background)}" data-tab-style="background" data-focus-key="tab-style-${tab.id}-background-value" maxlength="9" spellcheck="false" aria-label="${escapeHtml(tx("Tab background HEX value", "分頁背景 HEX 數值"))}"/></span></label>${renderTabStyleReset(tab.id, "background", backgroundLabel, overrides)}</div>
-      <div class="appearance-property"><label class="field field--color"><span>${escapeHtml(foregroundLabel)}</span><span class="color-input"><input type="color" value="${escapeHtml(style.foreground.slice(0, 7))}" data-tab-style="foreground" data-focus-key="tab-style-${tab.id}-foreground-picker" aria-label="${escapeHtml(tx("Choose tab text color", "選擇分頁文字顏色"))}"/><input type="text" value="${escapeHtml(style.foreground)}" data-tab-style="foreground" data-focus-key="tab-style-${tab.id}-foreground-value" maxlength="9" spellcheck="false" aria-label="${escapeHtml(tx("Tab text HEX value", "分頁文字 HEX 數值"))}"/></span></label>${renderTabStyleReset(tab.id, "foreground", foregroundLabel, overrides)}</div>
+      ${renderTabColorProperty(tab.id, "background", style.background, overrides)}
+      ${renderTabColorProperty(tab.id, "foreground", style.foreground, overrides)}
+      ${renderTabColorProperty(tab.id, "accent", style.accent, overrides)}
       <div class="appearance-property"><label class="field"><span>${escapeHtml(fontSizeLabel)}</span><input type="number" min="11" max="22" value="${style.fontSize}" data-tab-style="fontSize" data-focus-key="tab-style-${tab.id}-fontSize-value"/></label>${renderTabStyleReset(tab.id, "fontSize", fontSizeLabel, overrides)}</div>
       <div class="appearance-property"><label class="field"><span>${escapeHtml(fontWeightLabel)}</span><input type="number" min="300" max="800" step="50" value="${style.fontWeight}" data-tab-style="fontWeight" data-focus-key="tab-style-${tab.id}-fontWeight-value"/></label>${renderTabStyleReset(tab.id, "fontWeight", fontWeightLabel, overrides)}</div>
       <div class="appearance-property"><label class="field field--range"><span>${escapeHtml(radiusLabel)}</span><input type="range" min="0" max="28" value="${style.radius}" data-tab-style="radius" data-focus-key="tab-style-${tab.id}-radius-value"/></label>${renderTabStyleReset(tab.id, "radius", radiusLabel, overrides)}</div>
     </div>
-    <p class="engine-note" id="appearance-editor-note">${escapeHtml(tx("This focused editor persists bounded HEX colors, type size, weight, and shape for this workspace tab. Use inherited resets one property; Reset tab removes every override. Global font and density remain in Settings.", "呢個專用編輯器會為目前工作空間分頁保存有界限嘅 HEX 顏色、字體大小、粗幼同形狀。使用繼承值會重設一項；重設分頁會移除全部覆寫。全域字款同密度喺設定入面。"))}</p>
+    <p class="engine-note" id="appearance-editor-note">${escapeHtml(tx("This focused editor persists bounded local sRGB accent, background, and text colors plus type size, weight, and shape for this workspace tab. The continuous field and HEX, RGB, and HSL values stay synchronized after a valid change. Use inherited resets one property; Reset tab removes every override.", "呢個專用編輯器會為目前工作空間分頁保存有界限嘅本機 sRGB 重點色、背景色、文字色，以及字體大小、粗幼同形狀。有效改動之後，連續選色欄同 HEX、RGB、HSL 數值會保持同步。使用繼承值會重設一項；重設分頁會移除全部覆寫。"))}</p>
     <footer class="popover-actions"><button class="button button--text" type="button" data-action="reset-tab-appearance" data-tab-id="${tab.id}" data-focus-key="tab-style-${tab.id}-reset-all" ${Object.keys(overrides).length ? "" : "disabled"}>${icon("refresh")}<span>${escapeHtml(tx("Reset tab", "重設分頁"))}</span></button><span class="action-spacer"></span><button class="button button--filled" type="button" data-action="close-tab-appearance">${escapeHtml(tx("Done", "完成"))}</button></footer>
   </section>`;
 }
@@ -6020,7 +6109,8 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (next) state.tabPreferences.styles[pageId] = next;
       else delete state.tabPreferences.styles[pageId];
       persistTabs();
-      announce(tx(`${key} now inherits the workspace tab style.`, `${key} 而家繼承工作空間分頁樣式。`));
+      const label = tabStylePropertyLabel(key);
+      announce(tx(`${label} now inherits the workspace tab style.`, `${label}而家繼承工作空間分頁樣式。`));
       render();
       break;
     }
@@ -6064,11 +6154,53 @@ toastRegion.addEventListener("click", event => {
   if (button?.dataset.dismissToast) dismissToast(button.dataset.dismissToast);
 });
 
+const updateTabColorControl = (control: HTMLInputElement, notifyInvalid: boolean): boolean => {
+  const editor = state.appearanceEditor;
+  const key = control.dataset.tabColorProperty;
+  const model = control.dataset.tabColorModel;
+  if (!editor || !isTabColorStyleKey(key) || !model) return false;
+  const overrides = state.tabPreferences.styles[editor.tabId] ?? {};
+  const inheritedAccent = normalizeTabColor(preferences().accent) ?? "#6750A4";
+  const currentColor = resolveTabStyle({ ...overrides, accent: overrides.accent ?? inheritedAccent })[key];
+  let color: string | undefined;
+  if (model === "picker" || model === "hex") {
+    color = normalizeTabColor(control.value);
+  } else {
+    const panel = control.closest<HTMLElement>("[data-tab-color-control]");
+    const channelValue = (channel: string): number => {
+      const input = panel?.querySelector<HTMLInputElement>(`[data-tab-color-model="${model}"][data-tab-color-channel="${channel}"]`);
+      return input?.value.trim() ? input.valueAsNumber : Number.NaN;
+    };
+    if (model === "rgb") {
+      color = tabColorFromRgb(channelValue("red"), channelValue("green"), channelValue("blue"), currentColor);
+    } else if (model === "hsl") {
+      color = tabColorFromHsl(channelValue("hue"), channelValue("saturation"), channelValue("lightness"), currentColor);
+    }
+  }
+  if (!color) {
+    control.setAttribute("aria-invalid", "true");
+    if (notifyInvalid) {
+      pushToast(
+        "warning",
+        "Tab color was not saved",
+        "Use #RRGGBB or #RRGGBBAA, RGB channels from 0–255, or HSL channels in their shown ranges.",
+        "分頁顏色未儲存",
+        "請用 #RRGGBB 或 #RRGGBBAA、0–255 RGB 色道，或者介面標示範圍內嘅 HSL 色道。 ",
+      );
+    }
+    return false;
+  }
+  control.removeAttribute("aria-invalid");
+  state.tabPreferences.styles[editor.tabId] = setTabStyleProperty(overrides, key, color);
+  persistTabs();
+  return true;
+};
+
 const updateTabStyleControl = (control: HTMLInputElement): boolean => {
   const editor = state.appearanceEditor;
   const key = control.dataset.tabStyle;
   if (!editor || !isTabStyleKey(key)) return false;
-  if ((key === "background" || key === "foreground") && normalizeTabColor(control.value) === undefined) {
+  if ((key === "accent" || key === "background" || key === "foreground") && normalizeTabColor(control.value) === undefined) {
     control.setAttribute("aria-invalid", "true");
     pushToast("warning", "Tab color was not saved", "Enter a local HEX color as #RRGGBB or #RRGGBBAA.", "分頁顏色未儲存", "請輸入本機 HEX 顏色，格式係 #RRGGBB 或 #RRGGBBAA。 ");
     return false;
@@ -6224,6 +6356,10 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
   }
   if (control.dataset.bulkOption === "inverse" && control instanceof HTMLInputElement) { state.bulkInverse = control.checked; render(); return; }
   if (control.dataset.bulkOption === "pinned" && control instanceof HTMLInputElement) { state.bulkIncludePinned = control.checked; render(); return; }
+  if (control instanceof HTMLInputElement && control.dataset.tabColorProperty) {
+    if (updateTabColorControl(control, true)) render();
+    return;
+  }
   if (control instanceof HTMLInputElement && control.dataset.tabStyle && updateTabStyleControl(control)) render();
 };
 
@@ -6286,6 +6422,10 @@ app.addEventListener("input", event => {
       const output = document.querySelector<HTMLOutputElement>(`[data-pref-output="${CSS.escape(control.dataset.pref)}"]`);
       if (output) output.value = control.dataset.pref === "fontScale" ? `${Math.round(Number(control.value) * 100)}%` : control.value;
     }
+    return;
+  }
+  if (control instanceof HTMLInputElement && control.dataset.tabColorProperty && control.dataset.tabColorModel === "picker") {
+    if (updateTabColorControl(control, false)) render();
     return;
   }
   if (control.dataset.tabStyle && control instanceof HTMLInputElement && (control.type === "color" || control.type === "range") && updateTabStyleControl(control)) render();

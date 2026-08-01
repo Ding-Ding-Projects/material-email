@@ -99,6 +99,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Add searchable semantic history action counts plus an anchored advanced date-range picker with typed ISO/locale input, month/year navigation, named presets, keyboard range selection, composed regex filtering, and matching export
 - [x] Add a persisted global appearance reset for the live theme controls
 - [x] Complete a validated per-workspace-tab appearance slice with anchored context/keyboard access, restart persistence, per-property reset, and focus return
+- [x] Deepen per-tab colors with persisted accent/background/text overrides, continuous native selection, synchronized HEX/HEX8/RGB/HSL entry, live preview, and contrast readouts
 - [ ] Complete appearance editing for every element, including picker self-customization and import/export
 - [x] Add persisted tab pinning, fixed grouping, overflow, reviewed bulk close, and four independent discovery searches
 - [x] Expand the factual in-app changelog to every audited published version (eleven versions through `v0.45.1` on 2026-08-01)

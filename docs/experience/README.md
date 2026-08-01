@@ -7,4 +7,4 @@
 | [Search and regex builder](search-and-regex-builder.md) | Command palette verified; complete surface matrix open | Plain search, regex dialect, bounds, and builder requirements |
 | [Tabs and discovery](tabs-and-discovery.md) | Renderer integrated; final interaction audit open | Tab behavior, search scopes, and bulk close |
 | [Notifications](notifications.md) | Service foundation | Local notification history and interaction requirements |
-| [Appearance customization](appearance-customization.md) | Preferences foundation; full editor open | Theme, density, accent, fonts, and per-element editing |
+| [Appearance customization](appearance-customization.md) | Per-tab color depth verified; full editor open | Theme, density, accent, fonts, color translation, contrast, and per-element editing |
