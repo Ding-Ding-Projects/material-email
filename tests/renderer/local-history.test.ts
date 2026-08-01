@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { LocalRevision } from "../../src/shared/contracts";
-import { diffLineDescription, filterLocalRevisions, localRevisionSearchText } from "../../src/renderer/lib/local-history";
+import { diffLineDescription, filterLocalRevisions, localRevisionSearchText, retentionPreviewDescription } from "../../src/renderer/lib/local-history";
 
 const revisions: LocalRevision[] = [
-  { hash: "a".repeat(40), createdAt: "2026-08-01T10:00:00.000Z", subject: "Snapshot application state", label: "Before account cleanup" },
-  { hash: "b".repeat(40), createdAt: "2026-08-01T11:00:00.000Z", subject: "Snapshot application state", label: "After account cleanup" },
+  { hash: "a".repeat(40), createdAt: "2026-08-01T10:00:00.000Z", subject: "Snapshot application state", label: "Before account cleanup", isLabeled: true },
+  { hash: "b".repeat(40), createdAt: "2026-08-01T11:00:00.000Z", subject: "Snapshot application state", label: "After account cleanup", isLabeled: false },
 ];
 
 describe("local revision view model", () => {
@@ -19,5 +19,22 @@ describe("local revision view model", () => {
     expect(diffLineDescription("added")).toEqual({ en: "Added line", yue: "新增行" });
     expect(diffLineDescription("removed")).toEqual({ en: "Removed line", yue: "移除行" });
     expect(diffLineDescription("context")).toEqual({ en: "Context line", yue: "上下文行" });
+  });
+
+  it("describes the dry-run retention result in factual English and Cantonese", () => {
+    const summary = retentionPreviewDescription({
+      retentionDays: 365,
+      cutoffAt: "2025-08-01T12:00:00.000Z",
+      headHash: "c".repeat(40),
+      totalRevisionCount: 6,
+      eligibleRevisions: [revisions[1]!],
+      protectedCurrentCount: 1,
+      protectedLabeledCount: 2,
+      protectedRecentCount: 2,
+      blockedNonAppOwnedCount: 0,
+      canPrune: true,
+    });
+    expect(summary.en).toBe("1 eligible; 1 current, 2 labeled, and 2 recent revisions protected.");
+    expect(summary.yue).toBe("1 個符合；1 個目前、2 個有標籤，同 2 個近期修訂受保護。");
   });
 });

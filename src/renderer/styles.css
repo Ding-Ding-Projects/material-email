@@ -604,6 +604,19 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .local-version-card > header { justify-content: space-between; margin: 0 0 10px; }
 .local-version-card h2 { margin: 0; }
 .local-version-search { margin-bottom: 10px; }
+.history-retention { margin: 12px 0; padding: 14px; border: 1px solid var(--outline-variant); border-radius: var(--radius-md); background: var(--surface-container-low); }
+.history-retention > header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.history-retention h3 { margin: 0; font-size: 1rem; }
+.retention-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.retention-controls .field { min-width: min(100%, 240px); }
+.retention-preview { display: grid; gap: 8px; margin-top: 12px; padding: 12px; border-radius: var(--radius-sm); background: var(--surface-container-lowest); }
+.retention-preview p { margin: 0; }
+.retention-candidates { min-width: 0; }
+.retention-candidates summary { min-height: 40px; display: flex; align-items: center; cursor: pointer; color: var(--primary); font-weight: 700; }
+.retention-candidates ol { max-height: 240px; margin: 4px 0 0; padding: 8px 8px 8px 34px; overflow: auto; border: 1px solid var(--outline-variant); border-radius: var(--radius-sm); }
+.retention-candidates li { display: grid; grid-template-columns: minmax(110px, auto) minmax(0, 1fr); gap: 10px; padding: 3px 0; }
+.retention-confirmation { display: grid; gap: 6px; min-width: 0; }
+.retention-confirmation p { margin: 0; overflow-wrap: anywhere; }
 .revision-row-list { display: grid; gap: 6px; }
 .revision-row-list article { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 7px 9px; border-radius: var(--radius-sm); background: var(--surface-container); }
 .revision-row-list p { margin: 2px 0 0; color: var(--on-surface-variant); font-size: 0.73rem; }

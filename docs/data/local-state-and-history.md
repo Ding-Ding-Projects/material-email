@@ -2,7 +2,7 @@
 
 ## Status
 
-**Validated atomic JSON, corruption recovery, isolated Git snapshots, and a focused revision diff/label/restore renderer slice are tested.** Retention, pruning, encryption migration, and every-record restore remain open.
+**Validated atomic JSON, corruption recovery, isolated Git snapshots, revision diff/label/restore, and a bounded retention/pruning slice are tested.** Secure deletion, encryption migration, storage-reclamation proof, and every-record restore remain open.
 
 ## Behavior
 
@@ -16,6 +16,8 @@ The application also keeps semantic history records. Settings history can be res
 
 The History page lists all returned whole-workspace revisions instead of an eight-row teaser. Its independent plain-text-first search and anchored JavaScript regex builder match revision labels, immutable hashes, commit subjects, and timestamps. Expanding a revision loads a bounded, line-classified diff against its parent; the first revision is compared with an empty workspace. Encrypted-secret values are redacted before the preview crosses the typed preload boundary. A user label is stored in a dedicated local Git notes ref, so labeling does not rewrite the snapshot commit. Restore remains behind a reviewed blocking decision and returns focus when cancelled.
 
+The same surface persists a retention age from 30 through 3,650 days, defaulting to 365. Preview is a read-only dry run that reports the exact eligible revisions and separately counts the protected current, labeled, and recent revisions. Applying the preview repeats the cutoff, active-head, exact-candidate, clean-worktree, linear-history, and app-ownership checks. Pruning reconstructs only the retained app-owned snapshot line, copies labels, and proves the rewritten tip has the same tree as the previous current revision before moving the app-owned branch. Any non-app-owned commit blocks automatic pruning. A successful apply appends a `pruned` semantic-history record and a new current snapshot.
+
 ## Configuration
 
 - State schema: version 1
@@ -24,6 +26,8 @@ The History page lists all returned whole-workspace revisions instead of an eigh
 - Notification retention: newest 500 records
 - Semantic history retention: newest 2,000 records
 - Local revision listing: default 200, hard maximum 2,000
+- Local revision retention: default 365 days; configurable from 30 through 3,650 whole days
+- Automatic pruning: maximum 2,000 revisions in one complete preview; current, labeled, and recent revisions are protected
 - Revision identifiers: 7–40 hexadecimal Git object characters
 - Revision labels: 1–120 characters, trimmed, with control characters rejected
 - Diff preview: first 400 lines and a 2 MiB process-output ceiling; truncation is stated in the UI
@@ -38,14 +42,16 @@ The History page lists all returned whole-workspace revisions instead of an eigh
 - Semantic non-settings records are view-only to avoid unsafe server-side rewrites.
 - Revision preview truncation can omit later changed lines; restore still reads and validates the complete snapshot.
 - Labels are local annotations and are not a retention, pruning, or export policy.
+- A stale preview, unexpected head, dirty history worktree, non-linear lineage, non-app-owned commit, or history above the 2,000-revision preview ceiling blocks automatic pruning.
+- Pruning removes revisions from active app history but does not promise secure deletion. Unreachable Git objects, reflogs, backups, filesystem behavior, and storage media can retain data.
 
 ## Security considerations
 
-Snapshots contain the same sensitive metadata as live state. Stored account secrets remain `safeStorage` ciphertext, and diff previews replace encrypted-secret values with an omission marker before renderer delivery. Message and account metadata can still appear in a local diff. File permissions, backup software, stable encryption binding, exported history, retention, and secure deletion require review. Git commands use argument arrays; revision input is restricted to hashes, and labels are bounded and reject control characters.
+Snapshots contain the same sensitive metadata as live state. Stored account secrets remain `safeStorage` ciphertext, and diff previews replace encrypted-secret values with an omission marker before renderer delivery. Message and account metadata can still appear in a local diff. File permissions, backup software, stable encryption binding, exported history, object reclamation, and secure deletion require review. Git commands use argument arrays; revision input is restricted to hashes, labels are bounded and reject control characters, and prune application is tied to the exact validated dry run.
 
 ## Verification
 
-Focused tests exercise immutable snapshots, Git-note label persistence, parent diffs, encrypted-secret redaction, bounded label validation, revision search, bilingual diff semantics, and the real Electron diff/label/reviewed-restore workflow. Existing storage and restart gates continue to cover defaults, defensive copies, serialized writes, corruption recovery, no-op suppression, and account-removal purging. Missing Git, disk-full, real power-loss, antivirus-lock timing, DPAPI account changes, pruning, retention controls, and complete every-record restore remain open.
+Focused tests exercise immutable snapshots, Git-note label persistence, parent diffs, encrypted-secret redaction, bounded label validation, exact dry-run candidates, stale-head refusal, non-app-owned blocking, current-tree and label preservation, bilingual retention semantics, persisted preference migration, and the real Electron diff/label/restore-review/retention-preview workflow. Missing Git, disk-full, real power-loss, antivirus-lock timing, DPAPI account changes, crash injection during the ref move, object-reclamation measurement, secure deletion, and complete every-record restore remain open.
 
 ## Suggested articles
 

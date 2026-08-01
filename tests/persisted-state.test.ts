@@ -32,6 +32,7 @@ describe("persisted application state schema", () => {
   it("migrates the main-only editor approval list into older version-1 state", () => {
     expect(parsePersistedState(minimalState()).approvedEditorPaths).toEqual([]);
     expect(parsePersistedState(minimalState()).quarantinedAttachments).toEqual([]);
+    expect(parsePersistedState(minimalState()).preferences.historyRetentionDays).toBe(365);
   });
 
   it("migrates cached message details to default-deny remote-content fields", () => {

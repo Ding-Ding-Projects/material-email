@@ -18,6 +18,9 @@ import type {
   Preferences,
   LocalRevision,
   LocalRevisionDiff,
+  LocalHistoryPrunePreview,
+  LocalHistoryPruneRequest,
+  LocalHistoryPruneResult,
   ReleaseIdentity,
   CalendarEvent,
   CalendarEventPatch,
@@ -44,7 +47,7 @@ import type {
   AttachmentSaveOutcome,
   QuarantinedAttachment,
 } from "../shared/contracts.js";
-import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts.js";
+import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT, LOCAL_HISTORY_RETENTION_DAYS_DEFAULT } from "../shared/contracts.js";
 import {
   attachmentSaveReviewMatches,
   createAttachmentRiskReviewItem,
@@ -86,6 +89,7 @@ const defaultPreferences = (): Preferences => ({
   narratorEnabled: false,
   narratorLanguage: "en",
   nativeNotificationsEnabled: false,
+  historyRetentionDays: LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
 });
 
 const folderKey = (accountId: string, folderPath: string): string => `${accountId}\u0000${folderPath}`;
@@ -1086,6 +1090,44 @@ export class AppService {
 
   async labelLocalRevision(hash: string, label: string): Promise<LocalRevision> {
     return this.#historyRepository.label(hash, label);
+  }
+
+  async previewLocalHistoryPrune(retentionDays: number): Promise<LocalHistoryPrunePreview> {
+    return this.#historyRepository.previewPrune(retentionDays);
+  }
+
+  async pruneLocalHistory(request: LocalHistoryPruneRequest): Promise<LocalHistoryPruneResult> {
+    const outcome = await this.#historyRepository.prune(request);
+    await this.#store.update(state => {
+      this.#record(
+        state,
+        "pruned",
+        "history",
+        "local-history-retention",
+        `Pruned ${outcome.prunedRevisionCount} app-owned local revision${outcome.prunedRevisionCount === 1 ? "" : "s"} older than ${request.retentionDays} days`,
+        {
+          retentionDays: request.retentionDays,
+          cutoffAt: outcome.cutoffAt,
+          prunedRevisionCount: outcome.prunedRevisionCount,
+          previousHeadHash: outcome.previousHeadHash,
+          rewrittenHeadHash: outcome.currentHeadHash,
+          secureDeletion: false,
+        },
+      );
+      this.#notify(
+        state,
+        "success",
+        "Local revision retention applied",
+        `${outcome.prunedRevisionCount} eligible app-owned revision${outcome.prunedRevisionCount === 1 ? " was" : "s were"} removed from active history. The current state and labeled revisions were preserved; this is not secure deletion.`,
+      );
+    });
+    const revisions = await this.#historyRepository.list(2_000);
+    return {
+      ...outcome,
+      retainedRevisionCount: revisions.length,
+      currentHeadHash: revisions[0]?.hash ?? outcome.currentHeadHash,
+      semanticEventRecorded: true,
+    };
   }
 
   async restoreLocalRevision(hash: string): Promise<BootstrapState> {

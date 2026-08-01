@@ -51,6 +51,9 @@ export type MailSecurity = "tls" | "starttls" | "plain";
 export type AuthMode = "password" | "oauth2";
 
 export const AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT = 3;
+export const LOCAL_HISTORY_RETENTION_DAYS_MIN = 30;
+export const LOCAL_HISTORY_RETENTION_DAYS_MAX = 3_650;
+export const LOCAL_HISTORY_RETENTION_DAYS_DEFAULT = 365;
 
 export interface ServerSettings {
   host: string;
@@ -256,6 +259,7 @@ export interface Preferences {
   narratorEnabled: boolean;
   narratorLanguage: LanguageMode;
   nativeNotificationsEnabled: boolean;
+  historyRetentionDays: number;
   externalEditorPath?: string;
   selectedAccountId?: string;
   selectedFolderPath?: string;
@@ -273,8 +277,8 @@ export interface NotificationRecord {
 
 export interface HistoryRecord {
   id: string;
-  kind: "created" | "updated" | "deleted" | "restored" | "undone" | "imported" | "settings-changed";
-  entityType: "account" | "message" | "draft" | "contact" | "calendar" | "task" | "settings";
+  kind: "created" | "updated" | "deleted" | "restored" | "undone" | "imported" | "settings-changed" | "pruned";
+  entityType: "account" | "message" | "draft" | "contact" | "calendar" | "task" | "settings" | "history";
   entityId: string;
   label: string;
   createdAt: string;
@@ -286,6 +290,7 @@ export interface LocalRevision {
   createdAt: string;
   subject: string;
   label: string;
+  isLabeled: boolean;
 }
 
 export interface LocalRevisionDiffLine {
@@ -298,6 +303,35 @@ export interface LocalRevisionDiff {
   parentHash?: string;
   lines: LocalRevisionDiffLine[];
   truncated: boolean;
+}
+
+export interface LocalHistoryPrunePreview {
+  retentionDays: number;
+  cutoffAt: string;
+  headHash: string | null;
+  totalRevisionCount: number;
+  eligibleRevisions: LocalRevision[];
+  protectedCurrentCount: number;
+  protectedLabeledCount: number;
+  protectedRecentCount: number;
+  blockedNonAppOwnedCount: number;
+  canPrune: boolean;
+}
+
+export interface LocalHistoryPruneRequest {
+  retentionDays: number;
+  cutoffAt: string;
+  expectedHeadHash: string;
+  expectedEligibleHashes: string[];
+}
+
+export interface LocalHistoryPruneResult {
+  prunedRevisionCount: number;
+  retainedRevisionCount: number;
+  previousHeadHash: string;
+  currentHeadHash: string;
+  cutoffAt: string;
+  semanticEventRecorded: boolean;
 }
 
 export interface ReleaseIdentity {
@@ -378,6 +412,8 @@ export interface MaterialEmailApi {
   listLocalRevisions(): Promise<LocalRevision[]>;
   getLocalRevisionDiff(hash: string): Promise<LocalRevisionDiff>;
   labelLocalRevision(hash: string, label: string): Promise<LocalRevision>;
+  previewLocalHistoryPrune(retentionDays: number): Promise<LocalHistoryPrunePreview>;
+  pruneLocalHistory(request: LocalHistoryPruneRequest): Promise<LocalHistoryPruneResult>;
   restoreLocalRevision(hash: string): Promise<BootstrapState>;
   listContacts(): Promise<Contact[]>;
   searchContacts(query: string): Promise<Contact[]>;

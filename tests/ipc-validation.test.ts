@@ -104,7 +104,22 @@ describe("non-PIM IPC validation", () => {
   });
 
   it("strictly validates preference names, values, and native editor paths", () => {
-    expect(ipcPayloadSchemas.preferences.parse([{ theme: "dark", funnyEnglish: 5 }])).toEqual([{ theme: "dark", funnyEnglish: 5, nativeNotificationsEnabled: false }]);
+    expect(ipcPayloadSchemas.preferences.parse([{ theme: "dark", funnyEnglish: 5 }])).toEqual([{ theme: "dark", funnyEnglish: 5, nativeNotificationsEnabled: false, historyRetentionDays: 365 }]);
+    expect(ipcPayloadSchemas.historyPrunePreview.parse([30])).toEqual([30]);
+    expect(() => ipcPayloadSchemas.historyPrunePreview.parse([29])).toThrow();
+    expect(() => ipcPayloadSchemas.historyPrunePreview.parse([3_651])).toThrow();
+    expect(ipcPayloadSchemas.historyPrune.parse([{
+      retentionDays: 365,
+      cutoffAt: "2025-08-01T12:00:00.000Z",
+      expectedHeadHash: "a".repeat(40),
+      expectedEligibleHashes: ["b".repeat(40)],
+    }])).toHaveLength(1);
+    expect(() => ipcPayloadSchemas.historyPrune.parse([{
+      retentionDays: 365,
+      cutoffAt: "2025-08-01T12:00:00.000Z",
+      expectedHeadHash: "a".repeat(40),
+      expectedEligibleHashes: ["b".repeat(40), "b".repeat(40)],
+    }])).toThrow();
     expect(() => ipcPayloadSchemas.preferences.parse([{ funnyEnglish: 6 }])).toThrow();
     expect(() => ipcPayloadSchemas.preferences.parse([{ inventedSetting: true }])).toThrow();
     expect(ipcPayloadSchemas.editorOpen.parse([undefined])).toEqual([undefined]);

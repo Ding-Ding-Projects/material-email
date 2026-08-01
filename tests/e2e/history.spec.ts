@@ -52,4 +52,16 @@ test("searches, diffs, labels, and reviews restore for a local Git revision", as
   await expect(decision).toContainText("Demo ready · 示範準備好");
   await decision.getByRole("button", { name: /Cancel/i }).click();
   await expect(decision).toBeHidden();
+
+  const retention = page.getByTestId("history-retention");
+  await expect(retention).toBeVisible();
+  const days = retention.getByRole("combobox", { name: /Keep unlabeled revisions for/i });
+  await expect(days).toHaveValue("365");
+  await days.selectOption("30");
+  await expect.poll(() => page.evaluate(() => window.materialEmail.bootstrap().then(result => result.preferences.historyRetentionDays))).toBe(30);
+  await retention.getByRole("button", { name: /Preview pruning/i }).click();
+  const preview = page.getByTestId("history-retention-preview");
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText(/Dry-run result/i);
+  await expect(preview).toContainText(/current.*labeled.*recent revisions protected/i);
 });

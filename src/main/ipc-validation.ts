@@ -1,6 +1,15 @@
 import path from "node:path";
 import { z } from "zod";
-import type { AccountDraft, AttachmentSaveReview, ComposeDraft, Preferences } from "../shared/contracts.js";
+import {
+  LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
+  LOCAL_HISTORY_RETENTION_DAYS_MAX,
+  LOCAL_HISTORY_RETENTION_DAYS_MIN,
+  type AccountDraft,
+  type AttachmentSaveReview,
+  type ComposeDraft,
+  type LocalHistoryPruneRequest,
+  type Preferences,
+} from "../shared/contracts.js";
 
 const noControlCharacters = (value: string): boolean => !/[\u0000-\u001f\u007f]/u.test(value);
 const noHeaderBreaks = (value: string): boolean => !/[\r\n\u0000]/u.test(value);
@@ -11,6 +20,8 @@ export const messageUidSchema = z.number().int().min(1).max(0xffff_ffff);
 export const attachmentIndexSchema = z.number().int().min(0).max(9_999);
 export const quarantineIdSchema = z.uuid();
 export const revisionHashSchema = z.string().regex(/^[a-f0-9]{7,40}$/iu);
+export const fullRevisionHashSchema = z.string().regex(/^[a-f0-9]{40}$/iu);
+export const historyRetentionDaysSchema = z.number().int().min(LOCAL_HISTORY_RETENTION_DAYS_MIN).max(LOCAL_HISTORY_RETENTION_DAYS_MAX);
 export const revisionLabelSchema = z
   .string()
   .trim()
@@ -91,6 +102,7 @@ const preferencesObjectSchema = z.strictObject({
   narratorEnabled: z.boolean(),
   narratorLanguage: z.enum(["en", "yue", "bilingual"]),
   nativeNotificationsEnabled: z.boolean().default(false),
+  historyRetentionDays: historyRetentionDaysSchema.default(LOCAL_HISTORY_RETENTION_DAYS_DEFAULT),
   externalEditorPath: nativePathSchema.optional(),
   selectedAccountId: identifierSchema.optional(),
   selectedFolderPath: folderPathSchema.optional(),
@@ -140,6 +152,17 @@ const attachmentSaveReviewSchema = z.strictObject({
   riskyAttachments: z.array(attachmentRiskReviewItemSchema).min(1).max(100),
 }) as z.ZodType<AttachmentSaveReview>;
 
+const localHistoryPruneRequestSchema = z.strictObject({
+  retentionDays: historyRetentionDaysSchema,
+  cutoffAt: z.iso.datetime({ offset: true }),
+  expectedHeadHash: fullRevisionHashSchema,
+  expectedEligibleHashes: z
+    .array(fullRevisionHashSchema)
+    .min(1)
+    .max(2_000)
+    .refine(hashes => new Set(hashes).size === hashes.length, "Eligible revision identifiers must be unique."),
+}) as z.ZodType<LocalHistoryPruneRequest>;
+
 export const ipcPayloadSchemas = {
   none: z.tuple([]),
   accountDiscover: z.tuple([emailSchema]),
@@ -167,6 +190,8 @@ export const ipcPayloadSchemas = {
   historyId: z.tuple([identifierSchema]),
   revisionHash: z.tuple([revisionHashSchema]),
   revisionLabel: z.tuple([revisionHashSchema, revisionLabelSchema]),
+  historyPrunePreview: z.tuple([historyRetentionDaysSchema]),
+  historyPrune: z.tuple([localHistoryPruneRequestSchema]),
   exportData: z.tuple([z.enum(["history", "settings", "changelog"]), z.string().max(32 * 1024 * 1024), suggestedFilenameSchema]),
   editorOpen: z.union([z.tuple([]), z.tuple([z.undefined()]), z.tuple([nativePathSchema])]),
   externalLinkRequest: z.tuple([externalLinkRequestIdSchema]),

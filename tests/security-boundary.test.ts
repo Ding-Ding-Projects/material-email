@@ -58,6 +58,8 @@ describe("Electron security boundary", () => {
       "history:list-local",
       "history:diff-local",
       "history:label-local",
+      "history:preview-prune-local",
+      "history:prune-local",
       "history:restore-local",
       "data:export",
       "editor:detect",

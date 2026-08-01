@@ -1,8 +1,12 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { HistoryRepository } from "../src/main/history-repository";
+
+const execFileAsync = promisify(execFile);
 
 describe("HistoryRepository", () => {
   it("commits snapshots and reads immutable revisions without rewriting history", async () => {
@@ -76,5 +80,92 @@ describe("HistoryRepository", () => {
     await writeFile(source, '{"schemaVersion":1}\n', "utf8");
     await repository.snapshot(source);
     expect(await repository.list()).toHaveLength(1);
+  });
+
+  it("previews exactly, preserves the current tree and labels, and prunes only eligible app snapshots", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "material-email-history-retention-"));
+    const source = path.join(directory, "live-state.json");
+    const repository = new HistoryRepository(path.join(directory, "history"));
+
+    for (const value of [1, 2, 3, 4]) {
+      await writeFile(source, `${JSON.stringify({ value })}\n`, "utf8");
+      await repository.snapshot(source);
+    }
+    const before = await repository.list();
+    const labeledSource = before[2]!;
+    await repository.label(labeledSource.hash, "Keep quarter close · 留低季結");
+    const future = new Date(Date.now() + 60 * 24 * 60 * 60 * 1_000);
+
+    const preview = await repository.previewPrune(30, future);
+    expect(preview).toMatchObject({
+      totalRevisionCount: 4,
+      protectedCurrentCount: 1,
+      protectedLabeledCount: 1,
+      protectedRecentCount: 0,
+      blockedNonAppOwnedCount: 0,
+      canPrune: true,
+    });
+    expect(preview.eligibleRevisions.map(revision => revision.hash)).toEqual([before[1]!.hash, before[3]!.hash]);
+    expect((await repository.list()).map(revision => revision.hash)).toEqual(before.map(revision => revision.hash));
+
+    const result = await repository.prune({
+      retentionDays: preview.retentionDays,
+      cutoffAt: preview.cutoffAt,
+      expectedHeadHash: preview.headHash!,
+      expectedEligibleHashes: preview.eligibleRevisions.map(revision => revision.hash),
+    }, future);
+    expect(result).toMatchObject({ prunedRevisionCount: 2, retainedRevisionCount: 2, semanticEventRecorded: false });
+
+    const retained = await repository.list();
+    expect(retained).toHaveLength(2);
+    expect(JSON.parse(await repository.read(retained[0]!.hash))).toEqual({ value: 4 });
+    expect(retained[1]).toMatchObject({ label: "Keep quarter close · 留低季結", isLabeled: true });
+    expect(JSON.parse(await repository.read(retained[1]!.hash))).toEqual({ value: 2 });
+    expect(JSON.parse(await readFile(source, "utf8"))).toEqual({ value: 4 });
+    await expect(repository.read(before[1]!.hash)).rejects.toThrow();
+    await expect(repository.read(before[3]!.hash)).rejects.toThrow();
+  });
+
+  it("refuses stale previews and any lineage containing a non-app-owned commit", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "material-email-history-retention-guard-"));
+    const source = path.join(directory, "live-state.json");
+    const historyPath = path.join(directory, "history");
+    const repository = new HistoryRepository(historyPath);
+    const future = new Date(Date.now() + 60 * 24 * 60 * 60 * 1_000);
+
+    await writeFile(source, '{"value":1}\n', "utf8");
+    await repository.snapshot(source);
+    await writeFile(source, '{"value":2}\n', "utf8");
+    await repository.snapshot(source);
+    const stalePreview = await repository.previewPrune(30, future);
+    await writeFile(source, '{"value":3}\n', "utf8");
+    await repository.snapshot(source);
+    await expect(repository.prune({
+      retentionDays: stalePreview.retentionDays,
+      cutoffAt: stalePreview.cutoffAt,
+      expectedHeadHash: stalePreview.headHash!,
+      expectedEligibleHashes: stalePreview.eligibleRevisions.map(revision => revision.hash),
+    }, future)).rejects.toThrow("changed after the preview");
+    expect(await repository.list()).toHaveLength(3);
+
+    await writeFile(path.join(historyPath, "manual.txt"), "not managed by Material Email\n", "utf8");
+    await execFileAsync("git", ["-C", historyPath, "add", "--", "manual.txt"]);
+    await execFileAsync("git", ["-C", historyPath, "commit", "-m", "Manual checkpoint"]);
+    const blocked = await repository.previewPrune(30, future);
+    expect(blocked.blockedNonAppOwnedCount).toBe(1);
+    expect(blocked.canPrune).toBe(false);
+    await expect(repository.prune({
+      retentionDays: blocked.retentionDays,
+      cutoffAt: blocked.cutoffAt,
+      expectedHeadHash: blocked.headHash!,
+      expectedEligibleHashes: blocked.eligibleRevisions.map(revision => revision.hash),
+    }, future)).rejects.toThrow("did not create");
+  });
+
+  it("bounds the configured retention age", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "material-email-history-retention-bounds-"));
+    const repository = new HistoryRepository(path.join(directory, "history"));
+    await expect(repository.previewPrune(29)).rejects.toThrow("30 to 3650 days");
+    await expect(repository.previewPrune(3_651)).rejects.toThrow("30 to 3650 days");
   });
 });

@@ -131,6 +131,8 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("history:list-local", ipcPayloadSchemas.none, () => service.listLocalRevisions());
   handleValidated("history:diff-local", ipcPayloadSchemas.revisionHash, ([hash]) => service.getLocalRevisionDiff(hash));
   handleValidated("history:label-local", ipcPayloadSchemas.revisionLabel, ([hash, label]) => service.labelLocalRevision(hash, label));
+  handleValidated("history:preview-prune-local", ipcPayloadSchemas.historyPrunePreview, ([retentionDays]) => service.previewLocalHistoryPrune(retentionDays));
+  handleValidated("history:prune-local", ipcPayloadSchemas.historyPrune, ([request]) => service.pruneLocalHistory(request));
   handleValidated("history:restore-local", ipcPayloadSchemas.revisionHash, ([hash]) => service.restoreLocalRevision(hash));
   handleTrusted("pim:contacts:list", () => service.listContacts());
   handleTrusted("pim:contacts:search", (query: string) => service.searchContacts(query));

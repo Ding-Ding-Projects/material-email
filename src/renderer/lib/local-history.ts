@@ -1,4 +1,4 @@
-import type { LocalRevision, LocalRevisionDiffLine } from "../../shared/contracts";
+import type { LocalHistoryPrunePreview, LocalRevision, LocalRevisionDiffLine } from "../../shared/contracts";
 
 export const localRevisionSearchText = (revision: LocalRevision): string =>
   `${revision.label}\n${revision.subject}\n${revision.hash}\n${revision.createdAt}`;
@@ -18,3 +18,8 @@ export const diffLineDescription = (kind: LocalRevisionDiffLine["kind"]): { en: 
     default: return { en: "Context line", yue: "上下文行" };
   }
 };
+
+export const retentionPreviewDescription = (preview: LocalHistoryPrunePreview): { en: string; yue: string } => ({
+  en: `${preview.eligibleRevisions.length} eligible; ${preview.protectedCurrentCount} current, ${preview.protectedLabeledCount} labeled, and ${preview.protectedRecentCount} recent revisions protected.`,
+  yue: `${preview.eligibleRevisions.length} 個符合；${preview.protectedCurrentCount} 個目前、${preview.protectedLabeledCount} 個有標籤，同 ${preview.protectedRecentCount} 個近期修訂受保護。`,
+});

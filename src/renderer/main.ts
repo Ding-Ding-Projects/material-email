@@ -19,6 +19,8 @@ import type {
   HistoryRecord,
   LocalRevision,
   LocalRevisionDiff,
+  LocalHistoryPrunePreview,
+  LocalHistoryPruneRequest,
   LocalDraftSummary,
   OutboxSummary,
   PendingOperationSummary,
@@ -35,7 +37,12 @@ import type {
   TransactionFilter,
   ExternalLinkReviewRequest,
 } from "../shared/contracts";
-import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts";
+import {
+  AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
+  LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
+  LOCAL_HISTORY_RETENTION_DAYS_MAX,
+  LOCAL_HISTORY_RETENTION_DAYS_MIN,
+} from "../shared/contracts";
 import { icon, type IconName } from "./lib/icons";
 import { DEFAULT_APPEARANCE } from "./lib/appearance";
 import {
@@ -67,7 +74,7 @@ import {
   validatePattern,
   type MatchMode,
 } from "./lib/regex";
-import { diffLineDescription, filterLocalRevisions } from "./lib/local-history";
+import { diffLineDescription, filterLocalRevisions, retentionPreviewDescription } from "./lib/local-history";
 import { filterPaletteCommands } from "./lib/command-search";
 
 type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
@@ -138,6 +145,7 @@ type ConfirmationState =
   | { kind: "remove-account"; accountId: string; label: string }
   | { kind: "clear-notifications" }
   | { kind: "restore-local"; hash: string; label: string }
+  | { kind: "prune-local-history"; preview: LocalHistoryPrunePreview }
   | { kind: "discard-compose" }
   | { kind: "replace-compose"; mode: ComposerMode; mailto?: MailtoComposition }
   | { kind: "discard-pim-editor"; label: string }
@@ -200,6 +208,8 @@ interface RendererState {
   selectedLocalRevisionHash: string | null;
   localRevisionDiff: LocalRevisionDiff | null;
   localRevisionDiffError: string;
+  localHistoryPrunePreview: LocalHistoryPrunePreview | null;
+  localHistoryPruneError: string;
   tabPreferences: TabPreferences<PageId>;
   tabManagerOpen: boolean;
   contextMenu: ContextMenuState | null;
@@ -271,6 +281,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   narratorEnabled: false,
   narratorLanguage: "en",
   nativeNotificationsEnabled: false,
+  historyRetentionDays: LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
 };
 
 const defaultTabs = (): TabPreferences<PageId> => ({
@@ -311,6 +322,8 @@ const state: RendererState = {
   selectedLocalRevisionHash: null,
   localRevisionDiff: null,
   localRevisionDiffError: "",
+  localHistoryPrunePreview: null,
+  localHistoryPruneError: "",
   tabPreferences: readTabPreferences(),
   tabManagerOpen: false,
   contextMenu: null,
@@ -2198,11 +2211,37 @@ function renderLocalRevisionDiff(revision: LocalRevision): string {
   </section>`;
 }
 
+function renderLocalHistoryRetention(): string {
+  const prefs = preferences();
+  const preview = state.localHistoryPrunePreview;
+  const summary = preview ? retentionPreviewDescription(preview) : null;
+  const retentionOptions = [...new Set([30, 90, 180, 365, 730, 1_825, 3_650, prefs.historyRetentionDays])].sort((left, right) => left - right);
+  const candidateMarkup = preview?.eligibleRevisions.length
+    ? `<details class="retention-candidates"><summary>${escapeHtml(tx(`Review ${preview.eligibleRevisions.length} exact pruning candidates`, `審閱 ${preview.eligibleRevisions.length} 個確切清理候選修訂`))}</summary><ol aria-label="${escapeHtml(tx("Eligible local revisions", "符合清理條件嘅本機修訂"))}">${preview.eligibleRevisions.map(revision => `<li><code>${escapeHtml(revision.hash.slice(0, 12))}</code><span>${escapeHtml(formatDate(revision.createdAt))}</span></li>`).join("")}</ol></details>`
+    : "";
+  const previewMarkup = preview ? `<div class="retention-preview" data-testid="history-retention-preview" role="status" aria-live="polite">
+    <p><strong>${escapeHtml(tx("Dry-run result", "試行結果"))}</strong> ${escapeHtml(tx(summary!.en, summary!.yue))}</p>
+    <p>${escapeHtml(tx(`Cutoff: revisions before ${formatDate(preview.cutoffAt)}.`, `截止：${formatDate(preview.cutoffAt)} 之前嘅修訂。`))}</p>
+    ${preview.blockedNonAppOwnedCount ? `<p class="field-error" role="alert">${escapeHtml(tx(`${preview.blockedNonAppOwnedCount} commit${preview.blockedNonAppOwnedCount === 1 ? " was" : "s were"} not created by Material Email. Automatic pruning is blocked.`, `${preview.blockedNonAppOwnedCount} 個提交唔係由 Material Email 建立。自動清理已封鎖。`))}</p>` : ""}
+    ${candidateMarkup}
+    <div class="button-row"><button class="button button--danger" type="button" data-action="request-prune-local-history" data-focus-key="prune-local-history" ${preview.canPrune || isBusy("local-history-prune") ? (isBusy("local-history-prune") ? "disabled" : "") : "disabled"}>${icon("trash")}<span>${escapeHtml(tx(`Prune ${preview.eligibleRevisions.length} previewed revisions…`, `清理已預覽嘅 ${preview.eligibleRevisions.length} 個修訂……`))}</span></button></div>
+  </div>` : "";
+  return `<section class="history-retention" data-testid="history-retention" aria-labelledby="history-retention-title">
+    <header><div><p class="eyebrow">${escapeHtml(tx("BOUNDED RETENTION", "有限保留"))}</p><h3 id="history-retention-title">${escapeHtml(tx("Revision retention", "修訂保留"))}</h3></div></header>
+    <div class="retention-controls"><label class="field" for="history-retention-days"><span>${escapeHtml(tx("Keep unlabeled revisions for", "未有標籤修訂保留"))}</span><select id="history-retention-days" data-pref="historyRetentionDays" data-testid="history-retention-days">${retentionOptions.map(days => `<option value="${days}" ${prefs.historyRetentionDays === days ? "selected" : ""}>${days} ${escapeHtml(tx("days", "日"))}</option>`).join("")}</select></label><button class="button button--tonal" type="button" data-action="preview-local-history-prune" data-focus-key="preview-local-history-prune" ${isBusy("local-history-prune-preview") || isBusy("local-history-prune") ? "disabled" : ""}>${icon("search")}<span>${escapeHtml(tx("Preview pruning", "預覽清理"))}</span></button></div>
+    <p class="supporting-copy">${escapeHtml(tx(`The policy is limited to ${LOCAL_HISTORY_RETENTION_DAYS_MIN}–${LOCAL_HISTORY_RETENTION_DAYS_MAX} days. Previewing changes nothing. Applying it preserves the current state and every labeled revision and refuses commits the app did not create.`, `保留政策限制為 ${LOCAL_HISTORY_RETENTION_DAYS_MIN} 至 ${LOCAL_HISTORY_RETENTION_DAYS_MAX} 日。預覽唔會改任何嘢。套用時會保留目前狀態同每個有標籤修訂，亦會拒絕唔係由應用程式建立嘅提交。`))}</p>
+    <p class="supporting-copy revision-diff-warning">${escapeHtml(tx("Pruning removes eligible revisions from active history. It is not secure deletion; Git objects, backups, and storage media can retain data outside this view.", "清理會由現役歷史移除符合條件嘅修訂。呢個唔係安全刪除；Git 物件、備份同儲存媒體仍可能喺呢個檢視之外保留資料。"))}</p>
+    ${state.localHistoryPruneError ? `<p class="field-error" role="alert">${escapeHtml(state.localHistoryPruneError)}</p>` : ""}
+    ${previewMarkup}
+  </section>`;
+}
+
 function renderLocalVersions(): string {
   const model = searchFor("history-versions");
   const revisions = state.localRevisions.filter(localRevisionMatches);
   return `<section class="local-version-card" data-testid="local-versions" aria-labelledby="local-versions-title"><header><div><p class="eyebrow">${escapeHtml(tx("GIT-BACKED SNAPSHOTS", "GIT 支援快照"))}</p><h2 id="local-versions-title">${escapeHtml(tx("Whole-workspace versions", "整個工作空間版本"))}</h2></div><span class="count-pill">${revisions.length} / ${state.localRevisions.length}</span></header>
     <div class="local-version-search">${renderSearchField("history-versions", tx("Search revision labels, hashes, or dates", "搜尋修訂標籤、雜湊或者日期"))}</div>
+    ${renderLocalHistoryRetention()}
     ${state.localRevisionsError ? `<p class="field-error" role="alert">${escapeHtml(state.localRevisionsError)}</p>` : ""}
     ${!state.localRevisionsLoaded && !state.localRevisionsError ? `<div class="indeterminate-progress" role="progressbar" aria-label="${escapeHtml(tx("Loading workspace versions", "載入工作空間版本"))}"></div>` : ""}
     <div class="revision-row-list">${revisions.map(revision => {
@@ -2583,6 +2622,16 @@ function renderConfirmation(): string {
     title = tx("Restore this workspace version?", "還原呢個工作空間版本？");
     body = tx(`Restore “${confirmation.label}”. The current state is preserved as another append-only version.`, `還原「${confirmation.label}」。目前狀態會保留做另一個只追加版本。`);
     confirmLabel = tx("Restore version", "還原版本");
+  } else if (confirmation.kind === "prune-local-history") {
+    const preview = confirmation.preview;
+    title = tx(`Prune ${preview.eligibleRevisions.length} previewed local revisions?`, `清理已預覽嘅 ${preview.eligibleRevisions.length} 個本機修訂？`);
+    body = tx(
+      `Only the exact app-owned revisions in the dry run will leave active history. The current state and ${preview.protectedLabeledCount} labeled revision${preview.protectedLabeledCount === 1 ? "" : "s"} stay available. This cannot be undone from the app and is not secure deletion.`,
+      `只會將試行入面確切列出、由應用程式建立嘅修訂移離現役歷史。目前狀態同 ${preview.protectedLabeledCount} 個有標籤修訂會繼續保留。應用程式入面唔可以復原呢次清理，而且呢個唔係安全刪除。`,
+    );
+    confirmLabel = tx("Prune previewed revisions", "清理已預覽修訂");
+    cancelLabel = tx("Keep every revision", "保留全部修訂");
+    detailsMarkup = `<div class="retention-confirmation" id="confirmation-details"><p><strong>${escapeHtml(tx("Cutoff", "截止"))}</strong> ${escapeHtml(formatDate(preview.cutoffAt))}</p><p><strong>${escapeHtml(tx("Expected current revision", "預期目前修訂"))}</strong> <code>${escapeHtml(preview.headHash?.slice(0, 12) ?? "")}</code></p></div>`;
   } else if (confirmation.kind === "discard-pending-operation") {
     title = tx("Discard this queued server change?", "捨棄呢個排隊伺服器更改？");
     body = tx(
@@ -2803,6 +2852,14 @@ const preferencePatchFromControl = (control: HTMLInputElement | HTMLSelectElemen
     case "dimSumEnabled": return control instanceof HTMLInputElement ? { dimSumEnabled: control.checked } : null;
     case "narratorEnabled": return control instanceof HTMLInputElement ? { narratorEnabled: control.checked } : null;
     case "nativeNotificationsEnabled": return control instanceof HTMLInputElement ? { nativeNotificationsEnabled: control.checked } : null;
+    case "historyRetentionDays": {
+      const retentionDays = Number(control.value);
+      return Number.isInteger(retentionDays)
+        && retentionDays >= LOCAL_HISTORY_RETENTION_DAYS_MIN
+        && retentionDays <= LOCAL_HISTORY_RETENTION_DAYS_MAX
+        ? { historyRetentionDays: retentionDays }
+        : null;
+    }
     case "accent": return { accent: control.value.slice(0, 64) };
     case "fontFamily": return { fontFamily: control.value.slice(0, 120) };
     case "externalEditorPath": return { externalEditorPath: control.value };
@@ -2889,6 +2946,27 @@ const saveLocalRevisionLabel = async (button: HTMLElement, hash: string): Promis
     pushToast("success", "Revision label saved", "The snapshot commit stayed immutable; only its local label changed.", "修訂標籤已儲存", "快照提交保持不變；只係本機標籤改咗。 ");
   });
 };
+
+const previewLocalHistoryPrune = async (): Promise<void> => {
+  state.localHistoryPruneError = "";
+  await withBusy("local-history-prune-preview", async () => {
+    try {
+      state.localHistoryPrunePreview = await api.previewLocalHistoryPrune(preferences().historyRetentionDays);
+      pendingFocusKey = "preview-local-history-prune";
+    } catch (error) {
+      state.localHistoryPrunePreview = null;
+      state.localHistoryPruneError = errorMessage(error);
+      throw error;
+    }
+  });
+};
+
+const pruneRequestFromPreview = (preview: LocalHistoryPrunePreview): LocalHistoryPruneRequest => ({
+  retentionDays: preview.retentionDays,
+  cutoffAt: preview.cutoffAt,
+  expectedHeadHash: preview.headHash ?? "",
+  expectedEligibleHashes: preview.eligibleRevisions.map(revision => revision.hash),
+});
 
 const moveTabBy = (id: PageId, offset: -1 | 1): void => {
   const from = state.tabPreferences.order.indexOf(id);
@@ -3700,6 +3778,29 @@ const handleConfirmation = async (): Promise<void> => {
     render();
     return;
   }
+  if (confirmation.kind === "prune-local-history") {
+    await withBusy("local-history-prune", async () => {
+      state.localHistoryPruneError = "";
+      const result = await api.pruneLocalHistory(pruneRequestFromPreview(confirmation.preview));
+      await refreshMetadata();
+      state.localHistoryPrunePreview = null;
+      state.localRevisionsLoaded = false;
+      state.localRevisions = [];
+      state.selectedLocalRevisionHash = null;
+      state.localRevisionDiff = null;
+      state.localRevisionDiffError = "";
+      await loadLocalRevisions();
+      pendingFocusKey = "preview-local-history-prune";
+      pushToast(
+        "success",
+        "Local revisions pruned",
+        `${result.prunedRevisionCount} eligible app-owned revision${result.prunedRevisionCount === 1 ? " was" : "s were"} removed from active history. The current state and labeled revisions remain; this was not secure deletion.`,
+        "本機修訂已清理",
+        `${result.prunedRevisionCount} 個符合條件、由應用程式建立嘅修訂已移離現役歷史。目前狀態同有標籤修訂仍然保留；呢次唔係安全刪除。`,
+      );
+    });
+    return;
+  }
   if (confirmation.kind !== "restore-local") return;
   await withBusy("restore-local", async () => {
     beginMailNavigation();
@@ -3712,6 +3813,8 @@ const handleConfirmation = async (): Promise<void> => {
     state.selectedLocalRevisionHash = null;
     state.localRevisionDiff = null;
     state.localRevisionDiffError = "";
+    state.localHistoryPrunePreview = null;
+    state.localHistoryPruneError = "";
     const next = restored.accounts.find(account => account.id === restored.preferences.selectedAccountId) ?? restored.accounts[0];
     if (next) await loadAccount(next.id, false);
     await loadLocalRevisions();
@@ -4163,6 +4266,12 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     }
     case "toggle-local-revision-diff": if (button.dataset.revisionHash) await toggleLocalRevisionDiff(button.dataset.revisionHash); break;
     case "save-local-revision-label": if (button.dataset.revisionHash) await saveLocalRevisionLabel(button, button.dataset.revisionHash); break;
+    case "preview-local-history-prune": await previewLocalHistoryPrune(); break;
+    case "request-prune-local-history": {
+      const preview = state.localHistoryPrunePreview;
+      if (preview?.canPrune && preview.headHash) showConfirmation({ kind: "prune-local-history", preview }, "prune-local-history");
+      break;
+    }
     case "request-restore-local": if (button.dataset.revisionHash) showConfirmation({ kind: "restore-local", hash: button.dataset.revisionHash, label: button.dataset.revisionLabel ?? button.dataset.revisionHash }); break;
     case "dismiss-dim-sum": state.dimSumVisible = false; render(); break;
     case "request-bulk-close": {
@@ -4245,7 +4354,14 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
   }
   if (control.dataset.pref) {
     const patch = preferencePatchFromControl(control);
-    if (patch) { savePreferencesPatch(patch); render(); }
+    if (patch) {
+      if (control.dataset.pref === "historyRetentionDays") {
+        state.localHistoryPrunePreview = null;
+        state.localHistoryPruneError = "";
+      }
+      savePreferencesPatch(patch);
+      render();
+    }
     return;
   }
   if (control.dataset.discoveryIndex !== undefined) {

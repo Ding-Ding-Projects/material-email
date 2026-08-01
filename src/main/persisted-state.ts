@@ -230,8 +230,8 @@ const notificationSchema = z.strictObject({
 });
 const historyRecordSchema = z.strictObject({
   id: identifierSchema,
-  kind: z.enum(["created", "updated", "deleted", "restored", "undone", "imported", "settings-changed"]),
-  entityType: z.enum(["account", "message", "draft", "contact", "calendar", "task", "settings"]),
+  kind: z.enum(["created", "updated", "deleted", "restored", "undone", "imported", "settings-changed", "pruned"]),
+  entityType: z.enum(["account", "message", "draft", "contact", "calendar", "task", "settings", "history"]),
   entityId: z.string().max(4_096),
   label: boundedString(8_192),
   createdAt: timestampSchema,
