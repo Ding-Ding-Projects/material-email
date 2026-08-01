@@ -60,11 +60,11 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Persist Outbox attempt/error state across restart and expose subject-specific, humor-aware retry-once, undo-to-Drafts, and queue-ID History actions with offline service and real-Electron proof
 - [x] Add keyboard-reachable localized Windows caption controls, synchronized maximize/restore state, validated normal-bounds/maximized persistence, off-screen recovery, and a reviewed native dirty-close path with focused unit and 3 / 3 real-Electron proof
 - [x] Add explicit system-color borders, state cues, and keyboard focus indicators for caption controls, notification actions, appearance presets, and both advanced date pickers, covered by 2 renderer cases and 2 / 2 real-Electron Chromium forced-colors scenarios without claiming native Windows High Contrast certification
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 57 files / 311 tests on the current tree; focused cached-mail search and forced-colors/focus each passed 2 / 2 real-Electron scenarios, focused Outbox recovery passed 1 / 1, responsive/accessibility passed 2 / 2, Windows window controls passed 3 / 3, and broader evidence remains listed in `HANDOFF.md`)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 57 files / 313 tests on the current tree; focused cached-mail search passed 3 / 3 real-Electron scenarios, forced-colors/focus passed 2 / 2, focused Outbox recovery passed 1 / 1, responsive/accessibility passed 2 / 2, Windows window controls passed 3 / 3, and broader evidence remains listed in `HANDOFF.md`)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run the full keyboard, native screen-reader, native High Contrast, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% native Windows scaling matrices (workspace-tab navigation, app-owned caption controls, the focused appearance/date-picker effective-viewport slice, and Chromium forced-colors coverage for four recent surfaces are verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content across every remaining app surface (the focused appearance/date-picker/notification matrix is verified)
-- [ ] Verify plain-text and regex search from every search surface, including invalid, Unicode, multiline, capture, zero-width, and adversarial cases (the command-palette literal/invalid/activation slice is verified)
+- [ ] Verify plain-text and regex search from every search surface, including invalid, Unicode, multiline, capture, zero-width, and adversarial cases (the command-palette slice and cached-mail/Unified Inbox adversarial, Unicode-zero-width, multiline, and no-match slice are verified)
 - [ ] Test a real IMAP/SMTP account without exposing credentials or private messages in evidence
 - [x] Add focused sandbox/CSP, navigation, HTML-sanitization, and IPC-surface boundary tests
 - [ ] Expand adversarial IPC payload, malformed MIME, and phishing test matrices (focused oversized source/header/body, NUL-header, attachment-fan-out, decoded-attachment, and unterminated-multipart cases are verified; broad corpora and hard parser wall-time isolation remain open)
@@ -80,6 +80,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Local cached Unified Inbox, Starred, and Unread views with account attribution, shared regex search, and stable composite selection
 - [x] Bounded in-memory conversation grouping by normalized subject and cached message references
 - [x] Ephemeral cached-mail plain/regex index with bounded results and account/folder/conversation attribution
+- [x] Reject demonstrated nested, adjacent-overlap, wildcard-overlap, and prefix-alternative regex denial-of-service families before cached-mail IPC; advance `u`-mode zero-width sample matches by code point
 - [x] Localized cached-search result counts, keyboard-actionable invalid/empty/error states, mode-only restart persistence, and redacted one-request retry handling with focused unit and 2 / 2 real-Electron proof
 - [ ] Server-complete all-account synchronization/threading and persistent scalable mail indexing
 - [ ] Conversation threading and complete search indexing

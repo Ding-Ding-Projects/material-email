@@ -6,7 +6,7 @@
 
 ## Behavior and configuration
 
-Each valid query rebuilds at most 2,000 coherent cached documents. Fields include subject, addresses, preview, up to 4,096 cached body characters, account, folder, and local conversation subject. Plain search normalizes Unicode and whitespace; regex uses the shared ES2023 engine, `i/m/s/u` flags, 2,048-character pattern ceiling, and nested-quantifier rejection. Results sort newest first, report the bounded total, and return at most 200 hits (the renderer requests 100). Every hit includes a 500-character snippet plus account, folder, conversation, and matched-field attribution. There is no database file, crawler, background indexer, or server setting.
+Each valid query rebuilds at most 2,000 coherent cached documents. Fields include subject, addresses, preview, up to 4,096 cached body characters, account, folder, and local conversation subject. Plain search normalizes Unicode and whitespace; regex uses the shared ES2023 engine, `i/m/s/u` flags, a 2,048-character pattern ceiling, and conservative rejection for nested quantifiers, adjacent overlapping unbounded repetitions, and simple prefix-overlapping repeated alternatives. Results sort newest first, report the bounded total, and return at most 200 hits (the renderer requests 100). Every hit includes a 500-character snippet plus account, folder, conversation, and matched-field attribution. There is no database file, crawler, background indexer, or server setting.
 
 The count beside the message-list heading identifies a complete result count or a localized “showing N of M” cap in English, Hong Kong Cantonese, and bilingual mode. It is a polite live status. Arrow Down from the mail search field moves keyboard focus into non-empty results. Invalid, no-match, and failed states keep the empty list out of the tab order and provide an explicit keyboard-reachable edit or retry action.
 
@@ -18,7 +18,7 @@ The mail field persists only its validated `plain` or `regex` mode in renderer-l
 - Only already-opened cached bodies contribute body text; other rows use summaries/previews.
 - Result totals can exceed the displayed cap.
 - This query-time rebuild does not provide ranking, stemming, fuzzy search, incremental indexing, or large-store performance.
-- Regex rejection is heuristic rather than a hard-timeout sandbox.
+- Regex rejection is heuristic rather than a hard-timeout sandbox; adversarial forms outside the documented repetition families may remain.
 - Server-only mail, attachments, provider thread IDs, and remote content are not indexed.
 - Browser-storage denial leaves search usable but resets the mode to plain text at the next renderer start.
 - A retry repeats the same local query once; it does not contact a provider or widen the indexed cache.
@@ -29,7 +29,7 @@ Indexing stays in the main process. Strict IPC caps patterns, flags, and result 
 
 ## Verification
 
-`tests/cached-mail-index.test.ts` covers normalized plain/body search, attribution, shared regex safety, result caps, orphan rejection, and the 2,000-document ceiling. `tests/ipc-validation.test.ts` covers request bounds. `tests/renderer/regex.test.ts` covers the shared matcher compatibility export. `tests/renderer/cached-mail-search.test.ts` covers validated mode persistence plus singular, empty, capped, localized, and malformed service counts. `tests/e2e/unified-folders.spec.ts` passes 2 / 2 real-Electron scenarios covering bilingual result counts, Arrow Down result focus, actionable no-match copy, redacted failure notification, exactly one retry, account/folder/conversation attribution, regex body-snippet search, and a full application restart that retains only regex mode while clearing the query and sample.
+`tests/cached-mail-index.test.ts` and `tests/renderer/regex.test.ts` pass 2 files / 9 tests covering normalized plain/body search, attribution, Unicode/multiline and zero-width behavior, pre-execution rejection for four demonstrated adversarial repetition families, sample/match/result/document ceilings, orphan rejection, and safe command-style alternation. `tests/ipc-validation.test.ts` covers request bounds. `tests/renderer/cached-mail-search.test.ts` covers validated mode persistence plus singular, empty, capped, localized, and malformed service counts. `tests/e2e/unified-folders.spec.ts` passes 3 / 3 real-Electron scenarios, including the dedicated plain-text-default, rejected-pattern disclosure/disabled execution, astral zero-width, multiline cached-result, and actionable zero-width no-match coverage alongside the existing attribution/retry/restart checks.
 
 ## Suggested articles
 

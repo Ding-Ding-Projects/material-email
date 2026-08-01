@@ -236,6 +236,46 @@ test("shows cached cross-account folders with attribution, shared regex search, 
   await expect(list).toContainText("Alpha unread inbox");
 });
 
+test("rejects adversarial mail regex and keeps Unicode zero-width and multiline states bounded", async () => {
+  await page.getByRole("button", { name: /Use the local demo/i }).click();
+  const unified = page.getByTestId("unified-folder-list");
+  await unified.getByRole("button", { name: /^Unified Inbox/i }).click();
+
+  const mailSearch = page.locator('[data-search-anchor="mail"]');
+  await mailSearch.locator('[data-action="toggle-regex-builder"]').click();
+  let builder = page.getByTestId("regex-popover");
+  await expect(builder.getByRole("button", { name: /^Plain text/i })).toHaveAttribute("aria-pressed", "true");
+  await builder.getByRole("button", { name: /^Regular expression/i }).click();
+  await builder.locator('textarea[data-regex-pattern="mail"]').fill("(a|aa)+$");
+  await expect(builder.locator(".validation-row")).toContainText(/overlapping repetition/i);
+  await expect(builder.getByRole("button", { name: /Use in search/i })).toBeDisabled();
+  await expect(page.getByTestId("cached-mail-search-invalid")).toBeVisible();
+  await expect(page.getByTestId("cached-mail-search-truth")).toContainText(/not sent to the cache index/i);
+  await expect(page.getByTestId("message-list")).toHaveAttribute("tabindex", "-1");
+
+  await builder.locator('textarea[data-regex-pattern="mail"]').fill("(?=.)");
+  await builder.getByRole("checkbox", { name: "Unicode" }).check();
+  await builder.locator('textarea[data-regex-sample="mail"]').fill("😀");
+  await expect(builder.locator(".match-results .count-pill")).toHaveText("1");
+  await expect(builder.locator(".match-results")).toContainText("(zero-width)");
+  await expect(builder.locator(".match-results")).toContainText("@ 0");
+
+  await builder.getByRole("checkbox", { name: /Multiline/i }).check();
+  await builder.locator('textarea[data-regex-pattern="mail"]').fill("^Windows package completed$");
+  await builder.locator('textarea[data-regex-sample="mail"]').fill("header\nWindows package completed\nfooter");
+  await expect(builder.locator(".match-results .count-pill")).toHaveText("1");
+  await builder.getByRole("button", { name: /Use in search/i }).click();
+  await expect(page.getByTestId("message-list").locator(".message-row")).toHaveCount(1);
+  await expect(page.getByTestId("message-list")).toContainText("Windows package completed");
+
+  await mailSearch.locator('[data-action="toggle-regex-builder"]').click();
+  builder = page.getByTestId("regex-popover");
+  await builder.locator('textarea[data-regex-pattern="mail"]').fill("(?=不存在)");
+  await builder.getByRole("button", { name: /Use in search/i }).click();
+  await expect(page.getByTestId("cached-mail-search-empty")).toBeVisible();
+  await expect(page.getByTestId("message-list")).toHaveAttribute("tabindex", "-1");
+});
+
 test("persists only the cached-mail regex mode across a real Electron restart", async () => {
   await page.getByRole("button", { name: /Use the local demo/i }).click();
   const mailSearch = page.locator('[data-search-anchor="mail"]');

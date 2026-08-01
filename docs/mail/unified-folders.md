@@ -9,7 +9,7 @@
 - Unified Inbox includes cached collections whose discovered folder role is `inbox`.
 - Starred and Unread filter all coherent cached folder collections for configured accounts by their existing summary flags.
 - Results use the existing composite message identity (`accountId`, folder path, and UID), discard orphaned or internally inconsistent cache rows, remove duplicate identities, and sort newest first with a deterministic identity tie-break.
-- Every unified row displays its account name and email address. Those labels join sender, recipient, subject, and preview in the existing plain-text/JavaScript-regex mail search.
+- Every unified row displays its account name and email address. Those labels join sender, recipient, subject, preview, and bounded cached body text in the existing plain-text/JavaScript-regex cache search. Risky nested or overlapping repetition is rejected before IPC; Unicode zero-width preview and multiline matching preserve JavaScript semantics.
 - Reopening or refreshing a unified view preserves the selected composite identity when it is still present. If it disappeared, selection falls back near its prior list position.
 - Reply, forward, star, and read-state actions retain the source account. Move/archive/trash controls are unavailable in a unified view because folder destinations are account-specific; opening the account folder restores them.
 
@@ -33,7 +33,7 @@ Aggregation runs in the main process over validated local state and returns the 
 
 - `tests/unified-folders.test.ts` covers account/folder filtering, orphan and inconsistent-row rejection, deduplication, deterministic sorting, and stable selection.
 - `tests/ipc-validation.test.ts` limits the IPC input to `inbox`, `starred`, or `unread`.
-- `tests/e2e/unified-folders.spec.ts` exercises two accounts in Electron, visible attribution, a bounded conversation group, account-label search, the shared anchored regex builder, selection across reordered refreshes, and all three virtual folders.
+- `tests/e2e/unified-folders.spec.ts` passes 3 / 3 scenarios exercising two accounts in Electron, visible attribution, a bounded conversation group, account-label search, the shared anchored regex builder, selection across reordered refreshes, all three virtual folders, adversarial-pattern refusal, Unicode zero-width preview, multiline matching, an actionable no-match state, and mode-only restart persistence.
 
 ## Suggested articles
 

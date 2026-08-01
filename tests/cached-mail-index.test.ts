@@ -98,7 +98,26 @@ describe("bounded cached mail index", () => {
     expect(result.hits).toHaveLength(1);
     expect(result.totalMatched).toBe(3);
     expect(result.resultLimit).toBe(1);
-    expect(() => searchCachedMailIndex(index, { mode: "regex", pattern: "(a+)+", flags: "i", limit: 10 })).toThrow(/nested quantifier/i);
+    for (const pattern of ["(a+)+$", "(a|aa)+$", "a+a+$", ".*.*Z"]) {
+      expect(() => searchCachedMailIndex(index, { mode: "regex", pattern, flags: "i", limit: 10 }), pattern).toThrow(/nested quantifier|overlapping repetition/i);
+    }
+  });
+
+  it("preserves Unicode, multiline, and zero-width JavaScript regex behavior", () => {
+    const alpha = account("alpha", "Alpha Account");
+    const row = message("alpha", "Inbox", 1, "Header\n郵件😀", "2026-08-01T10:00:00.000Z");
+    const index = createCachedMailIndex({
+      accounts: [alpha],
+      folders: { alpha: [folder("alpha", "Inbox")] },
+      messages: { "alpha\u0000Inbox": [row] },
+      details: {},
+    });
+
+    expect(searchCachedMailIndex(index, { mode: "regex", pattern: "^郵件😀$", flags: "mu", limit: 10 }).hits).toHaveLength(1);
+    expect(searchCachedMailIndex(index, { mode: "regex", pattern: "(?=郵件😀)", flags: "u", limit: 10 }).hits).toHaveLength(1);
+    const noMatch = searchCachedMailIndex(index, { mode: "regex", pattern: "(?=不存在)", flags: "u", limit: 10 });
+    expect(noMatch.hits).toEqual([]);
+    expect(noMatch.totalMatched).toBe(0);
   });
 
   it("rejects orphan attribution and stops indexing at the explicit document ceiling", () => {

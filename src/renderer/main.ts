@@ -1702,7 +1702,7 @@ function renderRegexBuilder(key: string): string {
       <span class="action-spacer"></span>
       <button class="button button--filled" type="button" data-action="use-regex" data-search-key="${escapeHtml(key)}" ${!validation.valid ? "disabled" : ""}>${icon("check")}<span>${escapeHtml(tx("Use in search", "套用到搜尋"))}</span></button>
     </footer>
-    <p class="engine-note">${escapeHtml(tx("Engine: JavaScript RegExp (ES2023). Evaluation is local and bounded; risky nested quantifiers are rejected.", "引擎：JavaScript RegExp (ES2023)。只喺本機有界運算；危險嘅巢狀數量詞會被拒絕。"))}</p>
+    <p class="engine-note">${escapeHtml(tx("Engine: JavaScript RegExp (ES2023). Evaluation is local and bounded; risky nested or overlapping repetition is rejected.", "引擎：JavaScript RegExp (ES2023)。只喺本機有界運算；危險嘅巢狀或者重疊重複會被拒絕。"))}</p>
   </section>`;
 }
 
