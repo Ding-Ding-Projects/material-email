@@ -28,6 +28,7 @@ describe("Electron security boundary", () => {
       "account:oauth-status",
       "account:oauth-start",
       "account:oauth-cancel",
+      "account:pop3-foundation",
       "account:test",
       "account:add",
       "account:remove",

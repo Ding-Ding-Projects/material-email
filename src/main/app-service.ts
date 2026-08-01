@@ -43,6 +43,8 @@ import type {
   LocalDraftSummary,
   OutboxSummary,
   PendingOperationSummary,
+  Pop3AccountOptions,
+  Pop3FoundationSnapshot,
   AttachmentSaveReview,
   AttachmentBatchSaveOutcome,
   AttachmentSaveOutcome,
@@ -73,7 +75,7 @@ import {
   type RuntimeAccount,
 } from "./mail-service.js";
 import { assertMimeSourceSize } from "./mime-safety.js";
-import { accountDraftSchema, composeDraftSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
+import { accountDraftSchema, composeDraftSchema, pop3AccountOptionsSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
 import { AttachmentAuthorization, inspectEditorExecutable, sameWindowsPath } from "./local-file-authorization.js";
 import {
   parsePersistedState,
@@ -84,6 +86,7 @@ import {
 } from "./persisted-state.js";
 import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
 import { collectCachedUnifiedMessages } from "../shared/unified-folders.js";
+import { runPop3Foundation } from "./pop3-foundation.js";
 import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-mail-index.js";
 import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
 import { inspectTlsCertificate } from "./tls-certificate-diagnostics.js";
@@ -338,8 +341,15 @@ export class AppService {
     return inspectTlsCertificate(input);
   }
 
+  async runPop3Foundation(input: Pop3AccountOptions): Promise<Pop3FoundationSnapshot> {
+    return runPop3Foundation(pop3AccountOptionsSchema.parse(input));
+  }
+
   async addAccount(input: AccountDraft): Promise<AccountSummary> {
     const draft = accountDraftSchema.parse(input);
+    if (draft.incomingProtocol === "pop3") {
+      throw new Error("Live POP3 account connection is not available in this build. No server was contacted, no credential was used, and no account was saved. Run the local POP3 demo to inspect the bounded foundation.");
+    }
     if (draft.authMode === "oauth2") {
       throw new Error("OAuth token exchange and connected-account persistence are not available in this build. No token was saved.");
     }
@@ -372,6 +382,9 @@ export class AppService {
 
   async testAccount(input: AccountDraft): Promise<{ incoming: true; outgoing: true }> {
     const draft = accountDraftSchema.parse(input);
+    if (draft.incomingProtocol === "pop3") {
+      throw new Error("Live POP3 account testing is not available in this build. No server was contacted and no credential was sent. Run the local POP3 demo instead.");
+    }
     if (draft.authMode === "oauth2") {
       throw new Error("OAuth token exchange and connected-account testing are not available in this build. No token was sent.");
     }

@@ -30,6 +30,7 @@ import { AppService } from "../src/main/app-service";
 const validDraft = (): AccountDraft => ({
   displayName: "Certificate Preflight",
   email: "preflight@example.test",
+  incomingProtocol: "imap",
   incoming: { host: "imap.example.test", port: 993, security: "tls", username: "preflight@example.test" },
   outgoing: { host: "smtp.example.test", port: 587, security: "starttls", username: "preflight@example.test" },
   authMode: "password",

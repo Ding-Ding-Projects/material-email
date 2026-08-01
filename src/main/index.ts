@@ -77,6 +77,7 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("account:oauth-start", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthAuthorization.start(provider));
   handleValidated("account:oauth-cancel", ipcPayloadSchemas.none, () => oauthAuthorization.cancel());
   handleValidated("account:inspect-tls-certificate", ipcPayloadSchemas.tlsCertificateInspection, ([request]) => service.inspectTlsCertificate(request));
+  handleValidated("account:pop3-foundation", ipcPayloadSchemas.pop3Foundation, ([options]) => service.runPop3Foundation(options));
   handleValidated("account:test", ipcPayloadSchemas.accountDraft, ([draft]) => service.testAccount(draft));
   handleValidated("account:add", ipcPayloadSchemas.accountDraft, ([draft]) => service.addAccount(draft));
   handleValidated("account:remove", ipcPayloadSchemas.accountId, ([accountId]) => service.removeAccount(accountId));

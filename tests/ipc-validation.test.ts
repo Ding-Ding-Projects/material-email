@@ -5,6 +5,7 @@ import { ipcPayloadSchemas, parseIpcArgs } from "../src/main/ipc-validation";
 const accountDraft = (): AccountDraft => ({
   displayName: "Demo User",
   email: "demo@example.test",
+  incomingProtocol: "imap",
   incoming: { host: "imap.example.test", port: 993, security: "tls", username: "demo@example.test" },
   outgoing: { host: "smtp.example.test", port: 587, security: "starttls", username: "demo@example.test" },
   authMode: "password",
@@ -54,6 +55,27 @@ describe("non-PIM IPC validation", () => {
         { ...accountDraft(), incoming: { ...accountDraft().incoming, unexpected: true } },
       ]),
     ).toThrow();
+  });
+
+  it("validates POP3 account options and keeps the demo IPC credential-free", () => {
+    const pop3 = {
+      transport: "local-demo" as const,
+      retrievalMode: "new-only" as const,
+      leaveOnServer: true as const,
+      messageLimit: 3,
+    };
+    expect(ipcPayloadSchemas.accountDraft.parse([{
+      ...accountDraft(),
+      incomingProtocol: "pop3",
+      incoming: { ...accountDraft().incoming, host: "pop.example.test", port: 995 },
+      pop3,
+    }])[0]).toMatchObject({ incomingProtocol: "pop3", pop3 });
+    expect(ipcPayloadSchemas.pop3Foundation.parse([pop3])).toEqual([pop3]);
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), incomingProtocol: "pop3" }])).toThrow();
+    expect(() => ipcPayloadSchemas.pop3Foundation.parse([{ ...pop3, leaveOnServer: false }])).toThrow();
+    expect(() => ipcPayloadSchemas.pop3Foundation.parse([{ ...pop3, retrievalMode: "all" }])).toThrow();
+    expect(() => ipcPayloadSchemas.pop3Foundation.parse([{ ...pop3, messageLimit: 51 }])).toThrow();
+    expect(() => ipcPayloadSchemas.pop3Foundation.parse([{ ...pop3, username: "must-not-cross-this-ipc", secret: "must-not-cross-this-ipc" }])).toThrow();
   });
 
   it("bounds compose content and requires absolute picker-shaped attachment paths", () => {

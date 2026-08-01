@@ -11,6 +11,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Per-channel IPC sender authentication for the current main `WebContents`, top frame, and exact trusted renderer location
 - [x] Windows-backed `safeStorage` encryption for persisted account secrets
 - [x] Manual IMAP/SMTP account schema and connection tests
+- [x] Strict POP3 account/options schema, POP3-aware local port diagnostics, deterministic local fixture/capability state machine, and explicit pre-network test/add refusal
 - [x] Ephemeral main-process OAuth authorization-code/PKCE state machine with exact loopback callback validation, timeout/cancel/error cleanup, status-only IPC, and no token exchange/persistence/logging
 - [x] Mock-only local OAuth exchange/expiry/refresh/revoke state machine with ephemeral AES-256-GCM ciphertext, demo factory, and a production storage stub that refuses until registration and a reviewed Windows adapter exist
 - [x] Bounded local certificate/hostname preflight with conventional TLS/STARTTLS port diagnostics, bilingual accessible errors, and a main-process no-connection guard
@@ -49,7 +50,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Give command-palette search its own plain-text-first model, adjacent anchored regex builder, invalid-pattern execution guard, and focused real-Electron proof
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
 - [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 42 files / 207 tests on the current tree; the previously recorded Electron suite passed 15 / 15 scenarios, focused remote-content/bilingual passed 2 / 2, focused command-palette search passed 1 / 1, focused local connection preflight passed 1 / 1, focused explicit live TLS inspection passed 1 / 1, and focused history retention/deletion evidence passed 1 / 1)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 47 files / 234 tests on the current tree; the focused POP3 foundation passed 1 / 1 real-Electron scenario; broader previously recorded Electron evidence remains listed in `HANDOFF.md`)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling matrices (the primary workspace-tab Arrow/Home/End slice alone is verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
@@ -63,7 +64,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 ## Mail capabilities open
 
 - [ ] Register and verify live OAuth providers, then implement reviewed token exchange, Windows-backed durable encrypted token storage/refresh rotation, revocation, scope/consent handling, account connection, migration, and public-provider interoperability (the mock lifecycle is not completion evidence)
-- [ ] POP support
+- [ ] Live POP3 transport, authentication, TLS/provider interoperability, durable UIDL tracking, polling, retention/deletion semantics, and synchronization (the local fixture/state machine is not completion evidence)
 - [x] User-facing retry ceilings and conflict resolution for queued mail operations
 - [x] Local cached Unified Inbox, Starred, and Unread views with account attribution, shared regex search, and stable composite selection
 - [x] Bounded in-memory conversation grouping by normalized subject and cached message references

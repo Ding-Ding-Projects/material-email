@@ -57,6 +57,55 @@ export type ThemeMode = "light" | "dark" | "system";
 export type DensityMode = "compact" | "comfortable" | "relaxed";
 export type MailSecurity = "tls" | "starttls" | "plain";
 export type AuthMode = "password" | "oauth2";
+export type IncomingMailProtocol = "imap" | "pop3";
+export type Pop3TransportMode = "local-demo" | "live-network";
+
+export const POP3_MESSAGE_LIMIT_MIN = 1;
+export const POP3_MESSAGE_LIMIT_MAX = 50;
+
+export interface Pop3AccountOptions {
+  transport: Pop3TransportMode;
+  retrievalMode: "new-only";
+  leaveOnServer: true;
+  messageLimit: number;
+}
+
+export type Pop3SessionState = "idle" | "connecting" | "authorization" | "transaction" | "update" | "disconnected" | "unsupported";
+export type Pop3SessionEvent = "start" | "greeting" | "demo-authorized" | "retrieve-list" | "quit" | "disconnect" | "reject-live-network";
+
+export interface Pop3StateTransition {
+  sequence: number;
+  from: Pop3SessionState;
+  event: Pop3SessionEvent;
+  to: Pop3SessionState;
+}
+
+export type Pop3CapabilityName = "UIDL" | "TOP" | "STLS" | "PIPELINING" | "DELE";
+
+export interface Pop3CapabilityStatus {
+  name: Pop3CapabilityName;
+  available: boolean;
+  used: boolean;
+}
+
+export interface Pop3DemoMessage {
+  uidl: string;
+  subject: string;
+  octets: number;
+}
+
+export interface Pop3FoundationSnapshot {
+  transport: Pop3TransportMode;
+  state: Pop3SessionState;
+  capabilities: Pop3CapabilityStatus[];
+  transitions: Pop3StateTransition[];
+  messages: Pop3DemoMessage[];
+  serverContacted: false;
+  credentialsUsed: false;
+  deletionAttempted: false;
+  fullSynchronization: false;
+  boundary: "local-demo-only" | "live-network-unsupported";
+}
 
 export const AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT = 3;
 export const LOCAL_HISTORY_RETENTION_DAYS_MIN = 30;
@@ -70,7 +119,7 @@ export interface ServerSettings {
   username: string;
 }
 
-export interface AccountDraft {
+interface AccountDraftBase {
   displayName: string;
   email: string;
   incoming: ServerSettings;
@@ -78,6 +127,10 @@ export interface AccountDraft {
   authMode: AuthMode;
   secret: string;
 }
+
+export type AccountDraft =
+  | (AccountDraftBase & { incomingProtocol?: "imap"; pop3?: never })
+  | (AccountDraftBase & { incomingProtocol: "pop3"; pop3: Pop3AccountOptions });
 
 export interface TlsCertificateInspectionRequest {
   endpoint: "incoming" | "outgoing";
@@ -488,6 +541,7 @@ export interface MaterialEmailApi {
   startOAuthAuthorization(provider: OAuthProviderId): Promise<OAuthAuthorizationSnapshot>;
   cancelOAuthAuthorization(): Promise<OAuthAuthorizationSnapshot>;
   inspectTlsCertificate(request: TlsCertificateInspectionRequest): Promise<TlsCertificateInspectionResult>;
+  runPop3Foundation(options: Pop3AccountOptions): Promise<Pop3FoundationSnapshot>;
   addAccount(draft: AccountDraft): Promise<AccountSummary>;
   testAccount(draft: AccountDraft): Promise<{ incoming: true; outgoing: true }>;
   removeAccount(accountId: string): Promise<void>;

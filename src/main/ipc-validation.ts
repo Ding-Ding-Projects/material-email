@@ -4,11 +4,14 @@ import {
   LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
   LOCAL_HISTORY_RETENTION_DAYS_MAX,
   LOCAL_HISTORY_RETENTION_DAYS_MIN,
+  POP3_MESSAGE_LIMIT_MAX,
+  POP3_MESSAGE_LIMIT_MIN,
   type AccountDraft,
   type AttachmentSaveReview,
   type ComposeDraft,
   type CachedMailSearchQuery,
   type LocalHistoryPruneRequest,
+  type Pop3AccountOptions,
   type Preferences,
   type TlsCertificateInspectionRequest,
 } from "../shared/contracts.js";
@@ -66,14 +69,26 @@ const tlsCertificateInspectionSchema = z.strictObject({
   security: z.enum(["tls", "starttls", "plain"]),
 }) as z.ZodType<TlsCertificateInspectionRequest>;
 
-export const accountDraftSchema = z.strictObject({
+const accountDraftBaseShape = {
   displayName: z.string().trim().min(1).max(120).refine(noControlCharacters, "Display names cannot contain control characters."),
   email: emailSchema,
   incoming: serverSettingsSchema,
   outgoing: serverSettingsSchema,
   authMode: z.enum(["password", "oauth2"]),
   secret: z.string().min(1).max(16_384),
-}) as z.ZodType<AccountDraft>;
+};
+
+export const pop3AccountOptionsSchema = z.strictObject({
+  transport: z.enum(["local-demo", "live-network"]),
+  retrievalMode: z.literal("new-only"),
+  leaveOnServer: z.literal(true),
+  messageLimit: z.number().int().min(POP3_MESSAGE_LIMIT_MIN).max(POP3_MESSAGE_LIMIT_MAX),
+}) as z.ZodType<Pop3AccountOptions>;
+
+export const accountDraftSchema = z.union([
+  z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("imap").default("imap") }),
+  z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("pop3"), pop3: pop3AccountOptionsSchema }),
+]) as z.ZodType<AccountDraft>;
 
 const recipientSchema = z
   .string()
@@ -185,6 +200,7 @@ export const ipcPayloadSchemas = {
   accountDiscover: z.tuple([emailSchema]),
   oauthProvider: z.tuple([z.enum(OAUTH_PROVIDER_IDS)]),
   tlsCertificateInspection: z.tuple([tlsCertificateInspectionSchema]),
+  pop3Foundation: z.tuple([pop3AccountOptionsSchema]),
   accountDraft: z.tuple([accountDraftSchema]),
   accountId: z.tuple([identifierSchema]),
   accountFolder: z.tuple([identifierSchema, folderPathSchema]),

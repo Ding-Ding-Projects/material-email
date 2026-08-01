@@ -1,4 +1,4 @@
-import type { AccountDraft, MailSecurity, ServerSettings } from "./contracts.js";
+import type { IncomingMailProtocol, MailSecurity, ServerSettings } from "./contracts.js";
 
 export type MailEndpoint = "incoming" | "outgoing";
 export type ConnectionDiagnosticSeverity = "error" | "warning";
@@ -24,15 +24,18 @@ export interface ConnectionDiagnostic {
 }
 
 export interface MailConnectionSettings {
+  incomingProtocol?: IncomingMailProtocol;
   incoming: ServerSettings;
   outgoing: ServerSettings;
 }
 
 const IMPLICIT_TLS_PORT: Readonly<Record<MailEndpoint, number>> = Object.freeze({ incoming: 993, outgoing: 465 });
+const POP3_IMPLICIT_TLS_PORT = 995;
 const STARTTLS_PORTS: Readonly<Record<MailEndpoint, readonly number[]>> = Object.freeze({
   incoming: Object.freeze([143]),
   outgoing: Object.freeze([25, 587, 2_525]),
 });
+const POP3_STARTTLS_PORTS = Object.freeze([110] as const);
 
 const isCanonicalIpv4 = (value: string): boolean => {
   const parts = value.split(".");
@@ -98,13 +101,14 @@ const securityPortDiagnostics = (
   endpoint: MailEndpoint,
   port: number,
   security: MailSecurity,
+  incomingProtocol: IncomingMailProtocol = "imap",
 ): ConnectionDiagnostic[] => {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     return [{ endpoint, field: "port", code: "port-range", severity: "error" }];
   }
 
-  const implicitTlsPort = IMPLICIT_TLS_PORT[endpoint];
-  const starttlsPorts = STARTTLS_PORTS[endpoint];
+  const implicitTlsPort = endpoint === "incoming" && incomingProtocol === "pop3" ? POP3_IMPLICIT_TLS_PORT : IMPLICIT_TLS_PORT[endpoint];
+  const starttlsPorts = endpoint === "incoming" && incomingProtocol === "pop3" ? POP3_STARTTLS_PORTS : STARTTLS_PORTS[endpoint];
   const diagnostics: ConnectionDiagnostic[] = [];
   if (security === "tls" && starttlsPorts.includes(port)) {
     diagnostics.push({ endpoint, field: "security", code: "implicit-tls-on-starttls-port", severity: "error" });
@@ -119,21 +123,21 @@ const securityPortDiagnostics = (
   return diagnostics;
 };
 
-export const diagnoseServerConnection = (endpoint: MailEndpoint, settings: ServerSettings): ConnectionDiagnostic[] => [
+export const diagnoseServerConnection = (endpoint: MailEndpoint, settings: ServerSettings, incomingProtocol: IncomingMailProtocol = "imap"): ConnectionDiagnostic[] => [
   ...hostDiagnostics(endpoint, settings.host),
-  ...securityPortDiagnostics(endpoint, settings.port, settings.security),
+  ...securityPortDiagnostics(endpoint, settings.port, settings.security, incomingProtocol),
 ];
 
 export const diagnoseMailConnection = (settings: MailConnectionSettings): ConnectionDiagnostic[] => [
-  ...diagnoseServerConnection("incoming", settings.incoming),
+  ...diagnoseServerConnection("incoming", settings.incoming, settings.incomingProtocol ?? "imap"),
   ...diagnoseServerConnection("outgoing", settings.outgoing),
 ];
 
 export const blockingConnectionDiagnostics = (settings: MailConnectionSettings): ConnectionDiagnostic[] =>
   diagnoseMailConnection(settings).filter(diagnostic => diagnostic.severity === "error");
 
-const blockingDiagnosticSummary = (diagnostic: ConnectionDiagnostic): string => {
-  const endpoint = diagnostic.endpoint === "incoming" ? "incoming IMAP" : "outgoing SMTP";
+const blockingDiagnosticSummary = (diagnostic: ConnectionDiagnostic, incomingProtocol: IncomingMailProtocol): string => {
+  const endpoint = diagnostic.endpoint === "incoming" ? `incoming ${incomingProtocol.toUpperCase()}` : "outgoing SMTP";
   switch (diagnostic.code) {
     case "hostname-empty": return `${endpoint} host is required`;
     case "hostname-wildcard": return `${endpoint} host must be an exact server name, not a certificate wildcard`;
@@ -146,13 +150,15 @@ const blockingDiagnosticSummary = (diagnostic: ConnectionDiagnostic): string => 
   }
 };
 
-export const assertConnectionPreflight = (draft: Pick<AccountDraft, "incoming" | "outgoing">): void => {
-  const blocking = blockingConnectionDiagnostics(draft);
+export const assertConnectionPreflight = (settings: MailConnectionSettings): void => {
+  const blocking = blockingConnectionDiagnostics(settings);
   if (!blocking.length) return;
-  throw new Error(`Connection settings need attention before any server is contacted: ${blocking.map(blockingDiagnosticSummary).join("; ")}.`);
+  const incomingProtocol = settings.incomingProtocol ?? "imap";
+  throw new Error(`Connection settings need attention before any server is contacted: ${blocking.map(item => blockingDiagnosticSummary(item, incomingProtocol)).join("; ")}.`);
 };
 
 export const conventionalMailPorts = Object.freeze({
   incoming: Object.freeze({ tls: IMPLICIT_TLS_PORT.incoming, starttls: STARTTLS_PORTS.incoming }),
+  pop3Incoming: Object.freeze({ tls: POP3_IMPLICIT_TLS_PORT, starttls: POP3_STARTTLS_PORTS }),
   outgoing: Object.freeze({ tls: IMPLICIT_TLS_PORT.outgoing, starttls: STARTTLS_PORTS.outgoing }),
 });

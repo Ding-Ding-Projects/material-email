@@ -27,6 +27,8 @@ import type {
   OAuthAuthorizationSnapshot,
   OAuthProviderId,
   PendingOperationSummary,
+  Pop3AccountOptions,
+  Pop3FoundationSnapshot,
   MailingList,
   MailingListPatch,
   MessageDetail,
@@ -50,6 +52,8 @@ import {
   LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
   LOCAL_HISTORY_RETENTION_DAYS_MAX,
   LOCAL_HISTORY_RETENTION_DAYS_MIN,
+  POP3_MESSAGE_LIMIT_MAX,
+  POP3_MESSAGE_LIMIT_MIN,
 } from "../shared/contracts";
 import { icon, type IconName } from "./lib/icons";
 import { DEFAULT_APPEARANCE } from "./lib/appearance";
@@ -1321,7 +1325,7 @@ const render = (): void => {
   decorateStableFocusKeys();
   applyBilingualSemantics(app);
   const accountSetupForm = app.querySelector<HTMLFormElement>('[data-form="account-setup"]');
-  if (accountSetupForm) syncAccountAuthenticationMode(accountSetupForm);
+  if (accountSetupForm) syncIncomingProtocolMode(accountSetupForm, false);
   for (const [selector, testId] of [
     [".settings-grid", "settings-controls"],
     ['[data-form="compose"]', "compose-form"],
@@ -2209,19 +2213,22 @@ function renderReaderPane(): string {
   </article>`;
 }
 
-const connectionEndpointName = (endpoint: ConnectionDiagnostic["endpoint"]): { english: string; cantonese: string } => endpoint === "incoming"
-  ? { english: "Incoming IMAP", cantonese: "收取 IMAP" }
+const connectionEndpointName = (endpoint: ConnectionDiagnostic["endpoint"], incomingProtocol: AccountDraft["incomingProtocol"] = "imap"): { english: string; cantonese: string } => endpoint === "incoming"
+  ? incomingProtocol === "pop3"
+    ? { english: "Incoming POP3", cantonese: "收取 POP3" }
+    : { english: "Incoming IMAP", cantonese: "收取 IMAP" }
   : { english: "Outgoing SMTP", cantonese: "寄出 SMTP" };
 
 const connectionDiagnosticCopy = (
   diagnostic: ConnectionDiagnostic,
   settings: MailConnectionSettings,
 ): { englishTitle: string; cantoneseTitle: string; englishBody: string; cantoneseBody: string } => {
-  const endpoint = connectionEndpointName(diagnostic.endpoint);
+  const incomingProtocol = settings.incomingProtocol ?? "imap";
+  const endpoint = connectionEndpointName(diagnostic.endpoint, incomingProtocol);
   const server = settings[diagnostic.endpoint];
-  const implicitPort = diagnostic.endpoint === "incoming" ? 993 : 465;
-  const starttlsPorts = diagnostic.endpoint === "incoming" ? "143" : "25, 587, or 2525";
-  const starttlsPortsYue = diagnostic.endpoint === "incoming" ? "143" : "25、587 或 2525";
+  const implicitPort = diagnostic.endpoint === "incoming" ? incomingProtocol === "pop3" ? 995 : 993 : 465;
+  const starttlsPorts = diagnostic.endpoint === "incoming" ? incomingProtocol === "pop3" ? "110" : "143" : "25, 587, or 2525";
+  const starttlsPortsYue = diagnostic.endpoint === "incoming" ? incomingProtocol === "pop3" ? "110" : "143" : "25、587 或 2525";
   const title = (english: string, cantonese: string) => ({
     englishTitle: `${endpoint.english}: ${english}`,
     cantoneseTitle: `${endpoint.cantonese}：${cantonese}`,
@@ -2293,7 +2300,9 @@ const renderConnectionDiagnosticItems = (
     const copy = connectionDiagnosticCopy(diagnostic, settings);
     return `<li class="connection-diagnostic connection-diagnostic--${diagnostic.severity}" data-connection-diagnostic="${diagnostic.code}">${icon(diagnostic.severity === "error" ? "error" : "warning")}<span><strong>${escapeHtml(tx(copy.englishTitle, copy.cantoneseTitle))}</strong><span>${escapeHtml(tx(copy.englishBody, copy.cantoneseBody))}</span></span></li>`;
   }).join("")}</ul>`
-  : `<p class="connection-preflight__ready">${icon("check")}<span>${escapeHtml(tx("No local hostname or conventional TLS/port conflict detected. A real connection test is still required.", "本機未發現主機名或者常用 TLS／連接埠衝突；仍然需要真正連線測試。"))}</span></p>`;
+  : `<p class="connection-preflight__ready">${icon("check")}<span>${escapeHtml(settings.incomingProtocol === "pop3"
+    ? tx("No local hostname or conventional POP3 TLS/port conflict detected. Live POP3 testing remains unavailable; use the local demo only.", "本機未發現主機名或者常用 POP3 TLS／連接埠衝突。即時 POP3 測試仍然不可用；只可使用本機示範。")
+    : tx("No local hostname or conventional TLS/port conflict detected. A real connection test is still required.", "本機未發現主機名或者常用 TLS／連接埠衝突；仍然需要真正連線測試。"))}</span></p>`;
 
 const tlsAuthorizationIssueLabel = (issue: TlsCertificateAuthorizationIssue | null): string => {
   switch (issue) {
@@ -2419,6 +2428,20 @@ const renderOAuthAuthorizationPanel = (): string => {
   </section>`;
 };
 
+const renderPop3FoundationPanel = (): string => `<section class="pop3-foundation" data-testid="pop3-foundation" data-pop3-panel hidden tabindex="-1" aria-labelledby="pop3-foundation-title" aria-describedby="pop3-foundation-boundary">
+  <header><span class="settings-card__icon">${icon("download")}</span><div><h3 id="pop3-foundation-title">${escapeHtml(tx("POP3 local foundation", "POP3 本機地基"))}</h3><p>${escapeHtml(tx("Deterministic fixture transport; live POP3 remains off", "固定道具傳輸；即時 POP3 仍然關閉"))}</p></div></header>
+  <div class="form-grid pop3-foundation__options">
+    <label class="field"><span>${escapeHtml(tx("Transport", "傳輸"))}</span><select name="pop3Transport" aria-describedby="pop3-foundation-boundary"><option value="local-demo">${escapeHtml(tx("Local demo · no network", "本機示範 · 冇網絡"))}</option><option value="live-network" disabled>${escapeHtml(tx("Live network · unavailable", "即時網絡 · 不可用"))}</option></select></label>
+    <label class="field"><span>${escapeHtml(tx("Messages per demo check", "每次示範檢查郵件數"))}</span><input type="number" name="pop3MessageLimit" value="3" min="${POP3_MESSAGE_LIMIT_MIN}" max="${POP3_MESSAGE_LIMIT_MAX}" step="1" inputmode="numeric" aria-describedby="pop3-message-limit-help"/><small id="pop3-message-limit-help">${escapeHtml(tx(`Bounded from ${POP3_MESSAGE_LIMIT_MIN} through ${POP3_MESSAGE_LIMIT_MAX}. The bundled fixture currently contains three messages.`, `上限由 ${POP3_MESSAGE_LIMIT_MIN} 至 ${POP3_MESSAGE_LIMIT_MAX}。內置道具目前有三封郵件。`))}</small></label>
+    <label class="field"><span>${escapeHtml(tx("Retrieval mode", "收取模式"))}</span><select name="pop3RetrievalMode"><option value="new-only">${escapeHtml(tx("New fixture messages only", "只收新道具郵件"))}</option></select></label>
+    <label class="toggle-row pop3-foundation__leave"><input type="checkbox" name="pop3LeaveOnServer" checked disabled aria-describedby="pop3-deletion-boundary"/><span>${escapeHtml(tx("Leave messages on server (required)", "郵件保留喺伺服器（必須）"))}</span></label>
+  </div>
+  <p class="pop3-foundation__boundary" id="pop3-foundation-boundary">${icon("info")}<span>${escapeHtml(tx("The demo ignores the entered host, username, and password. It opens no socket, performs no TLS handshake, sends no credential, and saves no account.", "示範會忽略輸入嘅主機、使用者名稱同密碼。佢唔會開 socket、唔會做 TLS 握手、唔會傳送憑證，亦唔會儲存帳戶。"))}</span></p>
+  <p class="pop3-foundation__boundary" id="pop3-deletion-boundary">${icon("warning")}<span>${escapeHtml(tx("DELE, server deletion, folder mapping, outgoing delivery, polling, persistence, and full synchronization are not implemented. The local result cannot prove provider interoperability.", "DELE、伺服器刪除、資料夾對應、寄出郵件、輪詢、持久儲存同完整同步全部未有實作。本機結果唔可以證明供應商互通性。"))}</span></p>
+  <div class="button-row"><button class="button button--tonal" type="button" data-action="run-pop3-foundation" data-testid="run-pop3-foundation">${icon("forward")}<span>${escapeHtml(tx("Run local POP3 demo", "運行本機 POP3 示範"))}</span></button></div>
+  <div class="pop3-foundation__result" data-testid="pop3-foundation-result" data-pop3-result role="status" aria-live="polite" aria-atomic="true"><p>${icon("info")}<span>${escapeHtml(tx("Ready. Running this demo will not contact the configured server.", "準備好。運行呢個示範唔會聯絡已設定嘅伺服器。"))}</span></p></div>
+</section>`;
+
 function renderAccountSetup(): string {
   const discovery = state.selectedDiscovery;
   const incoming = discovery?.incoming ?? { host: "", port: 993, security: "tls" as const, username: state.setupEmail };
@@ -2446,8 +2469,10 @@ function renderAccountSetup(): string {
           </div>
           ${state.discoveries.length ? `<fieldset class="discovery-results"><legend>${escapeHtml(tx("Discovered configurations", "探索到嘅設定"))}</legend>${state.discoveries.map((candidate, index) => `<label class="discovery-option"><input type="radio" name="discovery" value="${index}" ${candidate === discovery ? "checked" : ""} data-discovery-index="${index}"/><span><strong>${escapeHtml(candidate.source === "dns-srv" ? tx("Provider DNS records", "供應商 DNS 記錄") : candidate.source === "provider-preset" ? tx("Known provider preset", "已知供應商預設") : tx("Conventional settings", "常用設定"))}</strong><small>${escapeHtml(candidate.incoming.host)}:${candidate.incoming.port} · ${escapeHtml(candidate.outgoing.host)}:${candidate.outgoing.port}</small></span></label>`).join("")}</fieldset>` : ""}
           <label class="field"><span>${escapeHtml(tx("Your name", "你嘅名稱"))}</span><input type="text" name="displayName" value="${escapeHtml(discovery?.displayName || emailName)}" required maxlength="120" autocomplete="name" placeholder="Alex Wong" /></label>
+          <label class="field"><span>${escapeHtml(tx("Incoming protocol", "收取協定"))}</span><select name="incomingProtocol" aria-describedby="incoming-protocol-boundary"><option value="imap">IMAP · ${escapeHtml(tx("live account path", "即時帳戶路徑"))}</option><option value="pop3">POP3 · ${escapeHtml(tx("local foundation only", "只限本機地基"))}</option></select></label>
+          <p class="supporting-copy" id="incoming-protocol-boundary"><span data-incoming-protocol-copy="imap">${escapeHtml(tx("IMAP can use the reviewed account test and save path below. Choose POP3 only to inspect its local bounded foundation; live POP3 is not connected.", "IMAP 可以使用下面經審閱嘅帳戶測試同儲存路徑。選擇 POP3 只會檢查本機有界地基；即時 POP3 未有接駁。"))}</span><span data-incoming-protocol-copy="pop3" hidden>${escapeHtml(tx("POP3 configuration is validated locally, but Test settings, Connect account, incoming certificate inspection, credentials, deletion, and synchronization stay disabled. Run the local demo instead.", "POP3 設定會喺本機驗證，但「測試設定」、「連接帳戶」、收取證書檢查、憑證、刪除同同步全部保持停用。請改為運行本機示範。"))}</span></p>
           <div class="server-card">
-            <div class="server-card__title"><span>${icon("download")}</span><div><h3>${escapeHtml(tx("Incoming mail · IMAP", "收取郵件 · IMAP"))}</h3><p>${escapeHtml(tx("Messages and folders", "郵件同資料夾"))}</p></div></div>
+            <div class="server-card__title"><span>${icon("download")}</span><div><h3><span data-incoming-protocol-heading="imap">${escapeHtml(tx("Incoming mail · IMAP", "收取郵件 · IMAP"))}</span><span data-incoming-protocol-heading="pop3" hidden>${escapeHtml(tx("Incoming mail · POP3 configuration", "收取郵件 · POP3 設定"))}</span></h3><p><span data-incoming-protocol-subtitle="imap">${escapeHtml(tx("Messages and folders", "郵件同資料夾"))}</span><span data-incoming-protocol-subtitle="pop3" hidden>${escapeHtml(tx("Local validation and demo only", "只限本機驗證同示範"))}</span></p></div></div>
             <div class="server-grid">
               <label class="field field--wide"><span>${escapeHtml(tx("Host", "主機"))}</span><input type="text" name="incomingHost" value="${escapeHtml(incoming.host)}" required maxlength="255" autocomplete="off" placeholder="imap.example.com" aria-describedby="connection-preflight-description connection-preflight-list" /></label>
               <label class="field"><span>${escapeHtml(tx("Port", "連接埠"))}</span><input type="number" name="incomingPort" value="${incoming.port}" required min="1" max="65535" inputmode="numeric" aria-describedby="connection-preflight-description connection-preflight-list" /></label>
@@ -2455,6 +2480,7 @@ function renderAccountSetup(): string {
               <label class="field field--wide"><span>${escapeHtml(tx("Username", "使用者名稱"))}</span><input type="text" name="incomingUsername" value="${escapeHtml(incoming.username)}" required maxlength="320" autocomplete="username" /></label>
             </div>
           </div>
+          ${renderPop3FoundationPanel()}
           <div class="server-card">
             <div class="server-card__title"><span>${icon("send")}</span><div><h3>${escapeHtml(tx("Outgoing mail · SMTP", "寄出郵件 · SMTP"))}</h3><p>${escapeHtml(tx("Delivery and authentication", "傳送同驗證"))}</p></div></div>
             <div class="server-grid">
@@ -2470,7 +2496,7 @@ function renderAccountSetup(): string {
           </div>
           <p id="authentication-boundary" class="supporting-copy">${escapeHtml(tx("Password mode can test and save an encrypted password. OAuth mode cannot accept a pasted token and cannot connect an account in this build.", "密碼模式可以測試同加密儲存密碼。OAuth 模式喺呢個版本唔接受貼上權杖，亦唔可以連接帳戶。"))}</p>
           ${renderOAuthAuthorizationPanel()}
-          ${renderConnectionPreflight({ incoming, outgoing })}
+          ${renderConnectionPreflight({ incomingProtocol: "imap", incoming, outgoing })}
           <p class="security-disclosure">${icon("info")}<span>${escapeHtml(tx("Required TLS never falls back to plain text. Password testing contacts the named mail servers; adding saves the encrypted password only after both checks succeed. OAuth foundation actions never test mail or save a token.", "必須使用 TLS 時絕對唔會降級到純文字。密碼測試會聯絡指定郵件伺服器；兩邊檢查成功之後先會加密儲存密碼。OAuth 地基操作唔會測試郵件或者儲存權杖。"))}</span></p>
           <footer class="setup-actions">
             ${state.setupContext === "settings" ? `<button class="button button--text" type="button" data-action="close-account-setup">${escapeHtml(tx("Cancel", "取消"))}</button>` : ""}
@@ -2502,7 +2528,7 @@ function renderSettingsPage(): string {
   const sections = [
     settingSectionMatches("appearance theme light dark system density compact comfortable relaxed accent color font family size weight") ? renderAppearanceSettings(prefs) : "",
     settingSectionMatches("language English Cantonese bilingual funny humour voice narrator warning error dim sum startup") ? renderLanguageSettings(prefs) : "",
-    settingSectionMatches("accounts email IMAP SMTP server remove add credentials") ? renderAccountSettings() : "",
+    settingSectionMatches("accounts email IMAP POP3 SMTP server local demo capability state machine remove add credentials") ? renderAccountSettings() : "",
     settingSectionMatches("external editor Visual Studio Code Cursor Notepad detect open") ? renderEditorSettings(prefs) : "",
     settingSectionMatches("tabs pin reorder overflow search restore appearance") ? renderTabSettings() : "",
   ].filter(Boolean);
@@ -3189,18 +3215,55 @@ const captureComposer = (): void => {
 const syncAccountAuthenticationMode = (form: HTMLFormElement): void => {
   const authMode = form.elements.namedItem("authMode");
   const password = form.elements.namedItem("secret");
+  const incomingProtocol = form.elements.namedItem("incomingProtocol");
+  const pop3Mode = incomingProtocol instanceof HTMLSelectElement && incomingProtocol.value === "pop3";
   const oauthMode = authMode instanceof HTMLSelectElement && authMode.value === "oauth2";
   const passwordField = form.querySelector<HTMLElement>("[data-password-credential]");
   const oauthPanel = form.querySelector<HTMLElement>("[data-oauth-panel]");
-  if (passwordField) passwordField.hidden = oauthMode;
+  const pop3Panel = form.querySelector<HTMLElement>("[data-pop3-panel]");
+  if (authMode instanceof HTMLSelectElement) authMode.disabled = pop3Mode;
+  if (passwordField) passwordField.hidden = oauthMode || pop3Mode;
   if (password instanceof HTMLInputElement) {
-    password.required = !oauthMode;
-    if (oauthMode) password.value = "";
+    password.required = !oauthMode && !pop3Mode;
+    password.disabled = pop3Mode;
+    if (oauthMode || pop3Mode) password.value = "";
   }
-  if (oauthPanel) oauthPanel.hidden = !oauthMode;
+  if (oauthPanel) oauthPanel.hidden = !oauthMode || pop3Mode;
+  if (pop3Panel) pop3Panel.hidden = !pop3Mode;
   for (const submit of form.querySelectorAll<HTMLButtonElement>("[data-account-submit]")) {
-    submit.disabled = oauthMode || isBusy("account-test") || isBusy("account-add");
+    submit.disabled = oauthMode || pop3Mode || isBusy("account-test") || isBusy("account-add");
   }
+};
+
+const syncIncomingProtocolMode = (form: HTMLFormElement, adjustConventionalPort = true): void => {
+  const protocol = form.elements.namedItem("incomingProtocol");
+  if (!(protocol instanceof HTMLSelectElement)) return;
+  const pop3Mode = protocol.value === "pop3";
+  const authMode = form.elements.namedItem("authMode");
+  if (pop3Mode && authMode instanceof HTMLSelectElement) authMode.value = "password";
+  for (const element of form.querySelectorAll<HTMLElement>("[data-incoming-protocol-heading], [data-incoming-protocol-subtitle], [data-incoming-protocol-copy]")) {
+    const target = element.dataset.incomingProtocolHeading ?? element.dataset.incomingProtocolSubtitle ?? element.dataset.incomingProtocolCopy;
+    element.hidden = target !== (pop3Mode ? "pop3" : "imap");
+  }
+  const port = form.elements.namedItem("incomingPort");
+  if (adjustConventionalPort && port instanceof HTMLInputElement) {
+    if (pop3Mode && port.value === "993") port.value = "995";
+    if (!pop3Mode && port.value === "995") port.value = "993";
+  }
+  const host = form.elements.namedItem("incomingHost");
+  if (host instanceof HTMLInputElement) host.placeholder = pop3Mode ? "pop.example.com" : "imap.example.com";
+  const incomingInspection = form.querySelector<HTMLButtonElement>('[data-tls-endpoint="incoming"]');
+  if (incomingInspection) {
+    incomingInspection.disabled = pop3Mode;
+    if (pop3Mode) incomingInspection.setAttribute("aria-describedby", "incoming-protocol-boundary");
+    else incomingInspection.removeAttribute("aria-describedby");
+  }
+  if (pop3Mode) {
+    const incomingResult = form.querySelector<HTMLElement>('[data-tls-inspection-result="incoming"]');
+    if (incomingResult) incomingResult.replaceChildren();
+  }
+  syncAccountAuthenticationMode(form);
+  updateConnectionPreflight(form);
 };
 
 const updateOAuthAuthorizationPanel = (focusKey?: "oauth-start" | "oauth-cancel"): void => {
@@ -3314,11 +3377,13 @@ const accountDraftFromForm = (form: HTMLFormElement): AccountDraft => {
   const incomingSecurity = String(data.get("incomingSecurity"));
   const outgoingSecurity = String(data.get("outgoingSecurity"));
   const authMode = String(data.get("authMode"));
+  const incomingProtocol = String(data.get("incomingProtocol"));
   if (!new Set(["tls", "starttls", "plain"]).has(incomingSecurity) || !new Set(["tls", "starttls", "plain"]).has(outgoingSecurity)) {
     throw new Error("Choose a valid server security mode.");
   }
   if (authMode !== "password" && authMode !== "oauth2") throw new Error("Choose a valid authentication mode.");
-  return {
+  if (incomingProtocol !== "imap" && incomingProtocol !== "pop3") throw new Error("Choose IMAP or POP3 as the incoming protocol.");
+  const base = {
     displayName: String(data.get("displayName") ?? "").trim(),
     email: String(data.get("email") ?? "").trim(),
     incoming: {
@@ -3333,9 +3398,24 @@ const accountDraftFromForm = (form: HTMLFormElement): AccountDraft => {
       security: outgoingSecurity as AccountDraft["outgoing"]["security"],
       username: String(data.get("outgoingUsername") ?? "").trim(),
     },
-    authMode,
+    authMode: authMode as AccountDraft["authMode"],
     secret: String(data.get("secret") ?? ""),
   };
+  if (incomingProtocol === "imap") return { ...base, incomingProtocol };
+  return { ...base, incomingProtocol, pop3: pop3OptionsFromForm(form) };
+};
+
+const pop3OptionsFromForm = (form: HTMLFormElement): Pop3AccountOptions => {
+  const data = new FormData(form);
+  const transport = String(data.get("pop3Transport"));
+  const retrievalMode = String(data.get("pop3RetrievalMode"));
+  const messageLimit = Number(data.get("pop3MessageLimit"));
+  if (transport !== "local-demo" && transport !== "live-network") throw new Error("Choose a valid POP3 transport boundary.");
+  if (retrievalMode !== "new-only") throw new Error("Choose the supported new-messages-only POP3 retrieval mode.");
+  if (!Number.isInteger(messageLimit) || messageLimit < POP3_MESSAGE_LIMIT_MIN || messageLimit > POP3_MESSAGE_LIMIT_MAX) {
+    throw new Error(`POP3 demo message limit must be a whole number from ${POP3_MESSAGE_LIMIT_MIN} through ${POP3_MESSAGE_LIMIT_MAX}.`);
+  }
+  return { transport, retrievalMode, leaveOnServer: true, messageLimit };
 };
 
 const CONNECTION_PREFLIGHT_FIELD_NAMES = new Set([
@@ -3354,6 +3434,7 @@ const connectionSettingsFromForm = (form: HTMLFormElement): MailConnectionSettin
     return candidate === "tls" || candidate === "starttls" || candidate === "plain" ? candidate : "plain";
   };
   return {
+    incomingProtocol: String(data.get("incomingProtocol")) === "pop3" ? "pop3" : "imap",
     incoming: {
       host: String(data.get("incomingHost") ?? "").trim(),
       port: Number(data.get("incomingPort")),
@@ -3469,7 +3550,79 @@ const inspectTlsCertificateFromSetup = async (button: HTMLElement): Promise<void
   }
 };
 
+const renderPop3FoundationResult = (snapshot: Pop3FoundationSnapshot): string => {
+  if (snapshot.boundary === "live-network-unsupported") {
+    return `<div class="pop3-foundation__summary pop3-foundation__summary--warning">${icon("warning")}<div><strong>${escapeHtml(tx("Live POP3 stopped before transport", "即時 POP3 喺傳輸之前已停止"))}</strong><p>${escapeHtml(tx("The state machine entered unsupported without opening a socket, using a credential, changing server mail, or saving an account.", "狀態機進入「不支援」，冇開 socket、冇使用憑證、冇改動伺服器郵件，亦冇儲存帳戶。"))}</p></div></div>`;
+  }
+  const available = snapshot.capabilities.filter(capability => capability.available).map(capability => capability.name).join(", ") || tx("none", "冇");
+  const unavailable = snapshot.capabilities.filter(capability => !capability.available).map(capability => capability.name).join(", ") || tx("none", "冇");
+  const trace = snapshot.transitions.map(item => `${item.sequence}. ${item.from} —${item.event}→ ${item.to}`).join("\n");
+  return `<div class="pop3-foundation__summary">${icon("check")}<div><strong>${escapeHtml(tx("Local POP3 demo completed", "本機 POP3 示範完成"))}</strong><p>${escapeHtml(tx(`${snapshot.messages.length} deterministic fixture message${snapshot.messages.length === 1 ? "" : "s"} reached the disconnected state.`, `${snapshot.messages.length} 封固定道具郵件完成並進入 disconnected 狀態。`))}</p></div></div>
+    <dl class="pop3-foundation__facts"><div><dt>${escapeHtml(tx("Available in demo", "示範可用"))}</dt><dd>${escapeHtml(available)}</dd></div><div><dt>${escapeHtml(tx("Unavailable", "不可用"))}</dt><dd>${escapeHtml(unavailable)}</dd></div><div><dt>${escapeHtml(tx("Server contacted", "已聯絡伺服器"))}</dt><dd>${escapeHtml(tx("No", "冇"))}</dd></div><div><dt>${escapeHtml(tx("Credential used", "已使用憑證"))}</dt><dd>${escapeHtml(tx("No", "冇"))}</dd></div><div><dt>DELE</dt><dd>${escapeHtml(tx("Not attempted", "未有嘗試"))}</dd></div><div><dt>${escapeHtml(tx("Full synchronization", "完整同步"))}</dt><dd>${escapeHtml(tx("Not provided", "未有提供"))}</dd></div></dl>
+    <details><summary>${escapeHtml(tx("Deterministic transition trace", "固定狀態轉移記錄"))}</summary><pre><code>${escapeHtml(trace)}</code></pre></details>
+    <ol class="pop3-foundation__messages" aria-label="${escapeHtml(tx("Local POP3 fixture messages", "本機 POP3 道具郵件"))}">${snapshot.messages.map(message => `<li><strong>${escapeHtml(message.subject)}</strong><span><code>${escapeHtml(message.uidl)}</code> · ${message.octets} ${escapeHtml(tx("octets", "八位元組"))}</span></li>`).join("")}</ol>
+    <p class="pop3-foundation__boundary">${icon("info")}<span>${escapeHtml(tx("This proves only local validation, capability reporting, bounded retrieval, and transition ordering. It does not prove a provider login, server retention, deletion semantics, polling, folders, or complete synchronization.", "呢個結果只證明本機驗證、能力報告、有界收取同狀態次序。佢唔證明供應商登入、伺服器保留、刪除語義、輪詢、資料夾或者完整同步。"))}</span></p>`;
+};
+
+const runPop3FoundationFromSetup = async (button: HTMLButtonElement): Promise<void> => {
+  const form = button.closest<HTMLFormElement>('[data-form="account-setup"]');
+  const result = form?.querySelector<HTMLElement>("[data-pop3-result]");
+  if (!form || !result || button.getAttribute("aria-busy") === "true") return;
+  let options: Pop3AccountOptions;
+  try {
+    options = pop3OptionsFromForm(form);
+  } catch (error) {
+    result.setAttribute("role", "alert");
+    result.innerHTML = `<p>${icon("error")}<span>${escapeHtml(tx(errorMessage(error), `POP3 選項無效：${errorMessage(error)}`))}</span></p>`;
+    applyBilingualSemantics(result);
+    return;
+  }
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.innerHTML = `${icon("refresh", "is-spinning")}<span>${escapeHtml(tx("Running local demo…", "運行緊本機示範……"))}</span>`;
+  result.setAttribute("role", "status");
+  result.setAttribute("aria-busy", "true");
+  result.innerHTML = `<p>${icon("refresh", "is-spinning")}<span>${escapeHtml(tx("Advancing the in-memory POP3 state machine. No network connection is opening.", "推進緊記憶體內 POP3 狀態機。唔會開啟任何網絡連線。"))}</span></p>`;
+  applyBilingualSemantics(form);
+  try {
+    const snapshot = await api.runPop3Foundation(options);
+    result.setAttribute("role", snapshot.boundary === "live-network-unsupported" ? "alert" : "status");
+    result.innerHTML = renderPop3FoundationResult(snapshot);
+    applyBilingualSemantics(result);
+    pushToast(
+      snapshot.boundary === "local-demo-only" ? "success" : "warning",
+      snapshot.boundary === "local-demo-only" ? "Local POP3 demo completed" : "Live POP3 remains unavailable",
+      snapshot.boundary === "local-demo-only" ? "The deterministic fixture completed without network, credentials, deletion, persistence, or full synchronization." : "The request stopped before transport; no server was contacted.",
+      snapshot.boundary === "local-demo-only" ? "本機 POP3 示範完成" : "即時 POP3 仍然不可用",
+      snapshot.boundary === "local-demo-only" ? "固定道具已完成；冇網絡、憑證、刪除、持久儲存或者完整同步。" : "要求喺傳輸之前已停止；冇聯絡任何伺服器。",
+    );
+  } catch (error) {
+    result.setAttribute("role", "alert");
+    result.innerHTML = `<p>${icon("error")}<span>${escapeHtml(tx("The local POP3 demo could not complete.", "本機 POP3 示範未能完成。"))} ${escapeHtml(errorMessage(error))}</span></p>`;
+    applyBilingualSemantics(result);
+  } finally {
+    result.setAttribute("aria-busy", "false");
+    button.removeAttribute("aria-busy");
+    button.disabled = false;
+    button.innerHTML = original;
+    applyBilingualSemantics(button);
+  }
+};
+
 const handleAccountSubmit = async (form: HTMLFormElement, mode: "test" | "add"): Promise<void> => {
+  const incomingProtocol = form.elements.namedItem("incomingProtocol");
+  if (incomingProtocol instanceof HTMLSelectElement && incomingProtocol.value === "pop3") {
+    pushToast(
+      "warning",
+      "Live POP3 account actions are unavailable",
+      "Use the local POP3 demo. No server was contacted, no credential was sent, no account was saved, and deletion or full synchronization is not claimed.",
+      "即時 POP3 帳戶操作不可用",
+      "請使用本機 POP3 示範。冇聯絡伺服器、冇傳送憑證、冇儲存帳戶，亦唔會聲稱已有刪除或者完整同步。",
+    );
+    form.querySelector<HTMLElement>("[data-pop3-panel]")?.focus({ preventScroll: false });
+    return;
+  }
   const authMode = form.elements.namedItem("authMode");
   if (authMode instanceof HTMLSelectElement && authMode.value === "oauth2") {
     pushToast(
@@ -4978,6 +5131,9 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "start-oauth-authorization": await startOAuthAuthorizationFromSetup(); break;
     case "cancel-oauth-authorization": await cancelOAuthAuthorizationFromSetup(); break;
     case "inspect-tls-certificate": await inspectTlsCertificateFromSetup(button); break;
+    case "run-pop3-foundation":
+      if (button instanceof HTMLButtonElement) await runPop3FoundationFromSetup(button);
+      break;
     case "create-demo":
       await withBusy("create-demo", async () => {
         if (oauthAuthorizationIsActive()) await cancelOAuthAuthorizationFromSetup();
@@ -5138,6 +5294,10 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
   if (control.closest('[data-testid="pim-editor"]') && control.name) updatePimEditorDirty();
   const accountSetupForm = control.closest<HTMLFormElement>('[data-form="account-setup"]');
   if (accountSetupForm && CONNECTION_PREFLIGHT_FIELD_NAMES.has(control.name)) updateConnectionPreflight(accountSetupForm);
+  if (accountSetupForm && control.name === "incomingProtocol") {
+    syncIncomingProtocolMode(accountSetupForm);
+    return;
+  }
   if (accountSetupForm && control.name === "authMode") {
     syncAccountAuthenticationMode(accountSetupForm);
     if (control.value === "oauth2") await refreshOAuthAuthorizationStatus().catch(() => undefined);

@@ -63,6 +63,17 @@ describe("local mail connection diagnostics", () => {
     }
   });
 
+  it("uses POP3 ports only when the incoming protocol is explicitly POP3", () => {
+    const pop3 = { ...validSettings(), incomingProtocol: "pop3" as const, incoming: { ...validSettings().incoming, host: "pop.example.test", port: 995 } };
+    expect(diagnoseMailConnection(pop3)).toEqual([]);
+    expect(diagnoseMailConnection({ ...pop3, incoming: { ...pop3.incoming, port: 110 } })).toContainEqual(
+      expect.objectContaining({ endpoint: "incoming", code: "implicit-tls-on-starttls-port", severity: "error" }),
+    );
+    expect(diagnoseMailConnection({ ...pop3, incoming: { ...pop3.incoming, port: 995, security: "starttls" } })).toContainEqual(
+      expect.objectContaining({ endpoint: "incoming", code: "starttls-on-implicit-tls-port", severity: "error" }),
+    );
+  });
+
   it("keeps custom secure ports advisory and always warns about explicit plain transport", () => {
     expect(diagnoseServerConnection("incoming", { ...validSettings().incoming, port: 1_993 })).toEqual([
       { endpoint: "incoming", field: "port", code: "nonstandard-secure-port", severity: "warning" },
