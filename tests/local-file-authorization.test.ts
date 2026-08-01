@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -25,9 +25,10 @@ describe("local file authorization", () => {
     await writeFile(arbitraryPath, "not approved", "utf8");
     const authorization = new AttachmentAuthorization();
     const [selected] = await authorization.approveDialogSelection([approvedPath]);
+    const selectedRealPath = await realpath(selected!);
 
     await expect(authorization.authorizeDraft(draft([selected!]), undefined, { requireExistingFiles: true })).resolves.toEqual(
-      expect.objectContaining({ attachments: [selected] }),
+      expect.objectContaining({ attachments: [selectedRealPath] }),
     );
     await expect(authorization.authorizeDraft(draft([arbitraryPath]), undefined, { requireExistingFiles: true })).rejects.toThrow(
       "not approved",
@@ -40,10 +41,11 @@ describe("local file authorization", () => {
     await writeFile(approvedPath, "persisted", "utf8");
     const authorizationAfterRestart = new AttachmentAuthorization();
     const persisted = draft([approvedPath]);
+    const approvedRealPath = await realpath(approvedPath);
 
     await expect(
       authorizationAfterRestart.authorizeDraft(draft([approvedPath]), persisted, { requireExistingFiles: true }),
-    ).resolves.toEqual(expect.objectContaining({ attachments: [approvedPath] }));
+    ).resolves.toEqual(expect.objectContaining({ attachments: [approvedRealPath] }));
     await expect(
       authorizationAfterRestart.authorizeDraft(draft([approvedPath], "different-draft"), persisted, { requireExistingFiles: true }),
     ).rejects.toThrow("not approved");
@@ -57,8 +59,9 @@ describe("local file authorization", () => {
     await writeFile(executable, Buffer.from("MZfixture"));
     await writeFile(fakeExecutable, "not an executable", "utf8");
     await writeFile(wrongExtension, Buffer.from("MZfixture"));
+    const executableRealPath = await realpath(executable);
 
-    await expect(inspectEditorExecutable(executable)).resolves.toBe(executable);
+    await expect(inspectEditorExecutable(executable)).resolves.toBe(executableRealPath);
     await expect(inspectEditorExecutable(fakeExecutable)).rejects.toThrow("signature");
     await expect(inspectEditorExecutable(wrongExtension)).rejects.toThrow(".exe");
   });
