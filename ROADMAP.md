@@ -54,9 +54,10 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Give command-palette search its own plain-text-first model, adjacent anchored regex builder, invalid-pattern execution guard, and focused real-Electron proof
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
 - [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 51 files / 271 tests on the current tree; focused local-iCalendar and changelog-calendar controls each passed 1 / 1 real-Electron scenario, and focused History passed 2 / 2; broader evidence remains listed in `HANDOFF.md`)
+- [x] Keep the expanded tab appearance editor and History/Changelog date pickers collision-contained with preserved focus and reduced-motion timing at 760 × 560 plus smaller effective CSS viewport stress sizes, covered by 2 / 2 real-Electron scenarios; native Windows display scaling remains open
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 51 files / 273 tests on the current tree; focused responsive/accessibility passed 2 / 2 real-Electron scenarios, the corrected computed-style appearance workflow passed 1 / 1, and broader evidence remains listed in `HANDOFF.md`)
 - [ ] Exercise every user-visible path in a packaged Electron session
-- [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling matrices (the primary workspace-tab Arrow/Home/End slice alone is verified)
+- [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% native Windows scaling matrices (workspace-tab navigation and the focused appearance/date-picker effective-viewport slice are verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
 - [ ] Verify plain-text and regex search from every search surface, including invalid, Unicode, multiline, capture, zero-width, and adversarial cases (the command-palette literal/invalid/activation slice is verified)
 - [ ] Test a real IMAP/SMTP account without exposing credentials or private messages in evidence

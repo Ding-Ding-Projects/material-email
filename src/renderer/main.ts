@@ -1401,6 +1401,8 @@ const render = (): void => {
   applyBilingualSemantics(app);
   const accountSetupForm = app.querySelector<HTMLFormElement>('[data-form="account-setup"]');
   if (accountSetupForm) syncIncomingProtocolMode(accountSetupForm, false);
+  applyCspSafeDynamicStyles();
+  positionAnchoredSurfaces();
   for (const [selector, testId] of [
     [".settings-grid", "settings-controls"],
     ['[data-form="compose"]', "compose-form"],
@@ -1546,24 +1548,11 @@ function renderTabStrip(): string {
   </div>`;
 }
 
-function tabStyleAttribute(id: PageId): string {
-  const style = state.tabPreferences.styles[id];
-  if (!style) return "";
-  const declarations: string[] = [];
-  if (style.accent !== undefined) declarations.push(`--tab-custom-accent:${safeColor(style.accent, "var(--primary)")}`);
-  if (style.background !== undefined) declarations.push(`--tab-custom-bg:${safeColor(style.background, "transparent")}`);
-  if (style.foreground !== undefined) declarations.push(`--tab-custom-fg:${safeColor(style.foreground, "currentColor")}`);
-  if (style.fontSize !== undefined) declarations.push(`--tab-custom-size:${style.fontSize}px`);
-  if (style.fontWeight !== undefined) declarations.push(`--tab-custom-weight:${style.fontWeight}`);
-  if (style.radius !== undefined) declarations.push(`--tab-custom-radius:${style.radius}px`);
-  return declarations.length ? ` style="${escapeHtml(declarations.join(";"))}"` : "";
-}
-
 function renderWorkspaceTab(id: PageId, pinned: boolean): string {
   const tab = tabDefinition(id);
   const selected = state.activeTab === id;
   const appearanceTarget = state.appearanceEditor?.tabId === id;
-  return `<div class="workspace-tab${selected ? " is-active" : ""}${pinned ? " is-pinned" : ""}${appearanceTarget ? " is-appearance-target" : ""}" draggable="true" data-drag-tab="${id}" data-tab-context="${id}"${tabStyleAttribute(id)}>
+  return `<div class="workspace-tab${selected ? " is-active" : ""}${pinned ? " is-pinned" : ""}${appearanceTarget ? " is-appearance-target" : ""}" draggable="true" data-drag-tab="${id}" data-tab-context="${id}">
     <button class="workspace-tab__main" type="button" role="tab" id="tab-${id}" aria-selected="${selected}" aria-controls="panel-${id}" aria-keyshortcuts="Control+Shift+E" tabindex="${selected ? "0" : "-1"}" data-action="activate-tab" data-tab-id="${id}" data-focus-key="${tabFocusKey(id)}">
       ${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span>${pinned ? `<span class="visually-hidden">${escapeHtml(tx("Pinned", "已釘選"))}</span>` : ""}
     </button>
@@ -3413,7 +3402,7 @@ function renderTabContextMenu(): string {
   if (!menu) return "";
   const tab = tabDefinition(menu.tabId);
   const pinned = state.tabPreferences.pinned.includes(tab.id);
-  return `<div class="context-menu" role="menu" style="left:${Math.max(8, menu.x)}px;top:${Math.max(8, menu.y)}px" aria-label="${escapeHtml(tx(`${tab.en} tab menu`, `${tab.yue}分頁選單`))}">
+  return `<div class="context-menu" role="menu" aria-label="${escapeHtml(tx(`${tab.en} tab menu`, `${tab.yue}分頁選單`))}">
     <button type="button" role="menuitem" data-action="toggle-tab-pin" data-tab-id="${tab.id}">${icon("pin")}<span>${escapeHtml(pinned ? tx("Unpin tab", "取消釘選分頁") : tx("Pin tab", "釘選分頁"))}</span></button>
     <button type="button" role="menuitem" data-action="move-tab-left" data-tab-id="${tab.id}">${icon("back")}<span>${escapeHtml(tx("Move left", "向左移"))}</span></button>
     <button type="button" role="menuitem" data-action="move-tab-right" data-tab-id="${tab.id}">${icon("forward")}<span>${escapeHtml(tx("Move right", "向右移"))}</span></button>
@@ -3524,9 +3513,9 @@ function renderTabAppearanceEditor(): string {
   const textContrast = tabColorContrastRatio(style.foreground, style.background);
   const accentContrast = tabColorContrastRatio(style.accent, style.background);
   const alphaEstimate = [style.accent, style.background, style.foreground].some(color => color.length === 9);
-  return `<section class="appearance-editor" data-testid="tab-appearance-editor" role="dialog" aria-modal="false" aria-labelledby="appearance-editor-title" aria-describedby="appearance-editor-note" style="left:${Math.max(12, editor.x)}px;top:${Math.max(60, editor.y)}px">
+  return `<section class="appearance-editor" data-testid="tab-appearance-editor" role="dialog" aria-modal="false" aria-labelledby="appearance-editor-title" aria-describedby="appearance-editor-note">
     <header class="popover-header"><div><p class="eyebrow">${escapeHtml(tx("ANCHORED TO TAB", "固定喺分頁旁邊"))}</p><h2 id="appearance-editor-title">${escapeHtml(tx(`Edit ${tab.en} appearance`, `編輯${tab.yue}外觀`))}</h2></div><button class="icon-button" type="button" data-action="close-tab-appearance" aria-label="${escapeHtml(tx("Close appearance editor", "關閉外觀編輯器"))}">${icon("close")}</button></header>
-    <div class="appearance-editor__preview" data-testid="tab-appearance-preview" style="--tab-preview-accent:${escapeHtml(safeColor(style.accent, "#6750A4"))};background:${escapeHtml(safeColor(style.background, "#EADDFF"))};color:${escapeHtml(safeColor(style.foreground, "#21005D"))};font-size:${Math.min(22, Math.max(11, style.fontSize))}px;font-weight:${Math.min(800, Math.max(300, style.fontWeight))};border-radius:${Math.min(28, Math.max(0, style.radius))}px">${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span></div>
+    <div class="appearance-editor__preview" data-testid="tab-appearance-preview">${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span></div>
     <section class="contrast-readout" role="status" aria-live="polite" aria-atomic="true" aria-label="${escapeHtml(tx("Tab color contrast", "分頁顏色對比"))}">
       ${renderTabContrastMetric("tab-text-contrast", tx("Text / background", "文字／背景"), textContrast, 4.5)}
       ${renderTabContrastMetric("tab-accent-contrast", tx("Accent / background", "重點色／背景"), accentContrast, 3)}
@@ -6692,6 +6681,130 @@ if (typeof api?.onExternalLinkReview === "function") {
 
 const tabFocusKey = (id: PageId): string => `workspace-tab-${id}`;
 
+const TAB_STYLE_CUSTOM_PROPERTIES = [
+  "--tab-custom-accent",
+  "--tab-custom-bg",
+  "--tab-custom-fg",
+  "--tab-custom-size",
+  "--tab-custom-weight",
+  "--tab-custom-radius",
+] as const;
+
+const applyCspSafeDynamicStyles = (): void => {
+  for (const element of app.querySelectorAll<HTMLElement>("[data-tab-context]")) {
+    for (const property of TAB_STYLE_CUSTOM_PROPERTIES) element.style.removeProperty(property);
+    const id = element.dataset.tabContext as PageId;
+    if (!ALL_TAB_IDS.includes(id)) continue;
+    const style = state.tabPreferences.styles[id];
+    if (!style) continue;
+    if (style.accent !== undefined) element.style.setProperty("--tab-custom-accent", safeColor(style.accent, "var(--primary)"));
+    if (style.background !== undefined) element.style.setProperty("--tab-custom-bg", safeColor(style.background, "transparent"));
+    if (style.foreground !== undefined) element.style.setProperty("--tab-custom-fg", safeColor(style.foreground, "currentColor"));
+    if (style.fontSize !== undefined) element.style.setProperty("--tab-custom-size", `${style.fontSize}px`);
+    if (style.fontWeight !== undefined) element.style.setProperty("--tab-custom-weight", String(style.fontWeight));
+    if (style.radius !== undefined) element.style.setProperty("--tab-custom-radius", `${style.radius}px`);
+  }
+
+  const preview = app.querySelector<HTMLElement>("[data-testid='tab-appearance-preview']");
+  const editor = state.appearanceEditor;
+  if (!preview || !editor) return;
+  const overrides = state.tabPreferences.styles[editor.tabId] ?? {};
+  const inheritedAccent = normalizeTabColor(preferences().accent) ?? "#6750A4";
+  const style = resolveTabStyle({ ...overrides, accent: overrides.accent ?? inheritedAccent });
+  preview.style.setProperty("--tab-preview-accent", safeColor(style.accent, "#6750A4"));
+  preview.style.backgroundColor = safeColor(style.background, "#EADDFF");
+  preview.style.color = safeColor(style.foreground, "#21005D");
+  preview.style.fontSize = `${Math.min(22, Math.max(11, style.fontSize))}px`;
+  preview.style.fontWeight = String(Math.min(800, Math.max(300, style.fontWeight)));
+  preview.style.borderRadius = `${Math.min(28, Math.max(0, style.radius))}px`;
+};
+
+const clampLayoutValue = (value: number, minimum: number, maximum: number): number =>
+  Math.max(minimum, Math.min(Math.max(minimum, maximum), value));
+
+const positionFixedSurface = (
+  surface: HTMLElement,
+  anchor: { left: number; top: number; bottom: number },
+  options: { leftMargin: number; rightMargin: number; topMargin: number; bottomMargin: number; width: number; gap: number },
+): void => {
+  const availableWidth = Math.max(1, window.innerWidth - options.leftMargin - options.rightMargin);
+  surface.style.setProperty("--floating-width", `${Math.min(options.width, availableWidth)}px`);
+  const availableHeight = Math.max(80, window.innerHeight - options.topMargin - options.bottomMargin);
+  surface.style.setProperty("--floating-max-height", `${availableHeight}px`);
+
+  const measured = surface.getBoundingClientRect();
+  const left = clampLayoutValue(
+    anchor.left,
+    options.leftMargin,
+    window.innerWidth - options.rightMargin - measured.width,
+  );
+  const below = anchor.bottom + options.gap;
+  const above = anchor.top - options.gap - measured.height;
+  const bottomLimit = window.innerHeight - options.bottomMargin;
+  const preferredTop = below + measured.height <= bottomLimit
+    ? below
+    : above >= options.topMargin
+      ? above
+      : clampLayoutValue(below, options.topMargin, bottomLimit - measured.height);
+  surface.style.setProperty("--floating-left", `${left}px`);
+  surface.style.setProperty("--floating-top", `${preferredTop}px`);
+};
+
+const positionAnchoredSurfaces = (): void => {
+  const appearanceEditor = app.querySelector<HTMLElement>(".appearance-editor");
+  if (appearanceEditor && state.appearanceEditor) {
+    const anchor = app.querySelector<HTMLElement>(`[data-tab-context="${CSS.escape(state.appearanceEditor.tabId)}"]`)?.getBoundingClientRect()
+      ?? { left: state.appearanceEditor.x, top: state.appearanceEditor.y, bottom: state.appearanceEditor.y };
+    const topMargin = Math.min(60, Math.max(12, window.innerHeight - 132));
+    positionFixedSurface(appearanceEditor, anchor, {
+      leftMargin: 12,
+      rightMargin: 12,
+      topMargin,
+      bottomMargin: 12,
+      width: 430,
+      gap: 8,
+    });
+  }
+
+  const contextMenu = app.querySelector<HTMLElement>(".context-menu");
+  if (contextMenu && state.contextMenu) {
+    contextMenu.style.setProperty("--floating-max-height", `${Math.max(80, window.innerHeight - 16)}px`);
+    const measured = contextMenu.getBoundingClientRect();
+    contextMenu.style.setProperty("--floating-left", `${clampLayoutValue(state.contextMenu.x, 8, window.innerWidth - 8 - measured.width)}px`);
+    contextMenu.style.setProperty("--floating-top", `${clampLayoutValue(state.contextMenu.y, 8, window.innerHeight - 8 - measured.height)}px`);
+  }
+
+  for (const [pickerSelector, triggerSelector] of [
+    ["[data-testid='history-calendar']", "[data-focus-key='history-calendar-trigger']"],
+    ["[data-testid='changelog-calendar']", "[data-focus-key='changelog-calendar-trigger']"],
+  ] as const) {
+    const picker = app.querySelector<HTMLElement>(pickerSelector);
+    const trigger = app.querySelector<HTMLElement>(triggerSelector);
+    if (!picker || !trigger) continue;
+    const leftMargin = window.innerWidth <= 760
+      ? Math.min(64, Math.max(12, window.innerWidth - 240))
+      : 12;
+    const topMargin = Math.min(60, Math.max(12, window.innerHeight - 132));
+    positionFixedSurface(picker, trigger.getBoundingClientRect(), {
+      leftMargin,
+      rightMargin: 12,
+      topMargin,
+      bottomMargin: 12,
+      width: 410,
+      gap: 8,
+    });
+  }
+};
+
+let anchoredSurfaceLayoutFrame: number | null = null;
+const queueAnchoredSurfaceLayout = (): void => {
+  if (anchoredSurfaceLayoutFrame !== null) cancelAnimationFrame(anchoredSurfaceLayoutFrame);
+  anchoredSurfaceLayoutFrame = requestAnimationFrame(() => {
+    anchoredSurfaceLayoutFrame = null;
+    positionAnchoredSurfaces();
+  });
+};
+
 const appearanceEditorPosition = (anchor: Element | null): Pick<AppearanceEditorState, "x" | "y"> => {
   const rect = anchor?.getBoundingClientRect() ?? { left: 12, bottom: 60 };
   return {
@@ -6721,5 +6834,11 @@ const closeTabContextMenu = (): void => {
   if (tabId) pendingFocusKey = tabFocusKey(tabId);
   render();
 };
+
+window.addEventListener("resize", queueAnchoredSurfaceLayout);
+app.addEventListener("scroll", queueAnchoredSurfaceLayout, true);
+const viewportResizeObserver = new ResizeObserver(queueAnchoredSurfaceLayout);
+viewportResizeObserver.observe(document.documentElement);
+window.addEventListener("unload", () => viewportResizeObserver.disconnect());
 
 void initialize();

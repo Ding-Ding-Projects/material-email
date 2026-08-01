@@ -2,7 +2,7 @@
 
 ## Status
 
-**Renderer integrated with focused Electron accessibility verification.** Dirty-state decisions, modal focus containment/return, workspace-tab roving focus, load errors, and representative bilingual semantics pass; full visual and assistive-technology matrices remain open.
+**Renderer integrated with focused Electron accessibility verification.** Dirty-state decisions, modal focus containment/return, workspace-tab roving focus, load errors, representative bilingual semantics, reduced-motion timing, and collision-safe focused popovers pass; full visual and assistive-technology matrices remain open.
 
 ## Behavior
 
@@ -29,7 +29,7 @@ Never render untrusted message markup into the application chrome. Accessibility
 
 ## Verification
 
-The previously recorded 15-scenario Electron suite covers dirty baselines, replacement and unload prevention, async editor ownership, the accessible discard decision, modal Tab/Escape containment, exact focus return, explicit PIM load-error retry, and representative bilingual language semantics at 760 × 560. A separate focused real-Electron regression passes for workspace-tab Arrow/End/Home focus, roving tabindex state, tab/tabpanel naming, and the visible inset focus rule. Full keyboard traversal, native screen-reader announcements, high-contrast mode, forced colors, 100/125/150/200% display scaling, RTL, clean-machine rendering, and Windows title-bar behavior remain open.
+The previously recorded 15-scenario Electron suite covers dirty baselines, replacement and unload prevention, async editor ownership, the accessible discard decision, modal Tab/Escape containment, exact focus return, explicit PIM load-error retry, and representative bilingual language semantics at 760 × 560. A separate focused real-Electron regression passes for workspace-tab Arrow/End/Home focus, roving tabindex state, tab/tabpanel naming, and the visible inset focus rule. Two new focused real-Electron scenarios cover the expanded tab editor plus the History and Changelog calendars at 760 × 560 and smaller effective CSS viewports: each floating surface remains inside the viewport without horizontal overflow, retains its active control during reflow, exposes its scrollable completion controls, and returns focus to its trigger. Reduced-motion emulation also proves zero transition delay and a 1 ms transition duration. The 608 × 448, 507 × 373, and 380 × 280 sizes are stress proxies only; native Windows 100/125/150/200% display scaling was not exercised. Full keyboard traversal, native screen-reader announcements, high-contrast mode, forced colors, native display scaling, RTL, clean-machine rendering, and Windows title-bar behavior remain open.
 
 ## Suggested articles
 
