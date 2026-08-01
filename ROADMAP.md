@@ -41,7 +41,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Integrate the mail/settings/history/notifications/changelog/tools renderer with the preload API
 - [x] Integrate Contacts, Mailing Lists, Calendar, Tasks, and PIM transaction history with typed preload/IPC operations
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
-- [x] Run the consolidated type, unit, integration, build, and real-Electron E2E verification on the current working tree (`npm run check`: 22 files / 96 tests; `npm run test:e2e`: 15 / 15 scenarios)
+- [x] Run the consolidated type, unit, integration, build, and real-Electron E2E verification (`npm run check`: 30 files / 143 tests on the current tree; the previously recorded Electron suite passed 15 / 15 scenarios)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run keyboard, screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling checks
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
@@ -49,7 +49,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] Test a real IMAP/SMTP account without exposing credentials or private messages in evidence
 - [x] Add focused sandbox/CSP, navigation, HTML-sanitization, and IPC-surface boundary tests
 - [ ] Expand adversarial IPC payload, malformed MIME, and phishing test matrices
-- [ ] Build the NSIS package and prove clean install, first launch, upgrade, uninstall, retained data, and artifact integrity
+- [x] Prove a strict local NSIS baseline-to-candidate upgrade with both artifact hashes, installed smoke versions, same-directory replacement, uninstall, and unchanged isolated user-data hash
+- [ ] Prove clean-machine/default-profile install, interactive first launch, upgrade, uninstall, retained data, signature posture, and artifact integrity for the exact release candidate
 
 ## Mail capabilities open
 

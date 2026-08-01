@@ -111,6 +111,60 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "release_date=$releaseDate"
           npm version $version --no-git-tag-version --allow-same-version
 
+      - name: Resolve the latest published installer as the upgrade baseline
+        id: baseline
+        shell: pwsh
+        run: |
+          $response = $null
+          $lastError = $null
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $response = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" 2>&1
+            if ($LASTEXITCODE -eq 0) { break }
+            $lastError = ($response -join " ")
+            $response = $null
+            if ($attempt -lt 3) { Start-Sleep -Seconds ([int](5 * $attempt)) }
+          }
+          if (-not $response) {
+            throw "Could not resolve the prior installer after three attempts. Last API error: $lastError"
+          }
+          $releases = @(($response -join "`n") | ConvertFrom-Json)
+          $latest = $releases | Where-Object { -not $_.draft -and -not $_.prerelease } | Select-Object -First 1
+          if (-not $latest) {
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "available=false"
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version="
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "path="
+            exit 0
+          }
+          $installerAssets = @($latest.assets | Where-Object { $_.name -match '^Material-Email-(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-Windows-x64\.exe$' })
+          if ($installerAssets.Count -ne 1) {
+            throw "Expected exactly one Windows x64 installer on prior release $($latest.tag_name), found $($installerAssets.Count)."
+          }
+          $asset = $installerAssets[0]
+          if ($asset.name -notmatch '^Material-Email-((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))-Windows-x64\.exe$') {
+            throw "Prior installer name does not carry a numeric version: $($asset.name)"
+          }
+          $baselineVersion = $Matches[1]
+          $baselineDirectory = Join-Path $env:RUNNER_TEMP "material-email-upgrade-baseline"
+          New-Item -ItemType Directory -Path $baselineDirectory -Force | Out-Null
+          $baselinePath = Join-Path $baselineDirectory $asset.name
+          $downloaded = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            gh release download $latest.tag_name --repo $env:GITHUB_REPOSITORY --pattern $asset.name --dir $baselineDirectory --clobber
+            if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $baselinePath)) {
+              $downloaded = $true
+              break
+            }
+            if ($attempt -lt 3) { Start-Sleep -Seconds ([int](5 * $attempt)) }
+          }
+          if (-not $downloaded) { throw "Could not download prior installer $($asset.name) after three attempts." }
+          $downloadedSize = (Get-Item -LiteralPath $baselinePath).Length
+          if ($downloadedSize -ne $asset.size) {
+            throw "Prior installer size mismatch: API reported $($asset.size), downloaded $downloadedSize."
+          }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "available=true"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$baselineVersion"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "path=$baselinePath"
+
       - name: Exercise the Electron renderer through a hidden Windows window
         env:
           MATERIAL_EMAIL_RELEASE_VERSION: ${{ steps.release.outputs.version }}
@@ -137,18 +191,44 @@ jobs:
           MATERIAL_EMAIL_RELEASE_VERSION: ${{ steps.release.outputs.version }}
           MATERIAL_EMAIL_RELEASE_DATE: ${{ steps.release.outputs.release_date }}
           MATERIAL_EMAIL_CODE_NAME: ${{ steps.dish.outputs.code_name }}
+          BASELINE_AVAILABLE: ${{ steps.baseline.outputs.available }}
+          BASELINE_PATH: ${{ steps.baseline.outputs.path }}
         shell: pwsh
         run: |
           npm run verify:package
-          npm run verify:installer -- --report release/installer-qa.json
+          if ($env:BASELINE_AVAILABLE -eq "true") {
+            npm run verify:installer -- --report release/installer-qa.json --baseline $env:BASELINE_PATH
+          } else {
+            npm run verify:installer -- --report release/installer-qa.json
+          }
           $proof = Get-Content -Raw -LiteralPath release/installer-qa.json | ConvertFrom-Json
           if (-not $proof.ok -or -not $proof.installedExecutableRemoved -or -not $proof.retainedUserData) {
             throw "Installer lifecycle report did not satisfy the release contract."
+          }
+          if ($env:BASELINE_AVAILABLE -eq "true") {
+            if (-not $proof.upgradeVerified -or -not $proof.upgradeInstallDirectoryReused -or -not $proof.retainedAfterUpgrade) {
+              throw "Prior-release upgrade report did not satisfy the release contract."
+            }
+            if ($proof.baselineVersion -ne '${{ steps.baseline.outputs.version }}') {
+              throw "Verified baseline version $($proof.baselineVersion) did not match the resolved release baseline."
+            }
+            if (-not $proof.baselineInstallerSha256 -or $proof.retentionProbeSha256 -ne $proof.retainedAfterUpgradeSha256) {
+              throw "Prior-release hash evidence is missing or inconsistent."
+            }
+            $upgradeSummary = "In-place upgrade $($proof.baselineVersion) → $($proof.candidateVersion) verified; isolated user-data SHA-256 remained $($proof.retentionProbeSha256)."
+          } else {
+            if ($proof.upgradeVerified -or $proof.baselineVersion) {
+              throw "First-release lifecycle report unexpectedly claimed an upgrade."
+            }
+            $upgradeSummary = "No prior release existed; single-installer lifecycle verified without an upgrade claim."
           }
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer=$($proof.installerPath)"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer_name=$($proof.installerName)"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer_sha256=$($proof.installerSha256)"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer_size=$($proof.installerSize)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "baseline_version=$($proof.baselineVersion)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "baseline_sha256=$($proof.baselineInstallerSha256)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "upgrade_summary=$upgradeSummary"
 
       - name: Publish exactly one release with installer and catalog photo
         shell: pwsh
@@ -160,7 +240,11 @@ jobs:
 
           **Release date (UTC):** ${{ steps.release.outputs.release_date }}
 
-          This release was built and tested from `${{ github.sha }}` on a GitHub-hosted Windows runner. The workflow installed the NSIS package into a temporary directory, launched that installed executable through its deterministic smoke path, then ran and verified the uninstaller before publishing.
+          This release was built and tested from `${{ github.sha }}` on a GitHub-hosted Windows runner. The workflow installed into an isolated directory, launched the packaged executable through its deterministic smoke path, and verified uninstall before publishing.
+
+          **Installer lifecycle:** ${{ steps.package.outputs.upgrade_summary }}
+
+          **Prior-installer SHA-256:** `${{ steps.package.outputs.baseline_sha256 }}`
 
           ## Assets
 

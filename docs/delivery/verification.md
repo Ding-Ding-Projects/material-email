@@ -9,7 +9,7 @@ This matrix records evidence for the current development tree. It is not release
 | Dependencies | `npm ci` | Reported pass | Reproduce in CI |
 | Electron runtime | Playwright Electron E2E | 15 / 15 scenarios passed, including two restarts, redirect/foreign-WebContents denial, dirty/focus decisions, mail-navigation and editor concurrency, bilingual minimum-width semantics, and PIM error/retry | Repeat in CI; clean VM, screen reader, and full display-scale matrix |
 | Types | `npm run typecheck` | Passed in the final local `npm run check` gate | Repeat in CI |
-| Tests | `npm test` | 22 files / 96 tests passed in the final local gate | Repeat in CI |
+| Tests | `npm test` | 30 files / 143 tests passed in the final local gate, including 4 focused installer-upgrade contract tests | Repeat in CI |
 | Bundled images | `npm run verify:assets` | 10 unique 1254 × 1254 PNGs decode and match the catalog | Repeat in CI and release workflow |
 | Dependency audit | `npm audit` | 0 known vulnerabilities reported at scan time | Continuous scan; audit is not a security review |
 | Build | `npm run build` | Passed; Vite transformed 8 renderer modules | Repeat exact source in CI |
@@ -19,13 +19,13 @@ This matrix records evidence for the current development tree. It is not release
 | Account discovery | parser tests | Pass reported | live provider discovery and consent/error UX |
 | Mail protocols | local socket integration and exact-outcome regressions | False mutations fail; MOVE fails closed without capability and consumes destination UID/UIDVALIDITY; every UID action verifies the live generation; permanent all-recipient 5xx retains the draft and exact rejects; newer concurrent drafts survive send completion | live provider, provider MOVE variants, certificate, and offline matrix |
 | Renderer | typed integration plus state/accessibility Electron regressions | Compose/PIM baselines, replacement/unload protection, concurrent draft/send preservation, monotonic mail-view ownership, PIM save ownership and refresh retry, discard focus return/trap, semantic bilingual spans at 760 × 560, and revision-aware no-op copy passed | complete keyboard/screen-reader matrix, visuals at 100/125/150/200%, all humor levels |
-| Installer | `dist:win`, `verify:package`, `verify:installer` | Exact x64 NSIS artifact installed, launched, reported metadata, and uninstalled locally; isolated data retained | Clean VM/default profile, upgrade, approved icon, code signing |
+| Installer | `dist:win`, `verify:package`, `verify:installer` | Exact x64 NSIS artifacts are PE/hash checked; published `0.19.1` → disposable `0.999.1` was installed and smoke-versioned in one isolated directory, with an unchanged user-data hash through upgrade and uninstall | Repeat the new gate in hosted CI; clean VM/default profile, approved icon, code signing |
 | CI/release | Workflow audit | Trigger, queued concurrency, version/tag, token fallback, photo, release and Pages dependency configured; no hosted run | Passing run, immutable tag, downloaded installer/photo proof |
 | Documentation site | `npm run verify:site` plus the real-browser site harness | Local structural/bundle verification and 13 development/published browser checks passed | Pages deployment and live base-path proof |
 
 ## Configuration
 
-Use `npm run check` for the local code gate, then `npm run dist:win`, `npm run verify:package`, and `npm run verify:installer` for local packaging proof. Verify the site separately with a browser or headless DOM-capable harness. Release certification still requires a clean disposable Windows environment rather than only the development host.
+Use `npm run check` for the local code gate, then `npm run dist:win`, `npm run verify:package`, and `npm run verify:installer` for local packaging proof. Add `-- --baseline <prior-installer.exe>` to prove a strict baseline-to-candidate upgrade; the verifier rejects equal versions and downgrades. Verify the site separately with a browser or headless DOM-capable harness. Release certification still requires a clean disposable Windows environment rather than only the development host.
 
 ## Failure modes
 

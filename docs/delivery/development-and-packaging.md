@@ -12,6 +12,8 @@
 
 `npm run verify:package` requires exactly one top-level x64 NSIS installer with the versioned artifact name, a minimum size, valid DOS and PE signatures, and the explicit retained-data policy; it reports the SHA-256 digest. `npm run verify:installer` silently installs that exact file into a temporary directory, launches the installed executable through `--ci-smoke`, compares its version, code name, and release date with the built metadata, silently uninstalls it, proves the executable is gone and an isolated user-data probe survived, and then removes the synthetic test data.
 
+Passing `--baseline <prior-installer.exe>` changes the verifier into a strict upgrade run. It validates and hashes both PE files, refuses an equal-version reinstall or downgrade, installs and launches the baseline, creates a synthetic probe in an isolated user-data directory, installs the candidate into the same isolated install directory, launches and version-checks the candidate, and requires the probe SHA-256 to remain identical after both upgrade and uninstall. `--candidate` and `--metadata` permit an explicitly built candidate outside the repository output directory. The JSON report identifies both artifact hashes, both smoke-reported versions, installed-executable hashes, the Windows version, and the limits of the evidence (`cleanMachine: false`, `defaultWindowsProfile: false`).
+
 ## Configuration
 
 - Product version: development `0.1.0`
@@ -25,7 +27,7 @@
 
 ## Failure modes
 
-- A local lifecycle pass does not prove a clean-machine install, upgrade, interactive first-run flow, public-provider mail behavior, or enterprise-policy compatibility.
+- A local lifecycle pass does not prove a clean-machine install, interactive first-run flow, public-provider mail behavior, or enterprise-policy compatibility. An explicit baseline run does prove the isolated in-place upgrade it records, not every upgrade path or machine policy.
 - PE structure and SHA-256 establish artifact identity, not publisher authenticity; the current installer is unsigned.
 - Missing `LICENSE` breaks the configured package file set.
 - Absolute asset paths or an incorrect Vite base can work in development and fail after packaging.
@@ -39,9 +41,11 @@ Never embed credentials, source maps containing secrets, development URLs, or wr
 
 ## Verification
 
-At the recorded 2026-08-01 UTC packaging checkpoint, `npm run dist:win` passed type checking, 12 test files / 43 tests, verification of 10 unique catalogued dim-sum PNGs, site and source-policy checks, and the 7-module renderer production build. The resulting `Material-Email-0.1.0-Windows-x64.exe` was 126,143,280 bytes with SHA-256 `e112c454e582e025be807c451026ab834e7b3b8aeb5876928e03145d5d9d803d`. Both package verifiers passed: the installed app reported `0.1.0`, `Classic Har Gow · 蝦餃`, and `2026-08-01`; uninstall removed the executable, process, shortcuts, and uninstall registration while the isolated retention probe remained until QA cleanup. Windows reported Authenticode status `NotSigned`. That installer checkpoint predates the current corrections. On the current working tree, `npm run check` passes 22 test files / 96 tests and the production build, while `npm run test:e2e` passes all 15 real-Electron scenarios. The installer must still be rebuilt and its lifecycle reverified before it can carry these corrections.
+At the recorded 2026-08-01 UTC packaging checkpoint, `npm run dist:win` passed type checking, 12 test files / 43 tests, verification of 10 unique catalogued dim-sum PNGs, site and source-policy checks, and the 7-module renderer production build. The resulting `Material-Email-0.1.0-Windows-x64.exe` was 126,143,280 bytes with SHA-256 `e112c454e582e025be807c451026ab834e7b3b8aeb5876928e03145d5d9d803d`. Both package verifiers passed: the installed app reported `0.1.0`, `Classic Har Gow · 蝦餃`, and `2026-08-01`; uninstall removed the executable, process, shortcuts, and uninstall registration while the isolated retention probe remained until QA cleanup. Windows reported Authenticode status `NotSigned`.
 
-The release workflow is configured and its action references exist. Current GitHub Actions syntax supports its `concurrency.queue: max` setting; `actionlint` 1.7.12 reports that one new key as unknown but reports no other problem. A hosted CI run, release attachment, clean-machine/default-profile test, upgrade, signing, approved application icon, and Pages deployment remain unverified.
+The new upgrade path was exercised locally on Windows 10.0.26200 using published baseline `0.19.1` and a disposable `0.999.1` candidate built from source commit `22129fc`. The verifier recorded baseline installer SHA-256 `22588b7f326a0fe0d4e9542f99debdf927bcd7764186752d80ac5472836cae06`, candidate SHA-256 `afae75f001fdbacc3a6b4f87a60408939fbdd3dc7b82014dd15f0e30ee3d08a6`, correct baseline and candidate smoke versions, same-directory replacement, candidate removal on uninstall, and the unchanged probe SHA-256 `3b22cb8daa3037fd87493b3e4fe24a1e0669ad71194115c87547583fc834d3de` after upgrade and uninstall. This is genuine local upgrade evidence, but the candidate is not a published release and the host was neither clean nor a default-profile disposable VM. The current `npm run check` also passes 30 test files / 143 tests and the 12-module renderer production build.
+
+The release workflow now resolves exactly one Windows installer from the latest prior release, retries its download, verifies the API-reported size, and requires the baseline-to-candidate versions, hashes, same-directory upgrade, and retained-probe evidence before publishing. Its first-release path remains explicitly labeled as a single-installer lifecycle rather than an upgrade. A hosted run of this new gate, clean-machine/default-profile test, signing, approved application icon, and Pages deployment remain unverified.
 
 ## Suggested articles
 

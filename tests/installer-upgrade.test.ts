@@ -1,0 +1,83 @@
+import { mkdtemp, open, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  assertStrictUpgrade,
+  compareNumericVersions,
+  parseInstallerVerifierArguments,
+  parseWindowsInstallerName,
+} from "../scripts/installer-upgrade.mjs";
+import { inspectWindowsInstallerFile } from "../scripts/verify-package.mjs";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+});
+
+describe("installer upgrade contract", () => {
+  it("recognizes only versioned Windows x64 installer names", () => {
+    expect(parseWindowsInstallerName("Material-Email-0.19.1-Windows-x64.exe")).toEqual({
+      installerName: "Material-Email-0.19.1-Windows-x64.exe",
+      version: "0.19.1",
+    });
+    expect(() => parseWindowsInstallerName("Material-Email-latest-Windows-x64.exe")).toThrow(/must match/);
+    expect(() => parseWindowsInstallerName("Material-Email-01.2.3-Windows-x64.exe")).toThrow(/must match/);
+    expect(() => parseWindowsInstallerName("Material-Email-1.2.3-Windows-arm64.exe")).toThrow(/must match/);
+  });
+
+  it("requires a candidate that is strictly newer than the baseline", () => {
+    expect(compareNumericVersions("0.20.1", "0.19.1")).toBe(1);
+    expect(compareNumericVersions("1.0.0", "0.99.99")).toBe(1);
+    expect(compareNumericVersions("0.19.1", "0.19.1")).toBe(0);
+    expect(compareNumericVersions("0.18.9", "0.19.1")).toBe(-1);
+    expect(() => assertStrictUpgrade("0.19.1", "0.20.1")).not.toThrow();
+    expect(() => assertStrictUpgrade("0.19.1", "0.19.1")).toThrow(/not an upgrade/);
+    expect(() => assertStrictUpgrade("0.19.1", "0.18.9")).toThrow(/not an upgrade/);
+  });
+
+  it("parses explicit baseline, candidate, metadata, and report paths without hidden defaults", () => {
+    const cwd = path.join(os.tmpdir(), "installer-arguments");
+    expect(
+      parseInstallerVerifierArguments(
+        ["--baseline", "previous.exe", "--candidate=next.exe", "--metadata", "meta.json", "--report=proof.json"],
+        cwd,
+      ),
+    ).toEqual({
+      baselinePath: path.resolve(cwd, "previous.exe"),
+      candidatePath: path.resolve(cwd, "next.exe"),
+      metadataPath: path.resolve(cwd, "meta.json"),
+      reportPath: path.resolve(cwd, "proof.json"),
+    });
+    expect(() => parseInstallerVerifierArguments(["--baseline"], cwd)).toThrow(/requires a path/);
+    expect(() => parseInstallerVerifierArguments(["--baseline=a", "--baseline=b"], cwd)).toThrow(/only once/);
+    expect(() => parseInstallerVerifierArguments(["--mystery", "value"], cwd)).toThrow(/Unknown/);
+  });
+
+  it("hashes and validates the PE structure of an explicitly named installer", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "material-email-pe-test-"));
+    temporaryDirectories.push(directory);
+    const installerPath = path.join(directory, "Material-Email-2.3.4-Windows-x64.exe");
+    const handle = await open(installerPath, "w+");
+    try {
+      await handle.truncate(4096);
+      const dosHeader = Buffer.alloc(64);
+      dosHeader.write("MZ", 0, "ascii");
+      dosHeader.writeUInt32LE(0x80, 0x3c);
+      await handle.write(dosHeader, 0, dosHeader.length, 0);
+      await handle.write(Buffer.from([0x50, 0x45, 0, 0]), 0, 4, 0x80);
+    } finally {
+      await handle.close();
+    }
+
+    const inspected = await inspectWindowsInstallerFile(installerPath, { minimumSize: 4096 });
+    expect(inspected).toMatchObject({
+      installerPath,
+      installerName: "Material-Email-2.3.4-Windows-x64.exe",
+      version: "2.3.4",
+      size: 4096,
+    });
+    expect(inspected.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+});

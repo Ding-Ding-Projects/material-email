@@ -12,7 +12,7 @@ External message links now use a deny-by-default review flow. Electron denies ev
 
 Compose and PIM editors use saved/loaded dirty baselines. Their discard decision is accessible and restores focus, replacement attempts are guarded, and the unload guard covers either dirty editor so a whole-window close cannot silently discard the form. Send/Save operations are mutually exclusive; edits made during an in-flight operation remain visible and unsaved, while the main process preserves newer same-ID draft versions. PIM saves are bound to their originating editor and keep a retryable, factual state if post-save refresh fails. Mail account/folder/message requests use monotonic ownership so late results cannot overwrite the current view.
 
-No hosted documentation site, CI release, downloadable installer containing the current corrections, or clean-machine installation proof exists at this handoff. A recorded local installer lifecycle checkpoint exists for an earlier tree and must not be mistaken for current artifact proof.
+No hosted documentation site or clean-machine installation proof exists at this handoff. Published installers exist, and a new local verifier now proves a strict prior-release-to-candidate upgrade without confusing that evidence with clean-machine certification. The release workflow is wired to download the latest prior installer and require the same upgrade evidence before its next publication; that updated hosted gate has not run yet.
 
 ## Verification evidence
 
@@ -21,7 +21,8 @@ The consolidated current-tree gates pass locally. This evidence covers the sourc
 | Check | Result |
 | --- | --- |
 | Focused regression coverage | Process/IPC trust, mail mutation and SMTP outcomes, account cleanup, renderer dirty/load state, bilingual semantics, and keyboard focus |
-| `npm run check` | Passed on the pre-review tree: typecheck; 22 files / 96 tests; 10 bundled-image checks; site/source-policy checks; production build with 8 renderer modules |
+| `npm run check` | Passed: typecheck; 30 files / 143 tests; 10 bundled-image checks; site/source-policy checks; production build with 12 renderer modules |
+| Local NSIS upgrade | Published `0.19.1` → disposable `0.999.1` passed in one isolated install directory; both smoke versions matched; candidate uninstall removed the executable; probe SHA-256 stayed unchanged through upgrade and uninstall |
 | Focused external-link tests | Passed: 4 existing safety tests plus 5 queue tests and IPC validation; 22 tests across 4 files |
 | `npm run test:e2e` | Passed: 15 / 15 real-Electron scenarios in one worker, including two restart paths and four deterministic concurrency cases |
 | Clean-machine and assistive-technology matrices | Not completed |
@@ -54,10 +55,10 @@ Open security work includes broader IPC payload testing, certificate diagnostics
 2. Exercise demo account, settings, every search/regex surface, history, notifications, compose, local-organizer pages, attachment saving, and export using full keyboard-only and screen-reader workflows.
 3. Test real IMAP/SMTP behavior through secure credential intake without recording private data.
 4. Perform adversarial message, attachment, regex, IPC, and persistence tests.
-5. Rebuild and test the NSIS installer containing these corrections on a clean Windows environment.
+5. Let the new hosted prior-release upgrade gate exercise the exact candidate, then repeat install, interactive first launch, upgrade, uninstall, and retained-data checks on a clean disposable Windows environment.
 6. Verify CI/release automation, then publish only after the exact run and artifact are verified.
 7. Deploy the documentation site, verify its base path and assets, and only then set the repository homepage.
 
 ## Known open product gaps
 
-Browser OAuth, POP, unified folders, threading, SQLite mail indexing, complete history diff/retention UI, CardDAV/CalDAV/ICS/task providers, broad vCard interoperability, recurrence expansion, alarm delivery, PIM at-rest encryption, message cryptography, attachment scanning/quarantine, rebuilt-installer and clean-machine lifecycle proof, CI releases, wiki synchronization, and Pages deployment remain open. Native Windows notifications, attachment risk warnings, and the factual in-app changelog are now implemented; focused Electron coverage exists for notification settings and release-history surfaces.
+Browser OAuth, POP, unified folders, threading, SQLite mail indexing, complete history diff/retention UI, CardDAV/CalDAV/ICS/task providers, broad vCard interoperability, recurrence expansion, alarm delivery, PIM at-rest encryption, message cryptography, attachment scanning/quarantine, clean-machine lifecycle proof, hosted verification of the new upgrade gate, wiki synchronization, and Pages deployment remain open. Native Windows notifications, attachment risk warnings, the factual in-app changelog, and a locally exercised strict NSIS upgrade verifier are implemented.

@@ -3,8 +3,9 @@ import { createReadStream } from "node:fs";
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { parseWindowsInstallerName } from "./installer-upgrade.mjs";
 
-const sha256 = filePath =>
+export const sha256File = filePath =>
   new Promise((resolve, reject) => {
     const hash = createHash("sha256");
     const input = createReadStream(filePath);
@@ -13,7 +14,7 @@ const sha256 = filePath =>
     input.on("end", () => resolve(hash.digest("hex")));
   });
 
-const verifyPortableExecutable = async filePath => {
+export const verifyPortableExecutable = async filePath => {
   const handle = await open(filePath, "r");
   try {
     const dosHeader = Buffer.alloc(64);
@@ -30,6 +31,22 @@ const verifyPortableExecutable = async filePath => {
   } finally {
     await handle.close();
   }
+};
+
+export const inspectWindowsInstallerFile = async (filePath, options = {}) => {
+  const installerPath = path.resolve(filePath);
+  const { installerName, version } = parseWindowsInstallerName(installerPath);
+  const info = await stat(installerPath);
+  const minimumSize = options.minimumSize ?? 20_000_000;
+  if (info.size < minimumSize) throw new Error(`Installer is unexpectedly small: ${info.size} bytes.`);
+  await verifyPortableExecutable(installerPath);
+  return {
+    installerPath,
+    installerName,
+    version,
+    size: info.size,
+    sha256: await sha256File(installerPath),
+  };
 };
 
 export const inspectWindowsPackage = async () => {
@@ -64,16 +81,9 @@ export const inspectWindowsPackage = async () => {
   if (executables[0].name !== expectedName) {
     throw new Error(`Expected installer ${expectedName}, found ${executables[0].name}.`);
   }
-  const installerPath = path.join(releaseDirectory, expectedName);
-  const info = await stat(installerPath);
-  if (info.size < 20_000_000) throw new Error(`Installer is unexpectedly small: ${info.size} bytes.`);
-  await verifyPortableExecutable(installerPath);
+  const inspected = await inspectWindowsInstallerFile(path.join(releaseDirectory, expectedName));
   return {
-    installerPath,
-    installerName: expectedName,
-    version: packageJson.version,
-    size: info.size,
-    sha256: await sha256(installerPath),
+    ...inspected,
     retainsUserData,
   };
 };
