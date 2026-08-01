@@ -8,7 +8,7 @@
 
 The PIM store creates one writable local calendar named `Home` with UID `home`. Events have stable UIDs, title, description, location, date or date-time start/end values, recurrence metadata, organizer, attendees with roles/participation/RSVP, relative or absolute display/audio alarms, categories, status, and opaque/transparent availability. CRUD and append-only restore retain monotonically increasing revisions.
 
-The renderer exposes title, local start/end, location, status, and description fields. It preserves recurrence metadata already on a record, but deliberately does not generate occurrences or edit detached overrides. Its form uses the loaded/saved event as a dirty baseline, uses returned revision changes to distinguish updates from no-op saves, exposes an accessible discard decision with focus return, and renders load failures with retry. Calendar search defaults to plain text and has its own adjacent bounded regex builder.
+The renderer exposes title, local start/end, location, status, and description fields. It preserves recurrence metadata already on a record, but deliberately does not generate occurrences or edit detached overrides. Its form uses the loaded/saved event as a dirty baseline, uses returned revision changes to distinguish updates from no-op saves, exposes an accessible discard decision with focus return, and renders load failures with retry. Calendar search defaults to plain text, has its own adjacent bounded regex builder, and restores only its own bounded mode, pattern, and normalized JavaScript flags across restart. Its sample/open state remains ephemeral; exact localized result counts, a named invalid alert, a valid no-match status, and edit/<kbd>Escape</kbd> focus return do not alter event data.
 
 ## Configuration
 
@@ -26,7 +26,7 @@ Titles, locations, attendees, and alarms can reveal sensitive schedules. Data re
 
 ## Verification
 
-The consolidated current-tree check passes 22 test files / 96 tests. The real-Electron suite passes all 15 scenarios, including calendar and event persistence across restart, dirty/no-op editor state, save ownership, discard focus return, and load-error retry. Focused unit coverage also exercises automatic Home calendar creation, recurrence/attendee/alarm preservation, updates, deletion, and append-only restoration. Remote transport, alarm delivery, recurrence expansion, DST matrices, clean-machine behavior, and screen-reader proof remain open.
+The focused PIM-search helper passes 1 renderer file / 5 tests, and its dedicated 1 / 1 real-Electron scenario proves Calendar search restoration, exact bilingual count facts, and semantic result state across restart. Existing PIM coverage also exercises calendar/event persistence, dirty/no-op editor state, save ownership, discard focus return, load-error retry, automatic Home calendar creation, recurrence/attendee/alarm preservation, updates, deletion, and append-only restoration. Remote transport, alarm delivery, recurrence expansion, DST matrices, clean-machine behavior, and screen-reader proof remain open.
 
 ## Suggested articles
 

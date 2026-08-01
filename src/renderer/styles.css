@@ -793,6 +793,8 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .pim-subtab .count-pill { min-height: 22px; padding-block: 1px; background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; }
 
 .pim-surface { min-width: 0; }
+.pim-search-status { margin: -5px 0 14px; color: var(--on-surface-variant); font-size: 0.76rem; line-height: 1.45; overflow-wrap: anywhere; }
+.member-picker .pim-search-status { margin: 8px 0 0; }
 .pim-toolbar { flex-wrap: wrap; }
 .pim-toolbar .page-search { min-width: min(100%, 330px); }
 .ics-policy { min-width: 150px; }
@@ -934,6 +936,7 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 }
 .pim-empty > .icon { width: 34px; height: 34px; color: var(--primary); }
 .pim-empty h2, .pim-empty p { margin: 0; }
+.pim-empty--action .button { justify-self: center; }
 
 .deleted-pim { margin-top: 24px; padding: 15px; border: 1px solid var(--outline-variant); border-radius: var(--radius-lg); background: var(--surface-container-low); }
 .deleted-pim > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
@@ -997,6 +1000,12 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .member-picker__list label > span:last-child { min-width: 0; display: flex; flex-direction: column; }
 .member-picker__list strong, .member-picker__list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member-picker__list small { color: var(--on-surface-variant); }
+.pim-editor-sheet > .regex-builder {
+  z-index: 4;
+  inset: auto 12px 12px;
+  width: auto;
+  max-height: min(620px, calc(100% - 96px));
+}
 
 .anchored-popover {
   position: absolute;

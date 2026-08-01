@@ -147,6 +147,17 @@ import {
   parseBulkTabCloseReview,
   serializeBulkTabCloseReview,
 } from "./lib/bulk-tab-close";
+import {
+  PIM_SEARCH_STORAGE_KEY,
+  classifyPimSearch,
+  isPimSearchKey,
+  localizedPimSearchNoMatch,
+  localizedPimSearchStatus,
+  parsePimSearches,
+  serializePimSearches,
+  type PimSearchKey,
+  type PimSearchSemanticState,
+} from "./lib/pim-search";
 import { selectStableMessageId } from "../shared/unified-folders";
 import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
 import {
@@ -458,6 +469,16 @@ const readBulkTabCloseReview = () => {
 
 const restoredBulkTabCloseReview = readBulkTabCloseReview();
 
+const readPimSearches = () => {
+  try {
+    return parsePimSearches(localStorage.getItem(PIM_SEARCH_STORAGE_KEY));
+  } catch {
+    return parsePimSearches(null);
+  }
+};
+
+const restoredPimSearches = readPimSearches();
+
 const DEFAULT_PREFERENCES: Preferences = {
   language: "en",
   funnyEnglish: 2,
@@ -756,6 +777,8 @@ const searchFor = (key: string): SearchModel => {
       ? restoredBulkTabCloseReview.search
     : isTabDiscoverySearchKey(key)
       ? restoredTabDiscoverySearches[key]
+    : isPimSearchKey(key)
+      ? restoredPimSearches[key]
       : null;
   const created: SearchModel = {
     mode: persisted?.mode ?? (key === "mail" ? readCachedMailSearchMode() : "plain"),
@@ -798,6 +821,20 @@ const persistSearch = (key: string): void => {
       localStorage.setItem(BULK_TAB_CLOSE_STORAGE_KEY, serializeBulkTabCloseReview(restoredBulkTabCloseReview));
     } catch {
       // Bulk-close review remains safe and usable when browser storage is unavailable.
+    }
+    return;
+  }
+  if (isPimSearchKey(key)) {
+    const model = searchFor(key);
+    restoredPimSearches[key] = {
+      mode: model.mode,
+      pattern: model.pattern,
+      flags: model.flags,
+    };
+    try {
+      localStorage.setItem(PIM_SEARCH_STORAGE_KEY, serializePimSearches(restoredPimSearches));
+    } catch {
+      // PIM search remains usable when browser storage is unavailable.
     }
     return;
   }
@@ -1784,7 +1821,7 @@ function renderSearchField(key: string, placeholder: string, compact = false): s
       <button class="regex-mode-button${model.mode === "regex" ? " is-regex" : ""}" type="button" data-action="toggle-regex-builder" data-search-key="${escapeHtml(key)}" aria-expanded="${model.builderOpen}" aria-label="${escapeHtml(tx("Open regular expression builder", "開啟正規表達式建立器"))}">${icon("regex")}<span>${model.mode === "regex" ? "Regex" : tx("Build", "建立")}</span></button>
     </div>
     ${invalid ? `<p class="field-error" id="search-error-${escapeHtml(key)}">${escapeHtml(validation.message)}</p>` : ""}
-    ${model.builderOpen ? renderRegexBuilder(key) : ""}
+    ${model.builderOpen && key !== "mailing-list-members-editor" ? renderRegexBuilder(key) : ""}
   </div>`;
 }
 
@@ -1805,6 +1842,8 @@ function renderRegexBuilder(key: string): string {
         ? tx("This builder is attached only to this bulk-close review. Its pattern, mode, flags, direction, and pinned-tab choice are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢個批量關閉審閱。模式、配對方式、旗標、方向同釘選分頁選擇會儲喺你部電腦；範例會喺重開時清除。")
       : isTabDiscoverySearchKey(key)
         ? tx("This builder is attached only to this tab-discovery field. Its pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢一個分頁探索搜尋欄。模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
+      : isPimSearchKey(key)
+        ? tx("This builder is attached only to this PIM search field. Its pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢一個 PIM 搜尋欄。模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
         : tx("This builder is attached only to this search field. Patterns and samples stay on this computer.", "呢個建立器只連住呢一個搜尋欄。模式同範例都留喺你部電腦。"))}</p>
     <div class="segmented-control" role="group" aria-label="${escapeHtml(tx("Match mode", "配對模式"))}">
       <button type="button" class="segment${model.mode === "plain" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="plain" data-focus-key="regex-mode-${escapeHtml(key)}-plain" aria-pressed="${model.mode === "plain"}">${escapeHtml(tx("Plain text", "純文字"))}</button>
@@ -2119,10 +2158,12 @@ function renderContactsSubtab(view: ContactsView, label: string, count: number):
 
 function renderPeopleSurface(): string {
   const contacts = filteredContacts();
+  const searchState = classifyPimSearch(searchFor("contacts"), contacts.length);
   return `<section class="pim-surface" id="pim-panel-people" role="tabpanel" data-testid="people-surface" aria-labelledby="pim-tab-people">
     <div class="page-tools pim-toolbar"><div class="page-search" data-testid="contacts-search">${renderSearchField("contacts", tx("Search name, email, phone, organization, or notes", "搜尋名稱、電郵、電話、機構或者備註"))}</div><button class="button button--outlined" type="button" data-action="import-vcard">${icon("download")}<span>${escapeHtml(tx("Import vCard", "匯入 vCard"))}</span></button><button class="button button--outlined" type="button" data-action="export-all-vcard" ${state.contacts.length + state.mailingLists.length === 0 ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Export all", "全部匯出"))}</span></button><button class="button button--filled" data-testid="add-contact" type="button" data-action="open-pim-editor" data-pim-kind="contact">${icon("account")}<span>${escapeHtml(tx("New contact", "新增聯絡人"))}</span></button></div>
     <p class="local-truth-note">${icon("info")}<span>${escapeHtml(tx("Plain search uses the local contact index through the desktop bridge; regex search is bounded in this renderer.", "純文字搜尋會透過桌面連接使用本機聯絡人索引；正規表達式搜尋喺呢個介面有界運算。"))}</span></p>
-    <div class="pim-card-grid" data-testid="contact-list">${contacts.length ? contacts.map(renderContactCard).join("") : renderPimEmpty(tx("No matching contacts", "冇符合嘅聯絡人"), tx("Create a contact or adjust this surface’s search.", "新增聯絡人，或者調整呢個介面嘅搜尋。"), "account")}</div>
+    ${renderPimSearchStatus("contacts", contacts.length, state.contacts.length, searchState)}
+    <div class="pim-card-grid" data-testid="contact-list">${contacts.length ? contacts.map(renderContactCard).join("") : renderPimSearchEmpty("contacts", searchState, tx("No contacts yet", "仲未有聯絡人"), tx("Create a local contact to start this address book.", "建立本機聯絡人去開始呢個通訊錄。"), "account")}</div>
     ${renderDeletedPimSection(["contact"], tx("Recently deleted contacts", "最近刪除嘅聯絡人"))}
   </section>`;
 }
@@ -2135,9 +2176,11 @@ function renderContactCard(contact: Contact): string {
 
 function renderMailingListsSurface(): string {
   const lists = filteredMailingLists();
+  const searchState = classifyPimSearch(searchFor("mailing-lists"), lists.length);
   return `<section class="pim-surface" id="pim-panel-lists" role="tabpanel" data-testid="mailing-lists-surface" aria-labelledby="pim-tab-lists">
     <div class="page-tools pim-toolbar"><div class="page-search" data-testid="mailing-list-search">${renderSearchField("mailing-lists", tx("Search list names, descriptions, or members", "搜尋群組名稱、描述或者成員"))}</div><button class="button button--outlined" type="button" data-action="import-vcard">${icon("download")}<span>${escapeHtml(tx("Import vCard", "匯入 vCard"))}</span></button><button class="button button--filled" data-testid="add-mailing-list" type="button" data-action="open-pim-editor" data-pim-kind="mailing-list">${icon("account")}<span>${escapeHtml(tx("New mailing list", "新增郵件群組"))}</span></button></div>
-    <div class="pim-master-detail"><div class="pim-card-grid" data-testid="mailing-list-list">${lists.length ? lists.map(renderMailingListCard).join("") : renderPimEmpty(tx("No matching mailing lists", "冇符合嘅郵件群組"), tx("Create a list from existing contacts or adjust search.", "用現有聯絡人建立群組，或者調整搜尋。"), "account")}</div>${renderMailingListMembers()}</div>
+    ${renderPimSearchStatus("mailing-lists", lists.length, state.mailingLists.length, searchState)}
+    <div class="pim-master-detail"><div class="pim-card-grid" data-testid="mailing-list-list">${lists.length ? lists.map(renderMailingListCard).join("") : renderPimSearchEmpty("mailing-lists", searchState, tx("No mailing lists yet", "仲未有郵件群組"), tx("Create a list from existing contacts.", "用現有聯絡人建立群組。"), "account")}</div>${renderMailingListMembers()}</div>
     ${renderDeletedPimSection(["mailing-list"], tx("Recently deleted mailing lists", "最近刪除嘅郵件群組"))}
   </section>`;
 }
@@ -2157,11 +2200,13 @@ function renderMailingListMembers(): string {
 function renderCalendarPage(): string {
   if (!state.pimLoaded) return renderPimUnavailable("calendar", tx("Calendar", "日曆"), "calendar");
   const events = [...filteredCalendarEvents()].sort((left, right) => Date.parse(left.start.value) - Date.parse(right.start.value));
+  const searchState = classifyPimSearch(searchFor("calendar-events"), events.length);
   return `<section class="standard-page pim-page" data-testid="calendar-page" id="panel-calendar" role="tabpanel" aria-labelledby="tab-calendar">
     ${renderPageHeader("HOME · LOCAL", tx("Calendar", "日曆"), tx("Structured events are stored in the local Home calendar. Recurrence metadata is preserved but occurrences are not expanded here.", "結構化事件儲存喺本機 Home 日曆。重複 metadata 會保留，但呢度唔會展開每次出現。"), "calendar")}
     <div class="page-tools pim-toolbar"><div class="page-search" data-testid="calendar-search">${renderSearchField("calendar-events", tx("Search title, location, description, or status", "搜尋標題、地點、描述或者狀態"))}</div><label class="field ics-policy"><span>${escapeHtml(tx("Duplicate UIDs", "重複 UID"))}</span><select data-ics-duplicate-policy><option value="skip" ${state.icsDuplicatePolicy === "skip" ? "selected" : ""}>${escapeHtml(tx("Skip safely", "安全略過"))}</option><option value="update" ${state.icsDuplicatePolicy === "update" ? "selected" : ""}>${escapeHtml(tx("Update matching type", "更新同類記錄"))}</option></select></label><button class="button button--outlined" data-testid="import-calendar-ics" type="button" data-action="import-ics">${icon("download")}<span>${escapeHtml(tx("Import ICS", "匯入 ICS"))}</span></button><button class="button button--outlined" data-testid="export-selected-events-ics" type="button" data-action="export-selected-ics" data-ics-kind="calendar-event" ${state.selectedCalendarEventUids.size ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export selected", "匯出所選"))}</span></button><button class="button button--outlined" data-testid="export-all-events-ics" type="button" data-action="export-all-ics" data-ics-kind="calendar-event" ${state.calendarEvents.length ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export all", "全部匯出"))}</span></button><button class="button button--filled" data-testid="add-calendar-event" type="button" data-action="open-pim-editor" data-pim-kind="calendar-event">${icon("calendar")}<span>${escapeHtml(tx("New event", "新增事件"))}</span></button></div>
     <p class="local-truth-note" data-testid="calendar-ics-boundary">${icon("info")}<span>${escapeHtml(tx("ICS import is local-only, UTF-8, atomic, and bounded to 1 MiB / 5,000 records. Skip is the safe default; update changes only an active record with the same UID and type. Export uses normalized CRLF iCalendar 2.0 text.", "ICS 匯入只限本機、UTF-8、原子處理，同時限制為 1 MiB／5,000 筆記錄。安全預設係略過；更新只會改相同 UID 同類型嘅現有記錄。匯出使用標準化 CRLF iCalendar 2.0 文字。"))}</span></p>
-    <div class="pim-card-grid calendar-grid" data-testid="calendar-event-list">${events.length ? events.map(renderCalendarEventCard).join("") : renderPimEmpty(tx("No matching events", "冇符合嘅事件"), tx("Create a local event or adjust this calendar search.", "新增本機事件，或者調整日曆搜尋。"), "calendar")}</div>
+    ${renderPimSearchStatus("calendar-events", events.length, state.calendarEvents.length, searchState)}
+    <div class="pim-card-grid calendar-grid" data-testid="calendar-event-list">${events.length ? events.map(renderCalendarEventCard).join("") : renderPimSearchEmpty("calendar-events", searchState, tx("No events yet", "仲未有事件"), tx("Create a local event in the Home calendar.", "喺 Home 日曆建立本機事件。"), "calendar")}</div>
     ${renderDeletedPimSection(["calendar-event"], tx("Recently deleted events", "最近刪除嘅事件"))}
   </section>`;
 }
@@ -2180,11 +2225,13 @@ function renderCalendarEventCard(event: CalendarEvent): string {
 function renderTasksPage(): string {
   if (!state.pimLoaded) return renderPimUnavailable("tasks", tx("Tasks", "工作"), "check");
   const tasks = [...filteredTasks()].sort((left, right) => (left.status === "completed" ? 1 : 0) - (right.status === "completed" ? 1 : 0) || (left.due?.value ?? "9999").localeCompare(right.due?.value ?? "9999"));
+  const searchState = classifyPimSearch(searchFor("tasks"), tasks.length);
   return `<section class="standard-page pim-page" data-testid="tasks-page" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks">
     ${renderPageHeader("HOME · LOCAL", tx("Tasks", "工作"), tx("Track due dates, status, priority, and completion locally. Recurrence metadata is not expanded into instances.", "喺本機追蹤到期日、狀態、優先次序同完成度。重複 metadata 唔會展開成實例。"), "check")}
     <div class="page-tools pim-toolbar"><div class="page-search" data-testid="tasks-search">${renderSearchField("tasks", tx("Search title, description, status, or priority", "搜尋標題、描述、狀態或者優先次序"))}</div><label class="field ics-policy"><span>${escapeHtml(tx("Duplicate UIDs", "重複 UID"))}</span><select data-ics-duplicate-policy><option value="skip" ${state.icsDuplicatePolicy === "skip" ? "selected" : ""}>${escapeHtml(tx("Skip safely", "安全略過"))}</option><option value="update" ${state.icsDuplicatePolicy === "update" ? "selected" : ""}>${escapeHtml(tx("Update matching type", "更新同類記錄"))}</option></select></label><button class="button button--outlined" data-testid="import-tasks-ics" type="button" data-action="import-ics">${icon("download")}<span>${escapeHtml(tx("Import ICS", "匯入 ICS"))}</span></button><button class="button button--outlined" data-testid="export-selected-tasks-ics" type="button" data-action="export-selected-ics" data-ics-kind="task" ${state.selectedTaskUids.size ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export selected", "匯出所選"))}</span></button><button class="button button--outlined" data-testid="export-all-tasks-ics" type="button" data-action="export-all-ics" data-ics-kind="task" ${state.tasks.length ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export all", "全部匯出"))}</span></button><button class="button button--filled" data-testid="add-task" type="button" data-action="open-pim-editor" data-pim-kind="task">${icon("check")}<span>${escapeHtml(tx("New task", "新增工作"))}</span></button></div>
     <p class="local-truth-note" data-testid="tasks-ics-boundary">${icon("info")}<span>${escapeHtml(tx("The same local-only atomic ICS boundary applies here. Select tasks explicitly for a focused export, or export every task currently stored in Home.", "呢度使用同一個只限本機嘅原子 ICS 邊界。可以明確揀工作做精準匯出，或者匯出 Home 目前儲存嘅全部工作。"))}</span></p>
-    <div class="pim-card-grid task-grid" data-testid="task-list">${tasks.length ? tasks.map(renderTaskCard).join("") : renderPimEmpty(tx("No matching tasks", "冇符合嘅工作"), tx("Create a task or adjust this task search.", "新增工作，或者調整工作搜尋。"), "check")}</div>
+    ${renderPimSearchStatus("tasks", tasks.length, state.tasks.length, searchState)}
+    <div class="pim-card-grid task-grid" data-testid="task-list">${tasks.length ? tasks.map(renderTaskCard).join("") : renderPimSearchEmpty("tasks", searchState, tx("No tasks yet", "仲未有工作"), tx("Create a local task in the Home calendar.", "喺 Home 日曆建立本機工作。"), "check")}</div>
     ${renderDeletedPimSection(["task"], tx("Recently deleted tasks", "最近刪除嘅工作"))}
   </section>`;
 }
@@ -2204,6 +2251,47 @@ function renderPimEmpty(title: string, body: string, iconName: IconName): string
   return `<div class="pim-empty">${icon(iconName)}<h2>${escapeHtml(title)}</h2><p>${escapeHtml(body)}</p></div>`;
 }
 
+function pimSearchCopy(key: PimSearchKey): { noMatch: string; invalid: string; edit: string } {
+  switch (key) {
+    case "contacts": return { noMatch: tx("No contacts match", "冇符合嘅聯絡人"), invalid: tx("Invalid contacts search", "聯絡人搜尋無效"), edit: tx("Edit contacts search", "修改聯絡人搜尋") };
+    case "mailing-lists": return { noMatch: tx("No mailing lists match", "冇符合嘅郵件群組"), invalid: tx("Invalid mailing-list search", "郵件群組搜尋無效"), edit: tx("Edit mailing-list search", "修改郵件群組搜尋") };
+    case "calendar-events": return { noMatch: tx("No events match", "冇符合嘅事件"), invalid: tx("Invalid calendar search", "日曆搜尋無效"), edit: tx("Edit calendar search", "修改日曆搜尋") };
+    case "tasks": return { noMatch: tx("No tasks match", "冇符合嘅工作"), invalid: tx("Invalid task search", "工作搜尋無效"), edit: tx("Edit task search", "修改工作搜尋") };
+    case "pim-history": return { noMatch: tx("No transactions match", "冇符合嘅交易"), invalid: tx("Invalid PIM history search", "PIM 歷史搜尋無效"), edit: tx("Edit PIM history search", "修改 PIM 歷史搜尋") };
+    case "mailing-list-members-editor": return { noMatch: tx("No available contacts match", "冇符合嘅可選聯絡人"), invalid: tx("Invalid member search", "成員搜尋無效"), edit: tx("Edit member search", "修改成員搜尋") };
+  }
+}
+
+function renderPimSearchStatus(
+  key: PimSearchKey,
+  matchingCount: number,
+  totalCount: number,
+  semanticState: PimSearchSemanticState = classifyPimSearch(searchFor(key), matchingCount),
+): string {
+  const status = semanticState === "invalid"
+    ? tx("Search not applied. Fix the invalid JavaScript regular expression.", "搜尋未套用。請修正無效嘅 JavaScript 正規表達式。")
+    : localizedPimSearchStatus(key, matchingCount, totalCount, preferences(), bilingualText);
+  return `<p class="pim-search-status" role="status" aria-live="polite" aria-atomic="true" data-pim-search-status="${escapeHtml(key)}" data-search-state="${semanticState}">${escapeHtml(status)}</p>`;
+}
+
+function renderPimSearchEmpty(
+  key: PimSearchKey,
+  semanticState: PimSearchSemanticState,
+  initialTitle: string,
+  initialBody: string,
+  iconName: IconName,
+): string {
+  if (semanticState === "idle" || semanticState === "matches") return renderPimEmpty(initialTitle, initialBody, iconName);
+  const copy = pimSearchCopy(key);
+  const titleId = `pim-search-${key}-${semanticState}-title`;
+  const role = semanticState === "invalid" ? "alert" : "status";
+  const testId = semanticState === "invalid" ? "pim-search-invalid" : "pim-search-empty";
+  const body = semanticState === "invalid"
+    ? tx("The JavaScript regular expression is invalid. Fix the pattern or switch to plain text; no PIM record was changed.", "JavaScript 正規表達式無效。請修正模式或者切換去純文字；冇任何 PIM 記錄被更改。")
+    : localizedPimSearchNoMatch(key, preferences(), bilingualText);
+  return `<div class="pim-empty pim-empty--action" role="${role}" ${semanticState === "no-match" ? 'aria-live="polite" ' : ""}aria-atomic="true" aria-labelledby="${escapeHtml(titleId)}" data-testid="${testId}" data-pim-search-state="${semanticState}" data-pim-search-key="${escapeHtml(key)}">${icon(semanticState === "invalid" ? "warning" : "search")}<h2 id="${escapeHtml(titleId)}">${escapeHtml(semanticState === "invalid" ? copy.invalid : copy.noMatch)}</h2><p>${escapeHtml(body)}</p><button class="button button--tonal" type="button" data-action="focus-pim-search" data-search-key="${escapeHtml(key)}">${icon("search")}<span>${escapeHtml(copy.edit)}</span></button></div>`;
+}
+
 function renderDeletedPimSection(kinds: readonly PimEntityKind[], title: string): string {
   const deleted = latestDeletedPim(kinds);
   if (!deleted.length) return "";
@@ -2220,6 +2308,8 @@ function filteredPimTransactions(): PimTransaction[] {
 
 function renderPimHistorySurface(): string {
   const transactions = filteredPimTransactions();
+  const sourceTransactions = state.pimHistoryResults ?? state.pimTransactions;
+  const searchState = classifyPimSearch(searchFor("pim-history"), transactions.length);
   const actions: PimTransaction["action"][] = ["created", "updated", "deleted", "restored"];
   const kinds: PimEntityKind[] = ["contact", "mailing-list", "calendar-event", "task"];
   return `<section class="pim-surface" id="pim-panel-activity" role="tabpanel" aria-labelledby="pim-tab-activity" data-testid="pim-history-surface">
@@ -2229,8 +2319,9 @@ function renderPimHistorySurface(): string {
       <fieldset><legend>${escapeHtml(tx("Record types", "記錄類型"))}</legend>${kinds.map(kind => `<label class="filter-chip"><input type="checkbox" data-pim-filter-kind="${kind}" ${state.pimFilters.kinds.has(kind) ? "checked" : ""}/><span>${escapeHtml(kind.replaceAll("-", " "))} <b>${state.pimTransactions.filter(item => item.entityKind === kind).length}</b></span></label>`).join("")}</fieldset>
       <div class="pim-date-filter"><label class="field"><span>${escapeHtml(tx("From", "由"))}</span><input type="date" data-pim-filter-date="from" value="${escapeHtml(state.pimFilters.from)}"/></label><label class="field"><span>${escapeHtml(tx("To", "至"))}</span><input type="date" data-pim-filter-date="to" value="${escapeHtml(state.pimFilters.to)}"/></label><button class="assist-chip" type="button" data-action="pim-history-preset" data-days="7">${escapeHtml(tx("Last 7 days", "最近 7 日"))}</button><button class="assist-chip" type="button" data-action="clear-pim-filters">${escapeHtml(tx("Clear filters", "清除篩選"))}</button></div>
       <p class="local-truth-note">${icon("history")}<span>${escapeHtml(tx("These append-only records come from the real local PIM transaction journal. Restoring adds another transaction; it does not erase the deletion.", "呢啲只追加記錄來自真正本機 PIM 交易日誌。還原會新增另一筆交易，唔會抹走刪除記錄。"))}</span></p>
+      ${renderPimSearchStatus("pim-history", transactions.length, sourceTransactions.length, searchState)}
     </div>
-    <div class="pim-transaction-list" data-testid="pim-transaction-list">${transactions.length ? transactions.map(renderPimTransactionRow).join("") : renderPimEmpty(tx("No matching transactions", "冇符合嘅交易"), tx("Adjust the search, action, type, or date filters.", "調整搜尋、操作、類型或者日期篩選。"), "history")}</div>
+    <div class="pim-transaction-list" data-testid="pim-transaction-list">${transactions.length ? transactions.map(renderPimTransactionRow).join("") : renderPimSearchEmpty("pim-history", searchState, tx("No transactions in this filter scope", "呢個篩選範圍冇交易"), tx("Adjust the action, record type, or date filters.", "調整操作、記錄類型或者日期篩選。"), "history")}</div>
   </section>`;
 }
 
@@ -2244,7 +2335,10 @@ function renderPimEditor(): string {
   if (!editor) return "";
   const kindLabel = editor.kind === "contact" ? tx("contact", "聯絡人") : editor.kind === "mailing-list" ? tx("mailing list", "郵件群組") : editor.kind === "calendar-event" ? tx("event", "事件") : tx("task", "工作");
   const title = editor.uid ? tx(`Edit ${kindLabel}`, `編輯${kindLabel}`) : tx(`New ${kindLabel}`, `新增${kindLabel}`);
-  return `<aside class="pim-editor-sheet" role="dialog" aria-modal="false" aria-labelledby="pim-editor-title" aria-busy="${isBusy("pim-save")}" ${isBusy("pim-save") ? "inert" : ""} data-testid="pim-editor"><header class="pim-editor-header"><div><p class="eyebrow">${escapeHtml(tx("LOCAL RECORD", "本機記錄"))}</p><h2 id="pim-editor-title">${escapeHtml(title)}</h2></div><span class="view-only-label" data-testid="pim-dirty-state" aria-live="polite">${escapeHtml(state.pimEditorDirty ? tx("Unsaved changes", "有未儲存更改") : tx("No unsaved changes", "冇未儲存更改"))}</span><button class="icon-button" type="button" data-action="close-pim-editor" aria-label="${escapeHtml(tx("Close editor", "關閉編輯器"))}">${icon("close")}</button></header><div class="pim-editor-body">${editor.kind === "contact" ? renderContactEditor(editor.uid) : editor.kind === "mailing-list" ? renderMailingListEditor(editor.uid) : editor.kind === "calendar-event" ? renderCalendarEventEditor(editor.uid) : renderTaskEditor(editor.uid)}</div></aside>`;
+  const memberSearchBuilder = editor.kind === "mailing-list" && searchFor("mailing-list-members-editor").builderOpen
+    ? renderRegexBuilder("mailing-list-members-editor")
+    : "";
+  return `<aside class="pim-editor-sheet" role="dialog" aria-modal="false" aria-labelledby="pim-editor-title" aria-busy="${isBusy("pim-save")}" ${isBusy("pim-save") ? "inert" : ""} data-testid="pim-editor"><header class="pim-editor-header"><div><p class="eyebrow">${escapeHtml(tx("LOCAL RECORD", "本機記錄"))}</p><h2 id="pim-editor-title">${escapeHtml(title)}</h2></div><span class="view-only-label" data-testid="pim-dirty-state" aria-live="polite">${escapeHtml(state.pimEditorDirty ? tx("Unsaved changes", "有未儲存更改") : tx("No unsaved changes", "冇未儲存更改"))}</span><button class="icon-button" type="button" data-action="close-pim-editor" aria-label="${escapeHtml(tx("Close editor", "關閉編輯器"))}">${icon("close")}</button></header><div class="pim-editor-body">${editor.kind === "contact" ? renderContactEditor(editor.uid) : editor.kind === "mailing-list" ? renderMailingListEditor(editor.uid) : editor.kind === "calendar-event" ? renderCalendarEventEditor(editor.uid) : renderTaskEditor(editor.uid)}</div>${memberSearchBuilder}</aside>`;
 }
 
 function renderContactEditor(uid: string | null): string {
@@ -2266,13 +2360,15 @@ function renderMailingListEditor(uid: string | null): string {
   const list = uid ? state.mailingLists.find(item => item.uid === uid) : undefined;
   const selectedMembers = state.pimDraftMemberUids ?? new Set(list?.memberUids ?? []);
   const memberSearch = searchFor("mailing-list-members-editor");
-  const memberMatcher = memberSearch.pattern && validatePattern(memberSearch).valid ? createMatcher(memberSearch) : null;
-  const contacts = state.contacts.filter(contact => !memberMatcher || memberMatcher(contactSearchText(contact)));
+  const memberSearchValid = !memberSearch.pattern || validatePattern(memberSearch).valid;
+  const memberMatcher = memberSearch.pattern && memberSearchValid ? createMatcher(memberSearch) : null;
+  const contacts = memberSearchValid ? state.contacts.filter(contact => !memberMatcher || memberMatcher(contactSearchText(contact))) : [];
+  const memberSearchState = classifyPimSearch(memberSearch, contacts.length);
   return `<form class="pim-form" data-form="pim-mailing-list" data-testid="mailing-list-form" ${uid ? `data-pim-uid="${escapeHtml(uid)}"` : ""}>
     <label class="field"><span>${escapeHtml(tx("List name", "群組名稱"))}</span><input data-testid="mailing-list-name" name="name" value="${escapeHtml(list?.name ?? "")}" required maxlength="300"/></label>
     <label class="field"><span>${escapeHtml(tx("Nickname", "暱稱"))}</span><input name="nickname" value="${escapeHtml(list?.nickname ?? "")}" maxlength="120"/></label>
     <label class="field field--textarea"><span>${escapeHtml(tx("Description", "描述"))}</span><textarea name="description" maxlength="4096" rows="3">${escapeHtml(list?.description ?? "")}</textarea></label>
-    <fieldset class="member-picker"><legend>${escapeHtml(tx("Members", "成員"))}</legend><div data-testid="mailing-list-member-search">${renderSearchField("mailing-list-members-editor", tx("Search contacts for this list", "搜尋呢個群組嘅聯絡人"), true)}</div><div class="member-picker__list">${contacts.length ? contacts.map(contact => `<label><input type="checkbox" name="memberUids" value="${escapeHtml(contact.uid)}" data-pim-member-uid="${escapeHtml(contact.uid)}" ${selectedMembers.has(contact.uid) ? "checked" : ""}/><span class="avatar">${escapeHtml((contact.displayName.charAt(0) || "?").toUpperCase())}</span><span><strong>${escapeHtml(contact.displayName)}</strong><small>${escapeHtml(contact.emails[0]?.value ?? tx("No email", "冇電郵"))}</small></span></label>`).join("") : `<p>${escapeHtml(tx("No contacts match this member search.", "冇聯絡人符合呢個成員搜尋。"))}</p>`}</div></fieldset>
+    <fieldset class="member-picker"><legend>${escapeHtml(tx("Members", "成員"))}</legend><div data-testid="mailing-list-member-search">${renderSearchField("mailing-list-members-editor", tx("Search contacts for this list", "搜尋呢個群組嘅聯絡人"), true)}</div>${renderPimSearchStatus("mailing-list-members-editor", contacts.length, state.contacts.length, memberSearchState)}<div class="member-picker__list">${contacts.length ? contacts.map(contact => `<label><input type="checkbox" name="memberUids" value="${escapeHtml(contact.uid)}" data-pim-member-uid="${escapeHtml(contact.uid)}" ${selectedMembers.has(contact.uid) ? "checked" : ""}/><span class="avatar">${escapeHtml((contact.displayName.charAt(0) || "?").toUpperCase())}</span><span><strong>${escapeHtml(contact.displayName)}</strong><small>${escapeHtml(contact.emails[0]?.value ?? tx("No email", "冇電郵"))}</small></span></label>`).join("") : renderPimSearchEmpty("mailing-list-members-editor", memberSearchState, tx("No contacts are available", "冇可選聯絡人"), tx("Create a contact before adding mailing-list members.", "加入郵件群組成員之前，先建立聯絡人。"), "account")}</div></fieldset>
     <footer class="pim-form-actions"><button class="button button--text" type="button" data-action="close-pim-editor">${escapeHtml(tx("Cancel", "取消"))}</button><span class="action-spacer"></span><button class="button button--filled" data-testid="save-mailing-list" type="submit">${icon("check")}<span>${escapeHtml(uid ? tx("Save mailing list", "儲存郵件群組") : tx("Create mailing list", "建立郵件群組"))}</span></button></footer>
   </form>`;
 }
@@ -5071,7 +5167,13 @@ const formText = (data: FormData, name: string): string => String(data.get(name)
 const pimEditorFingerprint = (): string | null => {
   const form = app.querySelector<HTMLFormElement>('[data-testid="pim-editor"] form');
   if (!form) return null;
-  return JSON.stringify([...new FormData(form).entries()].map(([name, value]) => [name, typeof value === "string" ? value : value.name]));
+  const entries = [...new FormData(form).entries()]
+    .filter(([name]) => name !== "memberUids")
+    .map(([name, value]) => [name, typeof value === "string" ? value : value.name]);
+  if (state.pimEditor?.kind === "mailing-list") {
+    for (const memberUid of [...(state.pimDraftMemberUids ?? new Set<string>())].sort()) entries.push(["memberUids", memberUid]);
+  }
+  return JSON.stringify(entries);
 };
 
 const updatePimEditorDirty = (): void => {
@@ -5124,7 +5226,6 @@ const beginPimEditor = (kind: PimEntityKind, uid: string | null, returnFocusKey:
   state.pimDraftMemberUids = kind === "mailing-list"
     ? new Set(uid ? state.mailingLists.find(list => list.uid === uid)?.memberUids ?? [] : [])
     : null;
-  if (kind === "mailing-list") searchFor("mailing-list-members-editor").pattern = "";
   render();
   state.pimEditorBaseline = pimEditorFingerprint();
   state.pimEditorDirty = false;
@@ -6200,6 +6301,11 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "focus-notification-search":
       focusByKey("search-notifications");
       break;
+    case "focus-pim-search": {
+      const key = button.dataset.searchKey;
+      if (key && isPimSearchKey(key)) focusByKey(`search-${key}`);
+      break;
+    }
     case "focus-tab-search": {
       const key = button.dataset.searchKey;
       if (key && isTabDiscoverySearchKey(key)) focusByKey(`search-${key}`);
@@ -7348,6 +7454,10 @@ document.addEventListener("keydown", event => {
     else if (state.commandPaletteOpen) state.commandPaletteOpen = false;
     else if (state.historyCalendar.open) { event.preventDefault(); closeHistoryCalendar(); return; }
     else if (state.changelogCalendar.open) { event.preventDefault(); closeChangelogCalendar(); return; }
+    else if (state.pimEditor && searchFor("mailing-list-members-editor").builderOpen) {
+      searchFor("mailing-list-members-editor").builderOpen = false;
+      pendingFocusKey = "search-mailing-list-members-editor";
+    }
     else if (state.pimEditor) { event.preventDefault(); requestPimEditorClose(); return; }
     else if (state.appearanceEditor) { event.preventDefault(); closeTabAppearanceEditor(); return; }
     else if (state.contextMenu) { event.preventDefault(); closeTabContextMenu(); return; }
