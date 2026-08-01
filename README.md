@@ -33,11 +33,11 @@ The current foundation provides:
 - MIME parsing and a conservative HTML sanitizer that removes active and remotely loaded content;
 - Windows-backed credential encryption through Electron `safeStorage` before account secrets reach the JSON state file;
 - serialized, temporary-file-backed JSON state writes; demo mail data; notification history; append-only-style history records; export hooks; and external-editor discovery;
-- a bounded JavaScript regular-expression engine helper with plain-text mode, syntax validation, match limits, capture groups, zero-width handling, and basic risky-pattern rejection;
+- shared plain-text-first search fields with adjacent bounded JavaScript regular-expression builders, including a focused command-palette integration with syntax validation, bilingual-label matching, match limits, capture groups, zero-width handling, and basic risky-pattern rejection;
 - an integrated local organizer for structured contacts, mailing lists, bounded vCard import/export, a Home calendar, events, tasks, append-only transaction recovery, cross-process-safe atomic persistence, and stale-refresh protection;
 - an NSIS x64 packaging configuration with a recorded local lifecycle proof for an earlier tree; the current corrections still require a rebuilt installer and clean-machine verification.
 
-The renderer is integrated with the typed mail and local-organizer preload surface. The current tree passes `npm run check` with 22 unit/integration files and 96 tests, all bundled-asset/site/source-policy checks, and a production build; the real Electron suite passes 15 of 15 scenarios, including restart, redirect/IPC trust, async mail-view ownership, compose and PIM concurrency, dirty-state/focus, bilingual narrow-layout, and PIM failure/retry paths. This is local development evidence, not release certification. Rebuilt-installer and clean-machine proof, the full screen-reader/display-scale matrix, remote PIM synchronization, and live public-provider verification are still incomplete. See [Roadmap](ROADMAP.md) for the explicit gaps.
+The renderer is integrated with the typed mail and local-organizer preload surface. The current tree passes `npm run check` with 35 unit/integration files and 164 tests, all bundled-asset/site/source-policy checks, and a production build; the previously recorded real-Electron suite passed 15 of 15 scenarios, and the focused command-palette search scenario passes 1 of 1. This is local development evidence, not release certification. Rebuilt-installer and clean-machine proof, the complete every-search-surface and screen-reader/display-scale matrices, remote PIM synchronization, and live public-provider verification are still incomplete. See [Roadmap](ROADMAP.md) for the explicit gaps.
 
 </details>
 

@@ -2,11 +2,13 @@
 
 ## Status
 
-**Core matcher tests pass; surface coverage is being integrated.** JavaScript regex evaluation is local and bounded, but not isolated by a hard timeout.
+**Core matcher and command-palette integration tests pass; the complete every-surface matrix remains open.** JavaScript regex evaluation is local and bounded, but not isolated by a hard timeout.
 
 ## Behavior
 
 Every search begins in literal plain-text mode. An adjacent button opens a non-modal builder anchored to that field. Regex mode supports guided inserts for literals, character classes, anchors, groups, alternation, and quantifiers; raw editing; flags; sample text; syntax feedback; live matches; capture groups; copy; and export. Each field keeps independent pattern, flags, sample, validation, and open state.
+
+Settings, semantic and whole-workspace History, Notifications, the four Tab Manager discovery scopes, Tab Manager bulk close, and the command palette all use this shared field-bound renderer path. The command palette resets to an empty plain-text model whenever it opens, searches the visible English and Cantonese command labels, and executes <kbd>Enter</kbd> only from its search input when the current model yields a result. Invalid or risky regex patterns yield no executable command. <kbd>Escape</kbd> closes the palette's builder before it closes the palette itself.
 
 The real engine is JavaScript `RegExp`. Supported flags are `i`, `m`, `s`, and `u`; duplicate and unsupported flags are removed. Zero-width matches advance safely.
 
@@ -22,7 +24,7 @@ The real engine is JavaScript `RegExp`. Supported flags are `i`, `m`, `s`, and `
 
 - JavaScript regex has no built-in timeout; patterns outside the current heuristic may still backtrack badly.
 - Flag normalization silently drops unsupported flags, so the UI must show the normalized result.
-- Search behavior can drift if a field copies rather than shares its own displayed model.
+- Search behavior can drift if a field copies rather than shares its own displayed model. The command palette no longer keeps a separate lowercase-only query string.
 - Empty or invalid patterns must never trigger bulk close.
 - Unicode behavior follows JavaScript, not PCRE, .NET, or another application's search dialect.
 
@@ -32,7 +34,7 @@ Patterns and samples remain local and must not be persisted without user intent.
 
 ## Verification
 
-Four focused tests cover literal plain-text behavior, case-insensitivity, captures, zero-width progress, invalid syntax, risky nested quantifiers, and supported-flag normalization. Full tests are still needed for Unicode, multiline/dotall, 2,048/50,000/200 limits, every search surface, export, keyboard focus, and adversarial time bounds.
+Eight focused matcher and command-filter assertions cover literal plain-text behavior, case-insensitivity, bilingual command labels, captures, zero-width progress, invalid syntax, risky nested quantifiers, empty defaults, and supported-flag normalization. One real-Electron scenario covers command-palette focus, literal default behavior, physical builder anchoring, invalid-state exposure, disabled invalid execution, nested <kbd>Escape</kbd>, validated regex filtering, and <kbd>Enter</kbd> activation. Full tests are still needed for Unicode, multiline/dotall, 2,048/50,000/200 limits, every remaining search workflow, copy/export, broader keyboard focus, and adversarial time bounds.
 
 ## Suggested articles
 

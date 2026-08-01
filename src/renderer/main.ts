@@ -68,6 +68,7 @@ import {
   type MatchMode,
 } from "./lib/regex";
 import { diffLineDescription, filterLocalRevisions } from "./lib/local-history";
+import { filterPaletteCommands } from "./lib/command-search";
 
 type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
 type ToastKind = NotificationRecord["kind"];
@@ -204,7 +205,6 @@ interface RendererState {
   contextMenu: ContextMenuState | null;
   appearanceEditor: AppearanceEditorState | null;
   commandPaletteOpen: boolean;
-  commandQuery: string;
   confirmation: ConfirmationState | null;
   filters: FiltersState;
   changelogDates: ChangelogDateInputs;
@@ -316,7 +316,6 @@ const state: RendererState = {
   contextMenu: null,
   appearanceEditor: null,
   commandPaletteOpen: false,
-  commandQuery: "",
   confirmation: null,
   filters: { historyFrom: "", historyTo: "", historyActions: new Set() },
   changelogDates: readChangelogDateInputs(sessionStorage),
@@ -2520,10 +2519,16 @@ const paletteCommands = (): PaletteCommand[] => [
   { id: "editor", en: "Open in external editor", yue: "用外部編輯器開啟", icon: "tools", shortcut: "Alt+E" },
 ];
 
+const resetCommandPaletteSearch = (): void => {
+  delete state.searches.commands;
+};
+
 function renderCommandPalette(): string {
-  const query = state.commandQuery.trim().toLocaleLowerCase();
-  const commands = paletteCommands().filter(command => !query || `${command.en} ${command.yue}`.toLocaleLowerCase().includes(query));
-  return `<div class="modal-layer palette-layer"><section class="command-palette" role="dialog" aria-modal="true" aria-labelledby="palette-title"><header><div><p class="eyebrow">${escapeHtml(tx("KEYBOARD FIRST", "鍵盤優先"))}</p><h2 id="palette-title">${escapeHtml(tx("Command palette", "指令面板"))}</h2></div><button class="icon-button" type="button" data-action="close-command-palette" aria-label="${escapeHtml(tx("Close command palette", "關閉指令面板"))}">${icon("close")}</button></header><div class="palette-search">${icon("search")}<input type="search" value="${escapeHtml(state.commandQuery)}" data-command-query data-focus-key="command-query" placeholder="${escapeHtml(tx("Type a command or destination", "輸入指令或者目的地"))}" aria-label="${escapeHtml(tx("Search commands", "搜尋指令"))}" autocomplete="off"/></div><div class="command-list" role="listbox">${commands.length ? commands.map((command, index) => `<button type="button" role="option" aria-selected="${index === 0}" data-action="run-command" data-command-id="${escapeHtml(command.id)}">${icon(command.icon)}<span><strong>${escapeHtml(tx(command.en, command.yue))}</strong></span>${command.shortcut ? `<kbd>${escapeHtml(command.shortcut)}</kbd>` : ""}</button>`).join("") : `<p class="empty-inline">${escapeHtml(tx("No matching commands", "冇符合嘅指令"))}</p>`}</div></section></div>`;
+  const model = searchFor("commands");
+  const validation = validatePattern(model);
+  const invalid = model.mode === "regex" && model.pattern.length > 0 && !validation.valid;
+  const commands = filterPaletteCommands(paletteCommands(), model);
+  return `<div class="modal-layer palette-layer"><section class="command-palette" data-testid="command-palette" role="dialog" aria-modal="true" aria-labelledby="palette-title"><header><div><p class="eyebrow">${escapeHtml(tx("KEYBOARD FIRST", "鍵盤優先"))}</p><h2 id="palette-title">${escapeHtml(tx("Command palette", "指令面板"))}</h2></div><button class="icon-button" type="button" data-action="close-command-palette" aria-label="${escapeHtml(tx("Close command palette", "關閉指令面板"))}">${icon("close")}</button></header><div class="palette-search">${renderSearchField("commands", tx("Type a command or destination", "輸入指令或者目的地"))}</div><div class="command-list" role="listbox" aria-label="${escapeHtml(tx("Matching commands", "符合嘅指令"))}">${commands.length ? commands.map((command, index) => `<button type="button" role="option" aria-selected="${index === 0}" data-action="run-command" data-command-id="${escapeHtml(command.id)}">${icon(command.icon)}<span><strong>${escapeHtml(tx(command.en, command.yue))}</strong></span>${command.shortcut ? `<kbd>${escapeHtml(command.shortcut)}</kbd>` : ""}</button>`).join("") : `<p class="empty-inline" ${invalid ? `role="alert"` : `role="status"`}>${escapeHtml(invalid ? tx("Correct the regular expression before running a command.", "修正正規表達式先可以執行指令。") : tx("No matching commands", "冇符合嘅指令"))}</p>`}</div></section></div>`;
 }
 
 function showConfirmation(confirmation: ConfirmationState, returnFocusKey?: string | null): void {
@@ -3725,6 +3730,7 @@ const sampleForSearch = (key: string): string => {
   if (key === "calendar-events") return state.calendarEvents.slice(0, 30).map(event => `${event.title}\n${event.location ?? ""}\n${event.description ?? ""}`).join("\n\n");
   if (key === "tasks") return state.tasks.slice(0, 30).map(task => `${task.title}\n${task.status}\n${task.description ?? ""}`).join("\n\n");
   if (key === "pim-history") return state.pimTransactions.slice(-50).map(transaction => `${transaction.action} ${transaction.entityKind} ${transaction.entityUid}`).join("\n");
+  if (key === "commands") return paletteCommands().map(command => `${command.en}\n${command.yue}`).join("\n\n");
   if (key.startsWith("tabs") || key === "bulk-tabs" || key === "tab-groups") return TAB_DEFINITIONS.map(tab => `${tab.en} · ${tab.yue}`).join("\n");
   return "Invoice #20261 arrived. Receipt 4471 is attached.\n發票 #20261 已到，收據 4471 已附上。";
 };
@@ -3778,7 +3784,7 @@ const toggleRowStar = async (id: string): Promise<void> => {
 
 const runPaletteCommand = (commandId: string): void => {
   state.commandPaletteOpen = false;
-  state.commandQuery = "";
+  resetCommandPaletteSearch();
   if (commandId === "compose") openComposer();
   else if (commandId === "sync") void syncCurrentAccount();
   else if (commandId === "regex") {
@@ -3804,8 +3810,8 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "activate-tab": if (pageId && ALL_TAB_IDS.includes(pageId)) activateTab(pageId); break;
     case "open-notifications": activateTab("notifications"); break;
     case "open-command-palette":
-      state.commandPaletteOpen = true; state.commandQuery = ""; render();
-      requestAnimationFrame(() => document.querySelector<HTMLInputElement>("[data-command-query]")?.focus());
+      state.commandPaletteOpen = true; resetCommandPaletteSearch(); render();
+      requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-focus-key="search-commands"]')?.focus());
       break;
     case "close-command-palette": state.commandPaletteOpen = false; render(); break;
     case "run-command": if (button.dataset.commandId) runPaletteCommand(button.dataset.commandId); break;
@@ -4323,7 +4329,6 @@ app.addEventListener("input", event => {
     persistChangelogDateInputs(sessionStorage, state.changelogDates);
     render(); return;
   }
-  if (control.dataset.commandQuery !== undefined) { state.commandQuery = control.value; render(); return; }
   if (control.name === "percentComplete" && control instanceof HTMLInputElement) {
     const output = control.closest("label")?.querySelector<HTMLOutputElement>("output");
     if (output) output.value = `${control.value}%`;
@@ -4445,7 +4450,7 @@ document.addEventListener("keydown", event => {
     return;
   }
   if (event.ctrlKey && event.key.toLowerCase() === "k") {
-    event.preventDefault(); state.commandPaletteOpen = true; state.commandQuery = ""; render(); requestAnimationFrame(() => document.querySelector<HTMLInputElement>("[data-command-query]")?.focus()); return;
+    event.preventDefault(); state.commandPaletteOpen = true; resetCommandPaletteSearch(); render(); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-focus-key="search-commands"]')?.focus()); return;
   }
   if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "n") { event.preventDefault(); openComposer(); return; }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "s") { event.preventDefault(); void syncCurrentAccount(); return; }
@@ -4458,7 +4463,11 @@ document.addEventListener("keydown", event => {
     event.preventDefault(); document.querySelector<HTMLButtonElement>('[data-compose-submit="send"]')?.click(); return;
   }
   if (event.key === "Escape") {
-    if (state.commandPaletteOpen) state.commandPaletteOpen = false;
+    if (state.commandPaletteOpen && searchFor("commands").builderOpen) {
+      searchFor("commands").builderOpen = false;
+      pendingFocusKey = "search-commands";
+    }
+    else if (state.commandPaletteOpen) state.commandPaletteOpen = false;
     else if (state.pimEditor) { event.preventDefault(); requestPimEditorClose(); return; }
     else if (state.appearanceEditor) { event.preventDefault(); closeTabAppearanceEditor(); return; }
     else if (state.contextMenu) { event.preventDefault(); closeTabContextMenu(); return; }
@@ -4522,8 +4531,8 @@ document.addEventListener("keydown", event => {
     const message = messages[index]; if (message) void loadMessage(message); return;
   }
   if (!editable && event.key === "/" && state.activeTab === "mail") { event.preventDefault(); document.querySelector<HTMLInputElement>('[data-focus-key="search-mail"]')?.focus(); return; }
-  if (state.commandPaletteOpen && event.key === "Enter") {
-    const first = paletteCommands().find(command => !state.commandQuery || `${command.en} ${command.yue}`.toLocaleLowerCase().includes(state.commandQuery.toLocaleLowerCase()));
+  if (state.commandPaletteOpen && event.key === "Enter" && target instanceof HTMLInputElement && target.dataset.searchKey === "commands") {
+    const first = filterPaletteCommands(paletteCommands(), searchFor("commands"))[0];
     if (first) { event.preventDefault(); runPaletteCommand(first.id); }
   }
 });
