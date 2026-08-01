@@ -1,6 +1,6 @@
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
-import { app, BrowserWindow, ipcMain, session, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, ipcMain, Notification, session, shell, type IpcMainInvokeEvent } from "electron";
 import type { z } from "zod";
 import { AppService } from "./app-service.js";
 import type {
@@ -98,6 +98,13 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("preferences:save", ipcPayloadSchemas.preferences, ([patch]) => service.savePreferences(patch));
   handleValidated("notifications:read", ipcPayloadSchemas.notificationRead, ([id, read]) => service.markNotificationRead(id, read));
   handleValidated("notifications:clear", ipcPayloadSchemas.none, () => service.clearNotifications());
+  handleValidated("notifications:native", ipcPayloadSchemas.nativeNotification, async ([kind]) => {
+    if (!(await service.getPreferences()).nativeNotificationsEnabled || !Notification.isSupported()) return false;
+    const title = "Material Email";
+    const body = kind === "error" ? "An email task needs your attention." : kind === "warning" ? "An email task needs review." : kind === "success" ? "An email task finished." : "Material Email has an update.";
+    new Notification({ title, body, silent: true }).show();
+    return true;
+  });
   handleValidated("history:restore", ipcPayloadSchemas.historyId, ([id]) => service.restoreHistory(id));
   handleValidated("history:list-local", ipcPayloadSchemas.none, () => service.listLocalRevisions());
   handleValidated("history:restore-local", ipcPayloadSchemas.revisionHash, ([hash]) => service.restoreLocalRevision(hash));

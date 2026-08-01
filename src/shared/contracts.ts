@@ -181,6 +181,7 @@ export interface Preferences {
   dimSumEnabled: boolean;
   narratorEnabled: boolean;
   narratorLanguage: LanguageMode;
+  nativeNotificationsEnabled: boolean;
   externalEditorPath?: string;
   selectedAccountId?: string;
   selectedFolderPath?: string;
@@ -264,6 +265,7 @@ export interface MaterialEmailApi {
   cancelOutbox(accountId: string, outboxId: string): Promise<ComposeDraft>;
   retryOutbox(accountId: string, outboxId: string): Promise<SendResult>;
   savePreferences(patch: Partial<Preferences>): Promise<Preferences>;
+  nativeNotification(kind: NotificationRecord["kind"]): Promise<boolean>;
   markNotificationRead(id: string, read: boolean): Promise<void>;
   clearNotifications(): Promise<void>;
   restoreHistory(id: string): Promise<HistoryRecord>;

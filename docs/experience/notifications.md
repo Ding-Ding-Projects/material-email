@@ -2,7 +2,7 @@
 
 ## Status
 
-**Service and renderer foundation.** In-app records, toasts, unread state, and history exist. Native Windows notifications are open.
+**Service and renderer foundation.** In-app records, toasts, unread state, history, and opt-in native Windows summaries exist.
 
 ## Behavior
 
@@ -13,6 +13,8 @@ The renderer presents non-decision feedback as corner toasts with dismiss contro
 ## Configuration
 
 Notification language and tone follow the global language and independent humor settings. Narration, if enabled, is separate and off by default. A future privacy setting should control subject/sender details in native banners and lock-screen surfaces.
+
+Native Windows notifications are off by default and can be enabled in Settings. They emit only a generic severity summary; message bodies, subjects, recipients, attachment names, credentials, and account identifiers never cross the native-notification IPC boundary.
 
 ## Failure modes
 
@@ -35,4 +37,3 @@ Source inspection confirms record creation, the 500-record cap, read/clear opera
 - [Language and humor controls](language-and-humor.md)
 - [Local state and history](../data/local-state-and-history.md)
 - [Material interface and accessibility](material-interface-and-accessibility.md)
-

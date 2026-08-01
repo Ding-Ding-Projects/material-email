@@ -63,6 +63,7 @@ const defaultPreferences = (): Preferences => ({
   dimSumEnabled: true,
   narratorEnabled: false,
   narratorLanguage: "en",
+  nativeNotificationsEnabled: false,
 });
 
 const folderKey = (accountId: string, folderPath: string): string => `${accountId}\u0000${folderPath}`;
@@ -776,6 +777,10 @@ export class AppService {
       this.#record(state, "settings-changed", "settings", "preferences", "Changed application settings", before);
     });
     return next.preferences;
+  }
+
+  async getPreferences(): Promise<Preferences> {
+    return (await this.#store.read()).preferences;
   }
 
   async markNotificationRead(id: string, read: boolean): Promise<void> {

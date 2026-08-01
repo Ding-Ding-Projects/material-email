@@ -47,6 +47,7 @@ describe("Electron security boundary", () => {
       "preferences:save",
       "notifications:read",
       "notifications:clear",
+      "notifications:native",
       "history:restore",
       "history:list-local",
       "history:restore-local",

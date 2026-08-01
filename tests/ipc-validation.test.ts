@@ -49,7 +49,7 @@ describe("non-PIM IPC validation", () => {
   });
 
   it("strictly validates preference names, values, and native editor paths", () => {
-    expect(ipcPayloadSchemas.preferences.parse([{ theme: "dark", funnyEnglish: 5 }])).toEqual([{ theme: "dark", funnyEnglish: 5 }]);
+    expect(ipcPayloadSchemas.preferences.parse([{ theme: "dark", funnyEnglish: 5 }])).toEqual([{ theme: "dark", funnyEnglish: 5, nativeNotificationsEnabled: false }]);
     expect(() => ipcPayloadSchemas.preferences.parse([{ funnyEnglish: 6 }])).toThrow();
     expect(() => ipcPayloadSchemas.preferences.parse([{ inventedSetting: true }])).toThrow();
     expect(ipcPayloadSchemas.editorOpen.parse([undefined])).toEqual([undefined]);

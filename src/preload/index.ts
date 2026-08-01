@@ -33,6 +33,7 @@ const api: MaterialEmailApi = {
   savePreferences: patch => ipcRenderer.invoke("preferences:save", patch),
   markNotificationRead: (id, read) => ipcRenderer.invoke("notifications:read", id, read),
   clearNotifications: () => ipcRenderer.invoke("notifications:clear"),
+  nativeNotification: kind => ipcRenderer.invoke("notifications:native", kind),
   restoreHistory: id => ipcRenderer.invoke("history:restore", id),
   listLocalRevisions: () => ipcRenderer.invoke("history:list-local"),
   restoreLocalRevision: hash => ipcRenderer.invoke("history:restore-local", hash),

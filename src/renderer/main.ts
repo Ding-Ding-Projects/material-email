@@ -243,6 +243,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   dimSumEnabled: true,
   narratorEnabled: false,
   narratorLanguage: "en",
+  nativeNotificationsEnabled: false,
 };
 
 const defaultTabs = (): TabPreferences => ({
@@ -562,6 +563,7 @@ const pushToast = (kind: ToastKind, title: string, body: string, cantoneseTitle 
   renderToasts();
   if (kind === "error") announce(`${item.title}. ${item.body}`);
   narrate(`${title}. ${body}`, `${cantoneseTitle}。${cantoneseBody}`);
+  if (preferences().nativeNotificationsEnabled) void api.nativeNotification(kind);
   if (kind === "info" || kind === "success") {
     const timer = window.setTimeout(() => dismissToast(item.id), kind === "success" ? 5_000 : 7_000);
     toastTimers.set(item.id, timer);
@@ -1935,6 +1937,7 @@ function renderLanguageSettings(prefs: Preferences): string {
       <label class="field field--range"><span>${escapeHtml(tx("English funny level", "英文搞笑程度"))} <output data-pref-output="funnyEnglish">${prefs.funnyEnglish}</output>/5</span><input type="range" min="1" max="5" step="1" value="${prefs.funnyEnglish}" data-pref="funnyEnglish"/></label>
       <label class="field field--range"><span>${escapeHtml(tx("Cantonese funny level", "廣東話搞笑程度"))} <output data-pref-output="funnyCantonese">${prefs.funnyCantonese}</output>/5</span><input type="range" min="1" max="5" step="1" value="${prefs.funnyCantonese}" data-pref="funnyCantonese"/></label>
       <label class="switch-row"><span><strong>${escapeHtml(tx("Optional narrator", "選用旁白"))}</strong><small>${escapeHtml(tx("Off by default; speaks one event at a time.", "預設關閉；每次只讀一個事件。"))}</small></span><input type="checkbox" role="switch" data-pref="narratorEnabled" ${prefs.narratorEnabled ? "checked" : ""}/></label>
+      <label class="switch-row"><span><strong>${escapeHtml(tx("Native Windows notifications", "原生 Windows 通知"))}</strong><small>${escapeHtml(tx("Off by default. Shows only generic, privacy-safe summaries; never message text or recipients.", "預設關閉。只顯示通用、保障私隱嘅摘要；永遠唔會顯示郵件內容或者收件人。"))}</small></span><input type="checkbox" role="switch" data-pref="nativeNotificationsEnabled" ${prefs.nativeNotificationsEnabled ? "checked" : ""}/></label>
       <label class="field"><span>${escapeHtml(tx("Narrator language", "旁白語言"))}</span><select data-pref="narratorLanguage" ${!prefs.narratorEnabled ? "disabled" : ""}><option value="en" ${prefs.narratorLanguage === "en" ? "selected" : ""}>English</option><option value="yue" ${prefs.narratorLanguage === "yue" ? "selected" : ""}>香港粵語</option><option value="bilingual" ${prefs.narratorLanguage === "bilingual" ? "selected" : ""}>English, then 香港粵語</option></select></label>
       <label class="switch-row"><span><strong>${escapeHtml(tx("One-percent dim-sum surprise", "百分之一點心驚喜"))}</strong><small>${escapeHtml(tx("Non-blocking, local, and disabled during first run or errors.", "唔阻住你、只用本機，而且首次啟動同錯誤流程唔會出現。"))}</small></span><input type="checkbox" role="switch" data-pref="dimSumEnabled" ${prefs.dimSumEnabled ? "checked" : ""}/></label>
     </div>
@@ -2443,6 +2446,7 @@ const preferencePatchFromControl = (control: HTMLInputElement | HTMLSelectElemen
     case "fontWeight": return { fontWeight: Math.min(700, Math.max(300, Number(control.value))) };
     case "dimSumEnabled": return control instanceof HTMLInputElement ? { dimSumEnabled: control.checked } : null;
     case "narratorEnabled": return control instanceof HTMLInputElement ? { narratorEnabled: control.checked } : null;
+    case "nativeNotificationsEnabled": return control instanceof HTMLInputElement ? { nativeNotificationsEnabled: control.checked } : null;
     case "accent": return { accent: control.value.slice(0, 64) };
     case "fontFamily": return { fontFamily: control.value.slice(0, 120) };
     case "externalEditorPath": return { externalEditorPath: control.value };
