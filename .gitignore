@@ -1,0 +1,17 @@
+node_modules/
+node_modules.corrupt*/
+dist/
+release/
+coverage/
+.vite/
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+playwright-report/
+test-results/
+
+# Local legacy design/reference bundle. It contains superseded implementation
+# experiments and machine-specific infrastructure notes; never publish it.
+design/

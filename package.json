@@ -1,0 +1,87 @@
+{
+  "name": "material-email",
+  "productName": "Material Email",
+  "version": "0.1.0",
+  "description": "A lively, local-first Material Design email client for Windows.",
+  "author": "Ding Ding Projects",
+  "license": "MPL-2.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "npm run build && playwright test",
+    "verify:assets": "node scripts/verify-dim-sum-assets.mjs",
+    "verify:site": "node scripts/verify-site.mjs",
+    "verify:source-policy": "node scripts/verify-source-policy.mjs",
+    "check": "npm run typecheck && npm test && npm run verify:assets && npm run verify:site && npm run verify:source-policy && npm run build",
+    "start": "npm run build && electron .",
+    "dist:win": "npm run check && electron-builder --win nsis --x64",
+    "verify:package": "node scripts/verify-package.mjs",
+    "verify:installer": "node scripts/verify-windows-installer.mjs"
+  },
+  "dependencies": {
+    "imapflow": "1.6.5",
+    "mailparser": "3.9.14",
+    "nodemailer": "9.0.3",
+    "sanitize-html": "2.17.6",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/mailparser": "3.4.6",
+    "@types/node": "26.1.2",
+    "@types/nodemailer": "8.0.1",
+    "@types/sanitize-html": "2.16.1",
+    "@types/smtp-server": "^3.5.13",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.1",
+    "smtp-server": "^3.19.2",
+    "typescript": "7.0.2",
+    "vite": "8.2.0",
+    "vitest": "4.1.10",
+    "wait-on": "9.1.0"
+  },
+  "build": {
+    "appId": "com.dingdingprojects.materialemail",
+    "productName": "Material Email",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "LICENSE"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Material-Email-${version}-Windows-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "allowScripts": {
+    "electron@43.2.0": true,
+    "esbuild@0.28.1": true,
+    "electron-winstaller@5.4.0": true
+  }
+}

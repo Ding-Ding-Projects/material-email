@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: http://localhost:*; object-src 'none'; frame-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>Material Email</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <div id="app" aria-busy="true">
+      <main class="launch-screen" id="main-content" tabindex="-1">
+        <div class="brand-mark" aria-hidden="true">M</div>
+        <h1>Material Email</h1>
+        <p>Opening your local workspace…</p>
+        <div class="indeterminate-progress" role="progressbar" aria-label="Opening Material Email"></div>
+      </main>
+    </div>
+    <section id="toast-region" class="toast-region" data-testid="toast-region" aria-label="Recent notifications" aria-live="polite"></section>
+    <p id="assertive-status" class="visually-hidden" aria-live="assertive" aria-atomic="true"></p>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

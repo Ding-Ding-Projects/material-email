@@ -1,0 +1,75 @@
+[
+  {
+    "id": "hk-dish-0001",
+    "name": {
+      "en": "Classic Har Gow",
+      "zhHant": "蝦餃"
+    },
+    "file": "hk-dish-0001-classic-har-gow.png",
+    "sha256": "c6ff2d32938f1e4c4ea685442f69227b8cd387f302ab8f8a62e8dd96c62b5ac0",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0002",
+    "name": { "en": "Scallop Har Gow", "zhHant": "帶子蝦餃" },
+    "file": "hk-dish-0002-scallop-har-gow.png",
+    "sha256": "a7c6469b52794d32ceedf3fd53e38b3afc493e1062e261f21e5e6f8a201e12d5",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0003",
+    "name": { "en": "Bamboo Shoot Har Gow", "zhHant": "筍尖蝦餃" },
+    "file": "hk-dish-0003-bamboo-shoot-har-gow.png",
+    "sha256": "0b4165212c975f47076385acf9e01ed686c9974765d6476cc3cb36bbe46e45ad",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0004",
+    "name": { "en": "Crab Roe Har Gow", "zhHant": "蟹籽蝦餃" },
+    "file": "hk-dish-0004-crab-roe-har-gow.png",
+    "sha256": "170928f69d2b9d61b7422aa3f349900c9c7140ecce9911e603537e4cf266d5de",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0005",
+    "name": { "en": "Chive Shrimp Dumpling", "zhHant": "韭菜蝦餃" },
+    "file": "hk-dish-0005-chive-shrimp-dumpling.png",
+    "sha256": "6087d6504ef741a6db1dcb6c3b4ae73e70e15922772b52c7b1d8f7f269a33b72",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0006",
+    "name": { "en": "Spinach Shrimp Dumpling", "zhHant": "菠菜蝦餃" },
+    "file": "hk-dish-0006-spinach-shrimp-dumpling.png",
+    "sha256": "d4352c2dbaa0b3189b5d098387fc18c4a1e0cd19f237d1f300906e302ea2ff95",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0007",
+    "name": { "en": "Pea Shoot Shrimp Dumpling", "zhHant": "豆苗蝦餃" },
+    "file": "hk-dish-0007-pea-shoot-shrimp-dumpling.png",
+    "sha256": "8533ed80c55915c46d5da80449d710df2d93f03e498b2a66979416b451cfc805",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0008",
+    "name": { "en": "Lobster Dumpling", "zhHant": "龍蝦餃" },
+    "file": "hk-dish-0008-lobster-dumpling.png",
+    "sha256": "96ccc6dbd7e7bfbe941fb286071a444cfff5a29632ea3f45fe9eea2b7469d4c0",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0009",
+    "name": { "en": "Dried Scallop Shrimp Dumpling", "zhHant": "瑤柱蝦餃" },
+    "file": "hk-dish-0009-dried-scallop-shrimp-dumpling.png",
+    "sha256": "3d479c48358e2fa49c0dbefbfa4244659cf27ab1ffee3d4ac7438276b380342f",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  },
+  {
+    "id": "hk-dish-0010",
+    "name": { "en": "Cuttlefish Shrimp Dumpling", "zhHant": "墨魚蝦餃" },
+    "file": "hk-dish-0010-cuttlefish-shrimp-dumpling.png",
+    "sha256": "9c15ef619f546f910fc961c5cfa6fb33ad5be3fe923a7c551b875f0ec5bdc6b2",
+    "catalogCommit": "dfb95a20e647d921242358988ada9c5436c78b3d"
+  }
+]

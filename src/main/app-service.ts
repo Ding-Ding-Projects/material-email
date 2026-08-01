@@ -1,0 +1,1186 @@
+import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
+import { randomUUID } from "node:crypto";
+import { app, dialog, safeStorage } from "electron";
+import type {
+  AccountDraft,
+  AccountDiscoveryResult,
+  AccountSummary,
+  BootstrapState,
+  ComposeDraft,
+  FolderSummary,
+  HistoryRecord,
+  MessageDetail,
+  MessageSummary,
+  NotificationRecord,
+  Preferences,
+  LocalRevision,
+  ReleaseIdentity,
+  CalendarEvent,
+  CalendarEventPatch,
+  Contact,
+  ContactPatch,
+  CreateCalendarEventInput,
+  CreateContactInput,
+  CreateMailingListInput,
+  CreateTaskInput,
+  MailingList,
+  MailingListPatch,
+  PimTransaction,
+  Task,
+  TaskPatch,
+  TransactionFilter,
+  VCardImportResult,
+  SendResult,
+  SyncResult,
+} from "../shared/contracts.js";
+import { JsonStore } from "./storage.js";
+import { HistoryRepository } from "./history-repository.js";
+import { AccountDiscoveryService } from "./account-discovery.js";
+import { PimService } from "./pim/index.js";
+import { MailService, type MailMoveResult, type RuntimeAccount } from "./mail-service.js";
+import { accountDraftSchema, composeDraftSchema, preferencesPatchSchema, preferencesSchema } from "./ipc-validation.js";
+import { AttachmentAuthorization, inspectEditorExecutable, sameWindowsPath } from "./local-file-authorization.js";
+import { parsePersistedState, type PersistedState, type StoredAccount } from "./persisted-state.js";
+import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
+
+const execFileAsync = promisify(execFile);
+
+const defaultPreferences = (): Preferences => ({
+  language: "en",
+  funnyEnglish: 2,
+  funnyCantonese: 3,
+  theme: "system",
+  density: "comfortable",
+  accent: "#6750A4",
+  fontFamily: "Segoe UI Variable",
+  fontScale: 1,
+  fontWeight: 400,
+  dimSumEnabled: true,
+  narratorEnabled: false,
+  narratorLanguage: "en",
+});
+
+const folderKey = (accountId: string, folderPath: string): string => `${accountId}\u0000${folderPath}`;
+
+const sameStringList = (left: string[] | undefined, right: string[] | undefined): boolean =>
+  left === right || (left !== undefined && right !== undefined && left.length === right.length && left.every((value, index) => value === right[index]));
+
+const sameDraftSnapshot = (left: ComposeDraft | undefined, right: ComposeDraft | undefined): boolean =>
+  left === right ||
+  (left !== undefined &&
+    right !== undefined &&
+    left.id === right.id &&
+    left.accountId === right.accountId &&
+    sameStringList(left.to, right.to) &&
+    sameStringList(left.cc, right.cc) &&
+    sameStringList(left.bcc, right.bcc) &&
+    left.subject === right.subject &&
+    left.text === right.text &&
+    left.inReplyTo === right.inReplyTo &&
+    sameStringList(left.references, right.references) &&
+    sameStringList(left.attachments, right.attachments));
+
+const isMailboxGenerationMismatch = (error: unknown): boolean =>
+  Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "MAILBOX_GENERATION_MISMATCH");
+
+const demoAccount = (): AccountSummary => ({
+  id: "demo",
+  displayName: "Material Email Demo",
+  email: "demo@material-email.local",
+  incoming: { host: "demo.local", port: 993, security: "tls", username: "demo" },
+  outgoing: { host: "demo.local", port: 465, security: "tls", username: "demo" },
+  authMode: "password",
+  kind: "demo",
+  createdAt: new Date().toISOString(),
+});
+
+const demoFolders = (): FolderSummary[] => [
+  { accountId: "demo", path: "Inbox", name: "Inbox", role: "inbox", unread: 2, total: 4 },
+  { accountId: "demo", path: "Drafts", name: "Drafts", role: "drafts", unread: 0, total: 1 },
+  { accountId: "demo", path: "Sent", name: "Sent", role: "sent", unread: 0, total: 1 },
+  { accountId: "demo", path: "Archive", name: "Archive", role: "archive", unread: 0, total: 0 },
+  { accountId: "demo", path: "Junk", name: "Junk", role: "junk", unread: 0, total: 0 },
+  { accountId: "demo", path: "Trash", name: "Trash", role: "trash", unread: 0, total: 0 },
+];
+
+const demoMessages = (): { summaries: MessageSummary[]; details: MessageDetail[] } => {
+  const rows = [
+    {
+      uid: 104,
+      from: [{ name: "Nadia Chan", address: "nadia@example.test" }],
+      subject: "Launch checklist for Friday",
+      date: "2026-07-31T14:42:00.000Z",
+      text: "Hi team,\n\nThe final checklist is attached to the project. Please review the accessibility and offline-sync rows before Friday morning.\n\nThanks,\nNadia",
+      unread: true,
+      starred: true,
+    },
+    {
+      uid: 103,
+      from: [{ name: "Kai Wong", address: "kai@example.test" }],
+      subject: "Re: keyboard navigation notes",
+      date: "2026-07-31T13:15:00.000Z",
+      text: "The tab strip now keeps focus when items move. I also checked the narrow layout at 200% scaling.",
+      unread: true,
+      starred: false,
+    },
+    {
+      uid: 102,
+      from: [{ name: "Build service", address: "build@example.test" }],
+      subject: "Windows package completed",
+      date: "2026-07-30T22:20:00.000Z",
+      text: "The Windows package completed. This demo message is local and does not represent a release or external CI result.",
+      unread: false,
+      starred: false,
+    },
+    {
+      uid: 101,
+      from: [{ name: "Mei Lau", address: "mei@example.test" }],
+      subject: "Dim sum photo catalog",
+      date: "2026-07-29T16:08:00.000Z",
+      text: "The local catalog entry includes bilingual names and meaningful alt text. No network image request is needed.",
+      unread: false,
+      starred: false,
+    },
+  ];
+  const summaries = rows.map(row => ({
+    id: `demo:Inbox:${row.uid}`,
+    accountId: "demo",
+    folderPath: "Inbox",
+    uid: row.uid,
+    messageId: `<demo-${row.uid}@material-email.local>`,
+    from: row.from,
+    to: [{ name: "Material Email Demo", address: "demo@material-email.local" }],
+    cc: [],
+    subject: row.subject,
+    date: row.date,
+    preview: row.text.replace(/\s+/g, " ").slice(0, 180),
+    unread: row.unread,
+    starred: row.starred,
+    hasAttachments: false,
+    size: row.text.length,
+  } satisfies MessageSummary));
+  const details = summaries.map((summary, index) => ({
+    ...summary,
+    text: rows[index]?.text ?? "",
+    html: `<p>${(rows[index]?.text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`,
+    attachments: [],
+    replyTo: summary.from,
+  } satisfies MessageDetail));
+  return { summaries, details };
+};
+
+export class AppService {
+  readonly #statePath: string;
+  readonly #store: JsonStore<PersistedState>;
+  readonly #mail = new MailService();
+  readonly #historyRepository: HistoryRepository;
+  readonly #discovery = new AccountDiscoveryService();
+  readonly #pim: PimService;
+  readonly #attachmentAuthorization = new AttachmentAuthorization();
+  readonly #detectedEditorPaths = new Set<string>();
+
+  constructor(userDataPath: string) {
+    this.#statePath = path.join(userDataPath, "material-email-state-v1.json");
+    this.#pim = new PimService(userDataPath);
+    this.#historyRepository = new HistoryRepository(path.join(userDataPath, "local-history"), parsePersistedState);
+    this.#store = new JsonStore<PersistedState>(
+      this.#statePath,
+      () => ({
+        schemaVersion: 1,
+        accounts: [],
+        preferences: defaultPreferences(),
+        folders: {},
+        messages: {},
+        details: {},
+        drafts: [],
+        pendingOperations: [],
+        outbox: [],
+        notifications: [],
+        history: [],
+        approvedEditorPaths: [],
+      }),
+      async filePath => {
+        try {
+          await this.#historyRepository.snapshot(filePath);
+        } catch (error) {
+          console.error("Local history snapshot failed; the requested application change was preserved.", error);
+        }
+      },
+      { validate: parsePersistedState },
+    );
+  }
+
+  async bootstrap(): Promise<BootstrapState> {
+    let state = await this.#store.read();
+    const recovery = this.#store.takeRecoveryNotice();
+    if (recovery) {
+      state = await this.#store.update(next => {
+        this.#record(next, "restored", "settings", "application-state", "Recovered local state after an interrupted or corrupt write", {
+          recoverySource: path.basename(recovery.recoveredFrom),
+          corruptOriginalPreserved: Boolean(recovery.quarantinedOriginal),
+        });
+        this.#notify(
+          next,
+          "warning",
+          "Local state recovered",
+          recovery.quarantinedOriginal
+            ? "The primary state was invalid. The newest valid local recovery copy was restored, and the original was preserved for diagnosis."
+            : "An interrupted state replacement was completed from the newest valid local recovery copy.",
+        );
+      });
+    }
+    const release = await this.#releaseIdentity();
+    return {
+      accounts: state.accounts.map(this.#publicAccount),
+      preferences: state.preferences,
+      notifications: state.notifications,
+      history: state.history,
+      isFirstRun: state.accounts.length === 0,
+      version: app.getVersion(),
+      release,
+      pendingOperationCount: state.pendingOperations.length + state.outbox.length,
+    };
+  }
+
+  async createDemoAccount(): Promise<AccountSummary> {
+    const account = demoAccount();
+    const messages = demoMessages();
+    await this.#store.update(state => {
+      if (!state.accounts.some(candidate => candidate.id === account.id)) state.accounts.push(account);
+      state.preferences.selectedAccountId = account.id;
+      state.preferences.selectedFolderPath = "Inbox";
+      state.folders[account.id] = demoFolders();
+      state.messages[folderKey(account.id, "Inbox")] = messages.summaries;
+      for (const detail of messages.details) state.details[detail.id] = detail;
+      this.#record(state, "created", "account", account.id, "Created the local demo workspace", account);
+      this.#notify(state, "success", "Demo workspace ready", "This workspace is fully local. Add a real account from Settings when you are ready.");
+    });
+    return account;
+  }
+
+  async discoverAccount(email: string): Promise<AccountDiscoveryResult[]> {
+    return this.#discovery.discover(email);
+  }
+
+  async addAccount(input: AccountDraft): Promise<AccountSummary> {
+    const draft = accountDraftSchema.parse(input);
+    const existing = await this.#store.read();
+    if (existing.accounts.some(account => account.email.toLowerCase() === draft.email.toLowerCase())) {
+      throw new Error(`An account for ${draft.email} already exists on this computer.`);
+    }
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows credential encryption is not available on this computer.");
+    const account: StoredAccount = {
+      id: randomUUID(),
+      displayName: draft.displayName,
+      email: draft.email,
+      incoming: draft.incoming,
+      outgoing: draft.outgoing,
+      authMode: draft.authMode,
+      kind: "imap",
+      createdAt: new Date().toISOString(),
+      encryptedSecret: safeStorage.encryptString(draft.secret).toString("base64"),
+    };
+    await this.#mail.testAccount(this.#runtimeAccount(account));
+    await this.#store.update(state => {
+      state.accounts.push(account);
+      state.preferences.selectedAccountId = account.id;
+      this.#record(state, "created", "account", account.id, `Added account ${account.email}`, this.#publicAccount(account));
+      this.#notify(state, "success", "Account connected", `${account.email} passed incoming and outgoing server checks.`);
+    });
+    return this.#publicAccount(account);
+  }
+
+  async testAccount(input: AccountDraft): Promise<{ incoming: true; outgoing: true }> {
+    const draft = accountDraftSchema.parse(input);
+    const runtime: RuntimeAccount = {
+      id: "test",
+      displayName: draft.displayName,
+      email: draft.email,
+      incoming: draft.incoming,
+      outgoing: draft.outgoing,
+      authMode: draft.authMode,
+      kind: "imap",
+      createdAt: new Date().toISOString(),
+      secret: draft.secret,
+    };
+    return this.#mail.testAccount(runtime);
+  }
+
+  async removeAccount(accountId: string): Promise<void> {
+    await this.#store.update(state => {
+      const account = state.accounts.find(candidate => candidate.id === accountId);
+      if (!account) return;
+      state.accounts = state.accounts.filter(candidate => candidate.id !== accountId);
+      delete state.folders[accountId];
+      for (const key of Object.keys(state.messages)) if (key.startsWith(`${accountId}\u0000`)) delete state.messages[key];
+      for (const [key, detail] of Object.entries(state.details)) if (detail.accountId === accountId) delete state.details[key];
+      state.drafts = state.drafts.filter(draft => draft.accountId !== accountId);
+      state.outbox = state.outbox.filter(item => item.draft.accountId !== accountId);
+      state.pendingOperations = state.pendingOperations.filter(operation => operation.accountId !== accountId);
+      if (state.preferences.selectedAccountId === accountId) {
+        const nextAccount = state.accounts[0];
+        if (nextAccount) state.preferences.selectedAccountId = nextAccount.id;
+        else delete state.preferences.selectedAccountId;
+        delete state.preferences.selectedFolderPath;
+      }
+      this.#record(state, "deleted", "account", accountId, `Removed account ${account.email}`, this.#publicAccount(account));
+      this.#notify(state, "info", "Account removed", `${account.email} was removed from this computer.`);
+    });
+  }
+
+  async syncAccount(accountId: string): Promise<SyncResult> {
+    let state = await this.#store.read();
+    const stored = this.#requireAccount(state, accountId);
+    if (stored.kind === "demo") {
+      return {
+        folders: state.folders[accountId] ?? [],
+        messages: Object.entries(state.messages).filter(([key]) => key.startsWith(`${accountId}\u0000`)).flatMap(([, value]) => value),
+        syncedAt: new Date().toISOString(),
+      };
+    }
+    const account = this.#runtimeAccount(stored);
+    try {
+      await this.#replayPending(account);
+      state = await this.#store.read();
+      const folders = await this.#mail.listFolders(account);
+      const selected = state.preferences.selectedFolderPath;
+      const targets = folders.filter(folder => folder.role === "inbox" || folder.path === selected);
+      const batches = await Promise.all(targets.map(async folder => [folder.path, await this.#mail.listMessages(account, folder.path)] as const));
+      const syncedAt = new Date().toISOString();
+      await this.#store.update(draft => {
+        this.#requireAccount(draft, accountId);
+        const previousFolders = draft.folders[accountId] ?? [];
+        for (const folder of folders) {
+          const previous = previousFolders.find(candidate => candidate.path === folder.path);
+          if (!previous?.uidValidity || !folder.uidValidity || previous.uidValidity === folder.uidValidity) continue;
+          delete draft.messages[folderKey(accountId, folder.path)];
+          for (const [id, detail] of Object.entries(draft.details)) {
+            if (detail.accountId === accountId && detail.folderPath === folder.path) delete draft.details[id];
+          }
+          draft.pendingOperations = draft.pendingOperations.filter(
+            operation => !(operation.accountId === accountId && operation.folderPath === folder.path),
+          );
+          this.#record(
+            draft,
+            "updated",
+            "message",
+            `${accountId}:${folder.path}`,
+            `Reconciled ${folder.name} after the server changed UIDVALIDITY`,
+            { previous: previous.uidValidity, current: folder.uidValidity },
+          );
+          this.#notify(
+            draft,
+            "warning",
+            "Folder identity changed",
+            `${folder.name} was safely reloaded because the mail server changed its UIDVALIDITY value. Pending operations for the old identity were not replayed.`,
+          );
+        }
+        draft.folders[accountId] = folders;
+        for (const [folderPath, messages] of batches) draft.messages[folderKey(accountId, folderPath)] = messages;
+        const item = draft.accounts.find(candidate => candidate.id === accountId);
+        if (item) {
+          item.lastSyncAt = syncedAt;
+          delete item.syncError;
+        }
+        this.#notify(draft, "success", "Mail synchronized", `${batches.reduce((sum, [, rows]) => sum + rows.length, 0)} messages refreshed.`);
+      });
+      return { folders, messages: batches.flatMap(([, rows]) => rows), syncedAt };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.#store.update(draft => {
+        const item = draft.accounts.find(candidate => candidate.id === accountId);
+        if (!item) return;
+        item.syncError = message;
+        this.#notify(draft, "error", "Mail synchronization failed", message);
+      });
+      throw error;
+    }
+  }
+
+  async listFolders(accountId: string): Promise<FolderSummary[]> {
+    const state = await this.#store.read();
+    this.#requireAccount(state, accountId);
+    return state.folders[accountId] ?? [];
+  }
+
+  async listMessages(accountId: string, folderPath: string): Promise<MessageSummary[]> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    const key = folderKey(accountId, folderPath);
+    if (state.messages[key]) return state.messages[key];
+    if (account.kind === "demo") return [];
+    const messages = await this.#mail.listMessages(this.#runtimeAccount(account), folderPath);
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      draft.messages[key] = messages;
+    });
+    return messages;
+  }
+
+  async getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    const id = `${accountId}:${folderPath}:${uid}`;
+    const cached = state.details[id];
+    if (account.kind === "demo" && cached) return cached;
+    if (account.kind === "demo") throw new Error("The demo message is no longer available.");
+    const { uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    if (cached?.uidValidity === uidValidity) return cached;
+    const detail = {
+      ...(await this.#mail.getMessage(this.#runtimeAccount(account), folderPath, uid, uidValidity)),
+      uidValidity,
+    };
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      this.#requireCurrentMessage(draft, accountId, folderPath, uid, uidValidity);
+      draft.details[id] = detail;
+      const message = draft.messages[folderKey(accountId, folderPath)]?.find(item => item.uid === uid);
+      if (message) message.preview = detail.preview;
+    });
+    return detail;
+  }
+
+  async saveAttachment(accountId: string, folderPath: string, uid: number, index: number): Promise<string | null> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
+    const { uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
+    const attachment = attachments[index];
+    if (!attachment) throw new Error("That attachment no longer exists.");
+    const filename = this.#safeFilename(attachment.filename);
+    const result = await dialog.showSaveDialog({ defaultPath: filename, title: "Save attachment" });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, attachment.content, { flag: "w" });
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      this.#requireCurrentMessage(draft, accountId, folderPath, uid, uidValidity);
+      this.#record(draft, "created", "message", `${accountId}:${folderPath}:${uid}`, `Saved attachment ${filename}`, {
+        filename,
+        contentType: attachment.contentType,
+        size: attachment.content.length,
+      });
+      this.#notify(draft, "success", "Attachment saved", filename);
+    });
+    return result.filePath;
+  }
+
+  async saveAllAttachments(accountId: string, folderPath: string, uid: number): Promise<string[]> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
+    const { uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"], title: "Save all attachments" });
+    if (result.canceled || !result.filePaths[0]) return [];
+    const directory = result.filePaths[0];
+    await mkdir(directory, { recursive: true });
+    const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
+    const saved: string[] = [];
+    for (const [index, attachment] of attachments.entries()) {
+      const base = this.#safeFilename(attachment.filename || `attachment-${index + 1}`);
+      const target = await this.#uniquePath(directory, base);
+      await writeFile(target, attachment.content, { flag: "wx" });
+      saved.push(target);
+    }
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      this.#requireCurrentMessage(draft, accountId, folderPath, uid, uidValidity);
+      this.#record(draft, "created", "message", `${accountId}:${folderPath}:${uid}`, `Saved ${saved.length} attachments`, {
+        files: saved.map(file => path.basename(file)),
+      });
+      this.#notify(draft, "success", "Attachments saved", `${saved.length} file${saved.length === 1 ? "" : "s"} saved.`);
+    });
+    return saved;
+  }
+
+  async setMessageFlags(
+    accountId: string,
+    folderPath: string,
+    uid: number,
+    patch: { unread?: boolean; starred?: boolean },
+  ): Promise<void> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    let networkError = "";
+    let uidValidity: string | undefined;
+    if (account.kind !== "demo") {
+      uidValidity = this.#requireCurrentMessage(state, accountId, folderPath, uid).uidValidity;
+      try {
+        await this.#mail.setFlags(this.#runtimeAccount(account), folderPath, uid, patch, uidValidity);
+      } catch (error) {
+        if (isMailboxGenerationMismatch(error)) throw error;
+        networkError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      const message = uidValidity
+        ? this.#requireCurrentMessage(draft, accountId, folderPath, uid, uidValidity).message
+        : draft.messages[folderKey(accountId, folderPath)]?.find(item => item.uid === uid);
+      if (!message) return;
+      const before = { unread: message.unread, starred: message.starred };
+      if (patch.unread !== undefined) message.unread = patch.unread;
+      if (patch.starred !== undefined) message.starred = patch.starred;
+      const detail = draft.details[message.id];
+      if (detail) Object.assign(detail, patch);
+      this.#record(draft, "updated", "message", message.id, `Updated message “${message.subject}”`, before);
+      if (networkError) {
+        draft.pendingOperations.push({
+          id: randomUUID(),
+          accountId,
+          kind: "flags",
+          folderPath,
+          uid,
+          ...(uidValidity ? { uidValidity } : {}),
+          patch,
+          createdAt: new Date().toISOString(),
+          attempts: 0,
+          lastError: networkError,
+        });
+        this.#notify(draft, "warning", "Change queued for synchronization", networkError);
+      }
+    });
+  }
+
+  async moveMessage(accountId: string, folderPath: string, uid: number, destination: string): Promise<void> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    let networkError = "";
+    let uidValidity: string | undefined;
+    let moveResult: MailMoveResult | undefined = account.kind === "demo" ? { destinationUid: uid } : undefined;
+    if (account.kind !== "demo") {
+      uidValidity = this.#requireCurrentMessage(state, accountId, folderPath, uid).uidValidity;
+      try {
+        moveResult = await this.#mail.moveMessage(this.#runtimeAccount(account), folderPath, uid, destination, uidValidity);
+      } catch (error) {
+        if (isMailboxGenerationMismatch(error)) throw error;
+        networkError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      const sourceKey = folderKey(accountId, folderPath);
+      const message = uidValidity
+        ? this.#requireCurrentMessage(draft, accountId, folderPath, uid, uidValidity).message
+        : draft.messages[sourceKey]?.find(item => item.uid === uid);
+      if (!message) return;
+      draft.messages[sourceKey] = draft.messages[sourceKey]?.filter(item => item.uid !== uid) ?? [];
+      const destinationUid = moveResult?.destinationUid;
+      let moved: MessageSummary | undefined;
+      if (destinationUid !== undefined) {
+        moved = { ...message, id: `${accountId}:${destination}:${destinationUid}`, folderPath: destination, uid: destinationUid };
+        if (moveResult?.destinationUidValidity) moved.uidValidity = moveResult.destinationUidValidity;
+        else delete moved.uidValidity;
+        const targetKey = folderKey(accountId, destination);
+        draft.messages[targetKey] = [moved, ...(draft.messages[targetKey] ?? []).filter(item => item.uid !== destinationUid)];
+      }
+      delete draft.details[message.id];
+      this.#record(draft, "updated", "message", moved?.id ?? message.id, `Moved “${message.subject}” to ${destination}`, {
+        from: folderPath,
+        destination,
+        destinationUid: destinationUid ?? null,
+        destinationCacheDeferred: destinationUid === undefined,
+      });
+      if (networkError) {
+        draft.pendingOperations.push({
+          id: randomUUID(),
+          accountId,
+          kind: "move",
+          folderPath,
+          uid,
+          ...(uidValidity ? { uidValidity } : {}),
+          destination,
+          createdAt: new Date().toISOString(),
+          attempts: 0,
+          lastError: networkError,
+        });
+        this.#notify(draft, "warning", "Move queued for synchronization", networkError);
+      } else if (!moved) {
+        this.#notify(
+          draft,
+          "success",
+          "Message moved",
+          `“${message.subject}” moved to ${destination}. The destination will appear after that folder refreshes.`,
+        );
+      } else {
+        this.#notify(draft, "success", "Message moved", `“${message.subject}” moved to ${destination}.`);
+      }
+    });
+  }
+
+  async sendMessage(input: ComposeDraft): Promise<SendResult> {
+    const parsedDraft = composeDraftSchema.parse(input);
+    const state = await this.#store.read();
+    const persistedDraft = parsedDraft.id ? state.drafts.find(item => item.id === parsedDraft.id) : undefined;
+    const persistedDraftSnapshot = persistedDraft ? structuredClone(persistedDraft) : undefined;
+    const draft = await this.#attachmentAuthorization.authorizeDraft(parsedDraft, persistedDraft, { requireExistingFiles: true });
+    const account = this.#requireAccount(state, draft.accountId);
+    if (!draft.to.length && !draft.cc.length && !draft.bcc.length) throw new Error("Add at least one recipient before sending.");
+    let result: SendResult;
+    let networkError = "";
+    if (account.kind === "demo") {
+      result = { messageId: `<${randomUUID()}@material-email.local>`, accepted: [...draft.to, ...draft.cc, ...draft.bcc], rejected: [], queued: false };
+    } else {
+      try {
+        result = await this.#mail.sendMessage(this.#runtimeAccount(account), draft);
+      } catch (error) {
+        networkError = error instanceof Error ? error.message : String(error);
+        result = { messageId: `outbox:${randomUUID()}`, accepted: [], rejected: [], queued: true };
+      }
+    }
+    const disposition = classifySendResult(result);
+    const rejectedAll = disposition === "rejected";
+    await this.#store.update(next => {
+      this.#requireAccount(next, draft.accountId);
+      const currentDraft = draft.id ? next.drafts.find(item => item.id === draft.id) : undefined;
+      const persistedDraftUnchanged = sameDraftSnapshot(currentDraft, persistedDraftSnapshot);
+      if (rejectedAll) {
+        const retainedDraft = {
+          ...draft,
+          id: draft.id && persistedDraftUnchanged ? draft.id : randomUUID(),
+        };
+        const existingIndex = next.drafts.findIndex(item => item.id === retainedDraft.id);
+        if (existingIndex >= 0) next.drafts[existingIndex] = retainedDraft;
+        else next.drafts.push(retainedDraft);
+        this.#record(next, existingIndex >= 0 ? "updated" : "created", "draft", retainedDraft.id ?? "", `Kept retryable draft “${draft.subject || "(No subject)"}” after delivery rejection`, {
+          accountId: draft.accountId,
+          accepted: result.accepted,
+          rejected: result.rejected,
+        });
+        this.#notify(next, "error", "Message not sent; draft kept", `0 recipients accepted; ${result.rejected.length} rejected. Review the recipients and retry from this unchanged composer.`);
+        return;
+      }
+      if (persistedDraftUnchanged) next.drafts = next.drafts.filter(item => item.id !== draft.id);
+      this.#record(next, "created", result.queued ? "draft" : "message", result.messageId, `${result.queued ? "Queued" : result.rejected.length ? "Partially sent" : "Sent"} “${draft.subject || "(No subject)"}”`, {
+        accountId: draft.accountId,
+        to: draft.to,
+        cc: draft.cc,
+        bcc: draft.bcc,
+        subject: draft.subject,
+        accepted: result.accepted,
+        rejected: result.rejected,
+      });
+      if (result.queued) {
+        next.outbox.push({ id: result.messageId, draft, createdAt: new Date().toISOString(), attempts: 0, lastError: networkError });
+        this.#notify(next, "warning", "Message queued in Outbox", networkError);
+      } else if (disposition === "partial") {
+        this.#notify(next, "warning", "Message partially sent", describeRecipientOutcome(result));
+      } else {
+        this.#notify(next, "success", "Message sent", describeRecipientOutcome(result));
+      }
+    });
+    return result;
+  }
+
+  async saveDraft(input: ComposeDraft): Promise<ComposeDraft> {
+    const parsedDraft = composeDraftSchema.parse(input);
+    const snapshot = await this.#store.read();
+    this.#requireAccount(snapshot, parsedDraft.accountId);
+    const persistedDraft = parsedDraft.id ? snapshot.drafts.find(item => item.id === parsedDraft.id) : undefined;
+    const draft = await this.#attachmentAuthorization.authorizeDraft(parsedDraft, persistedDraft, { requireExistingFiles: false });
+    const saved = { ...draft, id: draft.id ?? randomUUID() };
+    await this.#store.update(state => {
+      this.#requireAccount(state, saved.accountId);
+      const index = state.drafts.findIndex(item => item.id === saved.id);
+      if (index >= 0) state.drafts[index] = saved;
+      else state.drafts.push(saved);
+      this.#record(state, index >= 0 ? "updated" : "created", "draft", saved.id ?? "", `Saved draft “${saved.subject || "(No subject)"}”`, saved);
+      this.#notify(state, "info", "Draft saved", "The draft is stored locally on this computer.");
+    });
+    return saved;
+  }
+
+  async savePreferences(patch: Partial<Preferences>): Promise<Preferences> {
+    const parsedPatch = preferencesPatchSchema.parse(patch);
+    if (parsedPatch.externalEditorPath) {
+      const state = await this.#store.read();
+      parsedPatch.externalEditorPath = await this.#requireApprovedEditorPath(parsedPatch.externalEditorPath, state);
+    }
+    const next = await this.#store.update(state => {
+      const before = structuredClone(state.preferences);
+      const merged = preferencesSchema.parse({ ...state.preferences, ...parsedPatch });
+      if (JSON.stringify(before) === JSON.stringify(merged)) return;
+      state.preferences = merged;
+      this.#record(state, "settings-changed", "settings", "preferences", "Changed application settings", before);
+    });
+    return next.preferences;
+  }
+
+  async markNotificationRead(id: string, read: boolean): Promise<void> {
+    await this.#store.update(state => {
+      const notification = state.notifications.find(item => item.id === id);
+      if (notification) notification.read = read;
+    });
+  }
+
+  async clearNotifications(): Promise<void> {
+    await this.#store.update(state => {
+      state.notifications = [];
+    });
+  }
+
+  async restoreHistory(id: string): Promise<HistoryRecord> {
+    let restored!: HistoryRecord;
+    await this.#store.update(state => {
+      const source = state.history.find(item => item.id === id);
+      if (!source) throw new Error("That revision no longer exists.");
+      if (source.entityType !== "settings") throw new Error("This revision is view-only because restoring it could overwrite server-backed mail data.");
+      state.preferences = preferencesSchema.parse(source.snapshot);
+      restored = this.#record(state, "restored", source.entityType, source.entityId, `Restored revision: ${source.label}`, source.snapshot);
+      this.#notify(state, "success", "Revision restored", "The restore was recorded as a new revision, so it can be undone.");
+    });
+    return restored;
+  }
+
+  async listLocalRevisions(): Promise<LocalRevision[]> {
+    return this.#historyRepository.list();
+  }
+
+  async restoreLocalRevision(hash: string): Promise<BootstrapState> {
+    const source = await this.#historyRepository.read(hash);
+    let candidate: PersistedState;
+    try {
+      candidate = parsePersistedState(JSON.parse(source) as unknown);
+    } catch {
+      throw new Error("That local revision does not contain a compatible Material Email state.");
+    }
+    await this.#store.read();
+    await this.#historyRepository.snapshot(this.#statePath);
+    await this.#store.replace(candidate);
+    await this.#store.update(state => {
+      this.#record(state, "restored", "settings", "application-state", `Restored local revision ${hash.slice(0, 12)}`, {
+        sourceRevision: hash,
+      });
+      this.#notify(state, "success", "Local revision restored", "The previous state remains in history, and this restore created a new revision.");
+    });
+    return this.bootstrap();
+  }
+
+  async listContacts(): Promise<Contact[]> {
+    return this.#pim.listContacts();
+  }
+
+  async searchContacts(query: string): Promise<Contact[]> {
+    return this.#pim.searchContacts(query);
+  }
+
+  async createContact(input: CreateContactInput): Promise<Contact> {
+    return this.#pim.createContact(input);
+  }
+
+  async updateContact(uid: string, patch: ContactPatch): Promise<Contact> {
+    return this.#pim.updateContact(uid, patch);
+  }
+
+  async deleteContact(uid: string): Promise<boolean> {
+    return this.#pim.deleteContact(uid);
+  }
+
+  async restoreContact(uid: string, sourceTransactionId?: string): Promise<Contact> {
+    return this.#pim.restoreContact(uid, sourceTransactionId);
+  }
+
+  async importVCard(): Promise<VCardImportResult | null> {
+    const result = await dialog.showOpenDialog({
+      title: "Import contacts from vCard",
+      properties: ["openFile"],
+      filters: [{ name: "vCard contacts", extensions: ["vcf", "vcard"] }],
+    });
+    const filePath = result.filePaths[0];
+    if (result.canceled || !filePath) return null;
+    const info = await stat(filePath);
+    if (info.size > 10 * 1024 * 1024) throw new Error("vCard imports are limited to 10 MiB.");
+    return this.#pim.importVCard(await readFile(filePath, "utf8"));
+  }
+
+  async exportVCard(contactUids?: string[], mailingListUids?: string[]): Promise<string | null> {
+    const content = await this.#pim.exportVCard(contactUids, mailingListUids);
+    const result = await dialog.showSaveDialog({
+      title: "Export contacts and mailing lists as vCard",
+      defaultPath: "material-email-contacts-and-lists.vcf",
+      filters: [{ name: "vCard contacts and lists", extensions: ["vcf"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, content, "utf8");
+    return result.filePath;
+  }
+
+  async listMailingLists(): Promise<MailingList[]> {
+    return this.#pim.listMailingLists();
+  }
+
+  async listMailingListMembers(uid: string): Promise<Contact[]> {
+    return this.#pim.listMailingListMembers(uid);
+  }
+
+  async createMailingList(input: CreateMailingListInput): Promise<MailingList> {
+    return this.#pim.createMailingList(input);
+  }
+
+  async updateMailingList(uid: string, patch: MailingListPatch): Promise<MailingList> {
+    return this.#pim.updateMailingList(uid, patch);
+  }
+
+  async deleteMailingList(uid: string): Promise<boolean> {
+    return this.#pim.deleteMailingList(uid);
+  }
+
+  async restoreMailingList(uid: string, sourceTransactionId?: string): Promise<MailingList> {
+    return this.#pim.restoreMailingList(uid, sourceTransactionId);
+  }
+
+  async listCalendarEvents(): Promise<CalendarEvent[]> {
+    return this.#pim.listCalendarEvents();
+  }
+
+  async createCalendarEvent(input: CreateCalendarEventInput): Promise<CalendarEvent> {
+    return this.#pim.createCalendarEvent(input);
+  }
+
+  async updateCalendarEvent(uid: string, patch: CalendarEventPatch): Promise<CalendarEvent> {
+    return this.#pim.updateCalendarEvent(uid, patch);
+  }
+
+  async deleteCalendarEvent(uid: string): Promise<boolean> {
+    return this.#pim.deleteCalendarEvent(uid);
+  }
+
+  async restoreCalendarEvent(uid: string, sourceTransactionId?: string): Promise<CalendarEvent> {
+    return this.#pim.restoreCalendarEvent(uid, sourceTransactionId);
+  }
+
+  async listTasks(): Promise<Task[]> {
+    return this.#pim.listTasks();
+  }
+
+  async createTask(input: CreateTaskInput): Promise<Task> {
+    return this.#pim.createTask(input);
+  }
+
+  async updateTask(uid: string, patch: TaskPatch): Promise<Task> {
+    return this.#pim.updateTask(uid, patch);
+  }
+
+  async deleteTask(uid: string): Promise<boolean> {
+    return this.#pim.deleteTask(uid);
+  }
+
+  async restoreTask(uid: string, sourceTransactionId?: string): Promise<Task> {
+    return this.#pim.restoreTask(uid, sourceTransactionId);
+  }
+
+  async listPimTransactions(filter?: TransactionFilter): Promise<PimTransaction[]> {
+    return this.#pim.listTransactions(filter);
+  }
+
+  async chooseAttachments(): Promise<string[]> {
+    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], title: "Attach files" });
+    return result.canceled ? [] : this.#attachmentAuthorization.approveDialogSelection(result.filePaths);
+  }
+
+  async exportData(_kind: "history" | "settings" | "changelog", content: string, suggestedName: string): Promise<string | null> {
+    const result = await dialog.showSaveDialog({ defaultPath: suggestedName, title: "Export Material Email data" });
+    if (result.canceled || !result.filePath) return null;
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(result.filePath, content, "utf8");
+    return result.filePath;
+  }
+
+  async detectEditors(): Promise<Array<{ id: string; name: string; path: string }>> {
+    const candidates = [
+      {
+        id: "vscode",
+        name: "Visual Studio Code",
+        searches: [
+          { command: "code.exe", resolve: (resultPath: string) => resultPath },
+          { command: "code.cmd", resolve: (resultPath: string) => path.resolve(path.dirname(resultPath), "..", "Code.exe") },
+        ],
+      },
+      {
+        id: "cursor",
+        name: "Cursor",
+        searches: [
+          { command: "cursor.exe", resolve: (resultPath: string) => resultPath },
+          { command: "cursor.cmd", resolve: (resultPath: string) => path.resolve(path.dirname(resultPath), "..", "..", "..", "Cursor.exe") },
+        ],
+      },
+      { id: "notepadpp", name: "Notepad++", searches: [{ command: "notepad++.exe", resolve: (resultPath: string) => resultPath }] },
+      { id: "notepad", name: "Notepad", searches: [{ command: "notepad.exe", resolve: (resultPath: string) => resultPath }] },
+    ];
+    const found: Array<{ id: string; name: string; path: string }> = [];
+    this.#detectedEditorPaths.clear();
+    for (const candidate of candidates) {
+      for (const search of candidate.searches) {
+        try {
+          const { stdout } = await execFileAsync("where.exe", [search.command], { windowsHide: true });
+          for (const resultPath of stdout.split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
+            try {
+              const resolved = await inspectEditorExecutable(search.resolve(resultPath));
+              if (found.some(editor => sameWindowsPath(editor.path, resolved))) continue;
+              found.push({ id: candidate.id, name: candidate.name, path: resolved });
+              this.#detectedEditorPaths.add(resolved);
+              break;
+            } catch {
+              // Ignore command shims and non-executable search results.
+            }
+          }
+          if (found.some(editor => editor.id === candidate.id)) break;
+        } catch {
+          // Continue through the finite editor inventory.
+        }
+      }
+    }
+    return found;
+  }
+
+  async openExternalEditor(editorPath?: string): Promise<void> {
+    const state = await this.#store.read();
+    const requested = editorPath ?? state.preferences.externalEditorPath;
+    let executable: string | undefined;
+    if (requested) {
+      try {
+        executable = await this.#requireApprovedEditorPath(requested, state);
+      } catch {
+        // An untrusted or legacy path must be confirmed through the native picker below.
+      }
+    }
+    if (!executable) {
+      const selection = await dialog.showOpenDialog({
+        title: "Choose an external editor executable",
+        properties: ["openFile"],
+        filters: [{ name: "Windows applications", extensions: ["exe"] }],
+      });
+      const selectedPath = selection.filePaths[0];
+      if (selection.canceled || !selectedPath) throw new Error("No editor was launched because executable selection was cancelled.");
+      executable = await inspectEditorExecutable(selectedPath);
+      await this.#store.update(next => {
+        if (!next.approvedEditorPaths.some(approved => sameWindowsPath(approved, executable!))) {
+          next.approvedEditorPaths.push(executable!);
+        }
+        const before = structuredClone(next.preferences);
+        next.preferences = { ...next.preferences, externalEditorPath: executable! };
+        this.#record(next, "settings-changed", "settings", "preferences", "Approved an external editor executable", before);
+      });
+    }
+    const target = app.getAppPath();
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(executable, [target], { detached: true, stdio: "ignore", windowsHide: true, shell: false });
+      child.once("error", reject);
+      child.once("spawn", () => {
+        child.unref();
+        resolve();
+      });
+    });
+  }
+
+  async #requireApprovedEditorPath(candidate: string, state: PersistedState): Promise<string> {
+    const executable = await inspectEditorExecutable(candidate);
+    await this.detectEditors();
+    if (
+      [...this.#detectedEditorPaths].some(detected => sameWindowsPath(detected, executable)) ||
+      state.approvedEditorPaths.some(approved => sameWindowsPath(approved, executable))
+    ) {
+      return executable;
+    }
+    throw new Error("That executable has not been detected or approved through the native file picker.");
+  }
+
+  async #replayPending(account: RuntimeAccount): Promise<void> {
+    const snapshot = await this.#store.read();
+    const operations = snapshot.pendingOperations.filter(item => item.accountId === account.id);
+    for (const operation of operations) {
+      try {
+        if (!operation.uidValidity) throw new Error("The queued operation has no mailbox UIDVALIDITY and cannot be replayed safely.");
+        if (operation.kind === "flags" && operation.patch) {
+          await this.#mail.setFlags(account, operation.folderPath, operation.uid, operation.patch, operation.uidValidity);
+        } else if (operation.kind === "move" && operation.destination) {
+          await this.#mail.moveMessage(account, operation.folderPath, operation.uid, operation.destination, operation.uidValidity);
+        } else {
+          throw new Error("The queued operation is incomplete.");
+        }
+        await this.#store.update(state => {
+          this.#requireAccount(state, account.id);
+          state.pendingOperations = state.pendingOperations.filter(item => item.id !== operation.id);
+          this.#notify(state, "success", "Queued change synchronized", `Operation from ${operation.createdAt} reached the mail server.`);
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.#store.update(state => {
+          const item = state.pendingOperations.find(candidate => candidate.id === operation.id);
+          if (item) {
+            item.attempts += 1;
+            item.lastError = message;
+          }
+        });
+        break;
+      }
+    }
+
+    const afterOperations = await this.#store.read();
+    const outbox = afterOperations.outbox.filter(item => item.draft.accountId === account.id);
+    for (const item of outbox) {
+      try {
+        const sent = await this.#mail.sendMessage(account, item.draft);
+        const disposition = classifySendResult(sent);
+        if (disposition === "rejected") {
+          await this.#store.update(state => {
+            this.#requireAccount(state, account.id);
+            state.outbox = state.outbox.filter(candidate => candidate.id !== item.id);
+            const currentDraft = item.draft.id ? state.drafts.find(candidate => candidate.id === item.draft.id) : undefined;
+            const retained = {
+              ...item.draft,
+              id: item.draft.id && (!currentDraft || sameDraftSnapshot(currentDraft, item.draft)) ? item.draft.id : randomUUID(),
+            };
+            const draftIndex = state.drafts.findIndex(candidate => candidate.id === retained.id);
+            if (draftIndex >= 0) state.drafts[draftIndex] = retained;
+            else state.drafts.push(retained);
+            this.#record(state, draftIndex >= 0 ? "updated" : "created", "draft", retained.id ?? "", `Kept rejected Outbox message “${item.draft.subject || "(No subject)"}” as a draft`, {
+              queuedAt: item.createdAt,
+              accepted: sent.accepted,
+              rejected: sent.rejected,
+            });
+            this.#notify(state, "error", "Outbox message not sent; draft kept", describeRecipientOutcome(sent));
+          });
+          continue;
+        }
+        await this.#store.update(state => {
+          this.#requireAccount(state, account.id);
+          state.outbox = state.outbox.filter(candidate => candidate.id !== item.id);
+          this.#record(state, "updated", "message", sent.messageId, `Delivered queued message “${item.draft.subject || "(No subject)"}”`, {
+            queuedAt: item.createdAt,
+            accepted: sent.accepted,
+            rejected: sent.rejected,
+          });
+          if (disposition === "partial") {
+            this.#notify(state, "warning", "Outbox message partially sent", describeRecipientOutcome(sent));
+          } else {
+            this.#notify(state, "success", "Outbox message sent", describeRecipientOutcome(sent));
+          }
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.#store.update(state => {
+          const queued = state.outbox.find(candidate => candidate.id === item.id);
+          if (queued) {
+            queued.attempts += 1;
+            queued.lastError = message;
+          }
+        });
+        break;
+      }
+    }
+  }
+
+  #requireCurrentMessage(
+    state: PersistedState,
+    accountId: string,
+    folderPath: string,
+    uid: number,
+    expectedUidValidity?: string,
+  ): { message: MessageSummary; uidValidity: string } {
+    const message = state.messages[folderKey(accountId, folderPath)]?.find(item => item.uid === uid);
+    if (!message) {
+      throw new Error("The message is no longer present in the current folder generation. Refresh the folder before retrying.");
+    }
+    const folderUidValidity = state.folders[accountId]?.find(folder => folder.path === folderPath)?.uidValidity;
+    if (message.uidValidity && folderUidValidity && message.uidValidity !== folderUidValidity) {
+      throw new Error("The cached message and folder UIDVALIDITY values disagree. Refresh the folder before retrying.");
+    }
+    const uidValidity = message.uidValidity ?? folderUidValidity;
+    if (!uidValidity) {
+      throw new Error("The message UIDVALIDITY is unavailable, so the server action was refused. Refresh the folder before retrying.");
+    }
+    if (expectedUidValidity && uidValidity !== expectedUidValidity) {
+      throw new Error(
+        `The message generation changed from UIDVALIDITY ${expectedUidValidity} to ${uidValidity}. Refresh the folder before retrying.`,
+      );
+    }
+    return { message, uidValidity };
+  }
+
+  #safeFilename(value: string): string {
+    const normalized = path.basename(value).replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_").trim();
+    return normalized || "attachment";
+  }
+
+  async #uniquePath(directory: string, filename: string): Promise<string> {
+    const extension = path.extname(filename);
+    const stem = path.basename(filename, extension);
+    for (let suffix = 0; suffix < 10_000; suffix += 1) {
+      const candidate = path.join(directory, suffix ? `${stem} (${suffix})${extension}` : filename);
+      try {
+        await access(candidate);
+      } catch {
+        return candidate;
+      }
+    }
+    throw new Error("Could not choose a unique attachment filename.");
+  }
+
+  async #releaseIdentity(): Promise<ReleaseIdentity> {
+    const fallback: ReleaseIdentity = {
+      version: app.getVersion(),
+      releaseDate: "",
+      codeName: "Classic Har Gow · 蝦餃",
+      dishId: "hk-dish-0001",
+      imageAsset: "hk-dish-0001-classic-har-gow.png",
+      catalogCommit: "dfb95a20e647d921242358988ada9c5436c78b3d",
+    };
+    try {
+      const parsed = JSON.parse(await readFile(path.join(app.getAppPath(), "dist", "release-metadata.json"), "utf8")) as Partial<ReleaseIdentity>;
+      if (
+        typeof parsed.version === "string" &&
+        typeof parsed.releaseDate === "string" &&
+        typeof parsed.codeName === "string" &&
+        typeof parsed.dishId === "string" &&
+        typeof parsed.imageAsset === "string" &&
+        typeof parsed.catalogCommit === "string"
+      ) return parsed as ReleaseIdentity;
+    } catch {
+      // Development and first-run fallback remains factual for the source package.
+    }
+    return fallback;
+  }
+
+  #publicAccount = (account: StoredAccount): AccountSummary => {
+    const { encryptedSecret: _secret, ...safe } = account;
+    return safe;
+  };
+
+  #runtimeAccount(account: StoredAccount): RuntimeAccount {
+    if (account.kind === "demo") return { ...account, secret: "" };
+    if (!account.encryptedSecret) throw new Error("The account credential is missing.");
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows credential encryption is not available on this computer.");
+    return { ...this.#publicAccount(account), secret: safeStorage.decryptString(Buffer.from(account.encryptedSecret, "base64")) };
+  }
+
+  #requireAccount(state: PersistedState, accountId: string): StoredAccount {
+    const account = state.accounts.find(candidate => candidate.id === accountId);
+    if (!account) throw new Error("The selected account no longer exists.");
+    return account;
+  }
+
+  #notify(state: PersistedState, kind: NotificationRecord["kind"], title: string, body: string): NotificationRecord {
+    const item: NotificationRecord = { id: randomUUID(), kind, title, body, createdAt: new Date().toISOString(), read: false };
+    state.notifications.unshift(item);
+    state.notifications = state.notifications.slice(0, 500);
+    return item;
+  }
+
+  #record(
+    state: PersistedState,
+    kind: HistoryRecord["kind"],
+    entityType: HistoryRecord["entityType"],
+    entityId: string,
+    label: string,
+    snapshot: unknown,
+  ): HistoryRecord {
+    const item: HistoryRecord = { id: randomUUID(), kind, entityType, entityId, label, createdAt: new Date().toISOString(), snapshot };
+    state.history.unshift(item);
+    state.history = state.history.slice(0, 2_000);
+    return item;
+  }
+}

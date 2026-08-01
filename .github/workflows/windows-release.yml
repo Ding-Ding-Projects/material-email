@@ -1,0 +1,238 @@
+name: Test, package, release, and publish
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: material-email-release
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  windows-release:
+    name: Windows installer and release
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      release_date: ${{ steps.release.outputs.release_date }}
+      code_name: ${{ steps.dish.outputs.code_name }}
+      photo_file: ${{ steps.dish.outputs.photo_file }}
+      release_url: ${{ format('https://github.com/{0}/releases/tag/{1}', github.repository, steps.release.outputs.tag) }}
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Use project Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Choose a verified unused dim-sum code name
+        id: dish
+        shell: pwsh
+        run: |
+          $catalog = Get-Content -Raw "src/renderer/assets/dim-sum/release-catalog.json" | ConvertFrom-Json
+          $used = @(
+            gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].assets[].name'
+          )
+          $candidate = $catalog | Where-Object { $used -notcontains $_.file } | Select-Object -First 1
+          if (-not $candidate) {
+            throw "No unused verified dim-sum image remains in the bundled release catalog."
+          }
+          $photoPath = Join-Path "src/renderer/assets/dim-sum" $candidate.file
+          if (-not (Test-Path -LiteralPath $photoPath)) {
+            throw "Catalog photo is missing: $photoPath"
+          }
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $photoPath).Hash.ToLowerInvariant()
+          if ($actualHash -ne $candidate.sha256) {
+            throw "Catalog photo hash mismatch for $($candidate.file)."
+          }
+          Add-Type -AssemblyName System.Drawing
+          $photo = [Drawing.Image]::FromFile((Resolve-Path -LiteralPath $photoPath))
+          try {
+            if ($photo.Width -lt 1024 -or $photo.Height -lt 1024) {
+              throw "Catalog photo is below 1024×1024: $($candidate.file)."
+            }
+          } finally {
+            $photo.Dispose()
+          }
+          $codeName = "$($candidate.name.en) · $($candidate.name.zhHant)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "dish_id=$($candidate.id)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "code_name=$codeName"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "photo_file=$($candidate.file)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "photo_path=$photoPath"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "photo_sha256=$actualHash"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "catalog_commit=$($candidate.catalogCommit)"
+
+      - name: Allocate a unique monotonic version
+        id: release
+        shell: pwsh
+        run: |
+          $runNumber = [int]$env:GITHUB_RUN_NUMBER
+          $runAttempt = [int]$env:GITHUB_RUN_ATTEMPT
+          if ($runNumber -gt 65535 -or $runAttempt -gt 65535) {
+            throw "Run number or attempt exceeds the Windows version component limit."
+          }
+          $version = "0.$runNumber.$runAttempt"
+          $releaseDate = [DateTime]::UtcNow.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "tag=v$version"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "release_date=$releaseDate"
+          npm version $version --no-git-tag-version --allow-same-version
+
+      - name: Exercise the Electron renderer through a hidden Windows window
+        env:
+          MATERIAL_EMAIL_RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          MATERIAL_EMAIL_RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+          MATERIAL_EMAIL_CODE_NAME: ${{ steps.dish.outputs.code_name }}
+          MATERIAL_EMAIL_DISH_ID: ${{ steps.dish.outputs.dish_id }}
+          MATERIAL_EMAIL_DISH_ASSET: ${{ steps.dish.outputs.photo_file }}
+          MATERIAL_EMAIL_CATALOG_COMMIT: ${{ steps.dish.outputs.catalog_commit }}
+        run: npm run test:e2e
+
+      - name: Test and build the Windows installer
+        env:
+          MATERIAL_EMAIL_RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          MATERIAL_EMAIL_RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+          MATERIAL_EMAIL_CODE_NAME: ${{ steps.dish.outputs.code_name }}
+          MATERIAL_EMAIL_DISH_ID: ${{ steps.dish.outputs.dish_id }}
+          MATERIAL_EMAIL_DISH_ASSET: ${{ steps.dish.outputs.photo_file }}
+          MATERIAL_EMAIL_CATALOG_COMMIT: ${{ steps.dish.outputs.catalog_commit }}
+        run: npm run dist:win
+
+      - name: Verify the packaged installer
+        id: package
+        env:
+          MATERIAL_EMAIL_RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          MATERIAL_EMAIL_RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+          MATERIAL_EMAIL_CODE_NAME: ${{ steps.dish.outputs.code_name }}
+        shell: pwsh
+        run: |
+          npm run verify:package
+          npm run verify:installer -- --report release/installer-qa.json
+          $proof = Get-Content -Raw -LiteralPath release/installer-qa.json | ConvertFrom-Json
+          if (-not $proof.ok -or -not $proof.installedExecutableRemoved -or -not $proof.retainedUserData) {
+            throw "Installer lifecycle report did not satisfy the release contract."
+          }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer=$($proof.installerPath)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer_name=$($proof.installerName)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer_sha256=$($proof.installerSha256)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer_size=$($proof.installerSize)"
+
+      - name: Publish exactly one release with installer and catalog photo
+        shell: pwsh
+        run: |
+          $notes = @'
+          # Material Email ${{ steps.release.outputs.version }}
+
+          **Code name:** ${{ steps.dish.outputs.code_name }}
+
+          **Release date (UTC):** ${{ steps.release.outputs.release_date }}
+
+          This release was built and tested from `${{ github.sha }}` on a GitHub-hosted Windows runner. The workflow installed the NSIS package into a temporary directory, launched that installed executable through its deterministic smoke path, then ran and verified the uninstaller before publishing.
+
+          ## Assets
+
+          - `${{ steps.package.outputs.installer_name }}` — Windows x64 NSIS installer; ${{ steps.package.outputs.installer_size }} bytes; SHA-256 `${{ steps.package.outputs.installer_sha256 }}`
+          - `${{ steps.dish.outputs.photo_file }}` — verified catalog photo for ${{ steps.dish.outputs.code_name }}; SHA-256 `${{ steps.dish.outputs.photo_sha256 }}`
+
+          Catalog source commit: `${{ steps.dish.outputs.catalog_commit }}`.
+
+          > [!WARNING]
+          > This build is not code-signed yet. Windows SmartScreen may show an unrecognized-publisher warning; verify the installer hash above before running it.
+          '@
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8
+          gh release create '${{ steps.release.outputs.tag }}' `
+            '${{ steps.package.outputs.installer }}' `
+            '${{ steps.dish.outputs.photo_path }}' `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "Material Email ${{ steps.release.outputs.version }} · ${{ steps.dish.outputs.code_name }}" `
+            --notes-file $notesPath `
+            --latest
+
+      - name: Verify immutable release source and assets
+        shell: pwsh
+        run: |
+          git fetch origin tag '${{ steps.release.outputs.tag }}' --force
+          $tagSource = (git rev-list -n 1 '${{ steps.release.outputs.tag }}').Trim()
+          if ($tagSource -ne $env:GITHUB_SHA) { throw "Release tag resolves to $tagSource, not $env:GITHUB_SHA." }
+          $release = gh release view '${{ steps.release.outputs.tag }}' --json isDraft,isPrerelease,assets,targetCommitish | ConvertFrom-Json
+          if ($release.isDraft -or $release.isPrerelease) { throw "Release is draft or prerelease." }
+          if ($release.assets.Count -ne 2) { throw "Release must contain exactly two assets." }
+          $names = @($release.assets | ForEach-Object name)
+          if ($names -notcontains '${{ steps.package.outputs.installer_name }}' -or $names -notcontains '${{ steps.dish.outputs.photo_file }}') {
+            throw "Release assets do not match the installer and selected catalog photo."
+          }
+          $downloadDir = Join-Path $env:RUNNER_TEMP "release-proof"
+          New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+          gh release download '${{ steps.release.outputs.tag }}' --dir $downloadDir
+          $installerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $downloadDir '${{ steps.package.outputs.installer_name }}')).Hash.ToLowerInvariant()
+          $photoHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $downloadDir '${{ steps.dish.outputs.photo_file }}')).Hash.ToLowerInvariant()
+          if ($installerHash -ne '${{ steps.package.outputs.installer_sha256 }}') { throw "Downloaded installer hash mismatch." }
+          if ($photoHash -ne '${{ steps.dish.outputs.photo_sha256 }}') { throw "Downloaded photo hash mismatch." }
+
+  pages:
+    name: Publish documentation site
+    needs: windows-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
+      - name: Use project Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: Assemble exact verified Pages bundle
+        env:
+          MATERIAL_EMAIL_SITE_PUBLISHED: "true"
+          MATERIAL_EMAIL_SITE_VERSION: ${{ needs.windows-release.outputs.version }}
+          MATERIAL_EMAIL_SITE_RELEASE_DATE: ${{ needs.windows-release.outputs.release_date }}
+          MATERIAL_EMAIL_SITE_CODE_NAME: ${{ needs.windows-release.outputs.code_name }}
+          MATERIAL_EMAIL_SITE_PHOTO_FILE: ${{ needs.windows-release.outputs.photo_file }}
+          MATERIAL_EMAIL_SITE_TAG: ${{ needs.windows-release.outputs.tag }}
+          MATERIAL_EMAIL_SITE_RELEASE_URL: ${{ needs.windows-release.outputs.release_url }}
+        run: node scripts/verify-site-artifact.mjs --output "$RUNNER_TEMP/material-email-pages" --published
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload local site bundle
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/material-email-pages
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

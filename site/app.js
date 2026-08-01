@@ -1,0 +1,311 @@
+"use strict";
+
+const SHA = "b9141dee2805a5551d112ecc4fcc6a7db7b41cd9";
+const SOURCE = "https://github.com/LibreOffice/core/blob/" + SHA + "/";
+const PREF_KEY = "material-email.docs.preferences.v1";
+const TAB_KEY = "material-email.docs.tabs.v1";
+const LIMIT = { pattern: 2048, sample: 50000, matches: 200 };
+const RELEASE_METADATA_URL = new URL("./release.json", import.meta.url);
+const DEVELOPMENT_RELEASE = Object.freeze({ schemaVersion:1, published:false, version:"0.1.0", releaseDate:null, codeName:null, photoFile:null, tag:null, releaseUrl:null });
+let releaseMetadata = { ...DEVELOPMENT_RELEASE };
+const pair = (en, yue) => ({ en, yue });
+const PAGES = [
+  ["home","Welcome","歡迎"],["features","Features","功能"],["docs","Documentation","文件"],
+  ["source","Source map","原始碼地圖"],["status","Status","狀態"],["settings","Settings","設定"]
+].map(([id,en,yue]) => ({ id,en,yue }));
+
+const article = (id, title, yue, status, summary, doc, facts, related) => ({
+  id, title:pair(title,yue), status, summary, doc:doc.replace(/^\.\.\/docs\//,"./docs/"), facts:facts.split("|"), related:related.split(",")
+});
+const ARTICLES = [
+  article("electron","Windows Electron foundation","Windows Electron 基礎","verified","A narrow main/preload/renderer boundary for a Windows-only client.","../docs/architecture/windows-electron-foundation.md","Main owns mail, storage, dialogs, exports, editor launch, and window control.|Electron 43 targets Windows x64; initial 1500 × 940, minimum 760 × 560.|Missing build output or IPC mismatch blocks startup; packaged scaling is unproven.|Sandbox and context isolation stay on; Node integration, navigation, and permissions stay off.|Typecheck and source inspection pass; packaged launch remains open.","security,packaging,accessibility"),
+  article("security","Security boundaries","安全邊界","foundation","Credential, message, navigation, file, and process trust boundaries.","../docs/architecture/security-boundaries.md","Secrets are encrypted before persistence and message HTML is allowlisted.|TLS, STARTTLS, and explicit plain mail modes exist; reader CSP is restrictive.|Sanitization can remove layout, attachments remain risky, and OAuth flow is incomplete.|Never log credentials or private mail; plain transport and files need safeguards.|Focused HTML, MIME, state, and revision tests pass; no penetration test exists.","reader,history,accounts"),
+  article("accounts","Account discovery and connectivity","帳戶探索同連線","foundation","Advisory DNS discovery, editable IMAP/SMTP, tests, and encrypted credentials.","../docs/mail/accounts-and-connectivity.md","Discovery combines provider DNS SRV records, local presets, and conventional editable hosts.|Host, port, transport, username, and password/token are main-process validated.|Discovery can time out or be stale; OAuth2 currently expects an existing token.|DNS lookup executes no provider code, secrets stay out of summaries, and plain transport needs warning.|SRV mapping tests pass; live providers, proxies, and certificate failures are open.","sync,security,source-reference"),
+  article("sync","Synchronization and offline queues","同步同離線佇列","foundation","IMAP folders/messages with optimistic changes, ordered retry, and local outbox.","../docs/mail/synchronization-and-folders.md","Sync replays queued work, lists folders, then refreshes Inbox and selected folder.|IMAP follows account transport and fetches at most 250 summaries per request.|Optimistic state can diverge; UIDVALIDITY reset and retry limits are unproven.|Protocol payloads stay out of logs; queued subjects and destinations are sensitive.|Source confirms ordered persistence/replay; live interruption and conflicts are open.","accounts,reader,compose"),
+  article("reader","Reading, MIME, and attachments","閱讀、MIME 同附件","foundation","MIME parsing, conservative HTML, isolated reader markup, and safe save paths.","../docs/mail/reading-and-message-safety.md","Raw MIME becomes headers, text, sanitized HTML, flags, and attachment metadata.|Allowlist keeps basic structure and HTTP, HTTPS, or mailto links; images are removed.|Complex formatting disappears and saved files receive no antivirus analysis yet.|Sanitized content stays outside app chrome; filenames normalize and avoid collisions.|Tests prove active/remote HTML removal and MIME metadata; phishing UX is open.","security,sync,compose"),
+  article("compose","Compose, drafts, and sending","撰寫、草稿同寄送","foundation","Plain-text drafts, recipients, attachments, SMTP, and outbox fallback.","../docs/mail/compose-drafts-and-sending.md","Drafts preserve recipients, subject, text, reply references, and file paths.|SMTP follows account transport with bounded connection, greeting, and socket timeouts.|Rich compose, autosave timing, partial retry, missing files, and duplicate ambiguity are open.|Bcc, body, and paths are sensitive; HTML and crypto need separate review.|Source confirms draft/send/queue paths; live delivery is unverified.","accounts,sync,notifications"),
+  article("history","Local state and Git-backed history","本機狀態同 Git 歷史","verified","Serialized atomic JSON plus isolated append-only local Git snapshots.","../docs/data/local-state-and-history.md","State uses same-directory temporary writes and rename; changed states enter app-owned Git.|Schema is v1; semantic history keeps 2,000 and Git listing caps at 2,000.|Corrupt JSON, unavailable Git, disk failure, and old-schema restore need recovery UX.|Snapshots keep credential ciphertext; revision input accepts hashes only.|Tests cover 25 concurrent writes, immutable revisions, no-op suppression, and hostile IDs.","security,external,changelog"),
+  article("accessibility","Material interface and accessibility","Material 介面同無障礙","open","M3 shell, semantic tabs, keyboard behavior, live regions, and reduced motion.","../docs/experience/material-interface-and-accessibility.md","Mail, Settings, Changelog, History, Notifications, and Tools are discrete panels.|Theme, density, accent, and fonts persist; layouts must survive 100–200% scaling.|Dynamic focus, bilingual clipping, title bars, popovers, contrast, and targets can fail.|Message markup never enters app chrome; accessible names must protect private content.|Roles and reduced-motion hooks exist; built-app assistive evidence remains open.","tabs,appearance,language"),
+  article("language","Language and humor controls","語言同幽默控制","foundation","English, Hong Kong Cantonese, and bilingual display with independent tone levels.","../docs/experience/language-and-humor.md","English and Cantonese each persist levels 1–5 while facts stay exact.|Defaults are English, English level 2, Cantonese level 3; changes apply live.|Inline copy can drift, bilingual text can clip, and missing variants need fallback.|Humor never changes consent, destructive impact, credentials, security, or recovery.|Preference wiring exists; every-message, every-level, and screen-reader audit is open.","accessibility,notifications,appearance"),
+  article("regex","Search and regex builder","搜尋同正規表達式建立器","verified","Plain-text-first search with a field-bound JavaScript RegExp builder.","../docs/experience/search-and-regex-builder.md","Builder synchronizes pattern, flags, validation, sample, matches, captures, copy, export.|Limits are 2,048 pattern characters, 50,000 sample characters, 200 matches, flags i/m/s/u.|Risk detection is heuristic, not a timeout; JavaScript differs from PCRE and .NET.|Patterns and samples stay local; invalid or empty patterns cannot drive bulk actions.|Tests cover literals, case, captures, zero-width progress, invalid syntax, nesting, flags.","tabs,history,changelog"),
+  article("tabs","Tabs and discovery","分頁同探索","foundation","Browser-style tabs with order, pins, groups, searches, close preview, and styling.","../docs/experience/tabs-and-discovery.md","Pinned tabs lead ordinary tabs; the app model includes four search scopes and inverse close.|Order, closed state, pins, groups, collapse, and appearance persist locally.|Active close, drag/keyboard parity, collapsed reveal, and unsaved compose can fail.|Search uses visible labels; pinned and unsaved tabs stay protected by default.|Roles and persistence exist; complete grouping, overflow, focus return, and scaling are open.","regex,appearance,accessibility"),
+  article("notifications","Notifications and narration","通知同旁白","foundation","Reviewable local history, corner toasts, and off-by-default serialized narration.","../docs/experience/notifications.md","Events append typed records and non-blocking toasts; narration serializes languages.|Newest 500 records persist; narrator can use English, Cantonese, or bilingual mode.|Repeated errors can flood history, actions can stale, and suitable voices can be missing.|Notifications and speech avoid secrets and unnecessary private mail details.|Records, toasts, live regions, and queue code exist; timing, DND, and native banners are open.","language,accessibility,history"),
+  article("appearance","Appearance customization","外觀自訂","open","Global M3 preferences and early per-tab styling; every-element editing is open.","../docs/experience/appearance-customization.md","Theme, density, accent, font family, scale, and weight update live and persist.|Defaults use system theme, comfortable density, purple seed, Segoe UI Variable.|Imports can break contrast/layout, fonts can lack CJK, and dynamic targets lose rules.|Theme data must allow no CSS, URLs, scripts, or downloaded fonts.|Global application exists; infinite color translation and Word-depth editors are open.","accessibility,tabs,language"),
+  article("external","External editor and export","外部編輯器同匯出","foundation","Finite Windows editor detection, argument-safe launch, and native text export.","../docs/data/external-editor-and-export.md","App detects common editors on PATH, persists a choice, and passes one project argument.|Candidates are VS Code, Cursor, Notepad++, and Notepad; export is UTF-8.|Portable editors can be missed, executables disappear, and destinations reject writes.|Launch uses argument arrays, never a shell; export never includes decrypted secrets.|Source confirms detection, checks, dialogs, cancel, and launch; package behavior is open.","history,packaging,security"),
+  article("changelog","Changelog","更新記錄","open","A searchable/exportable release history whose honest current state is empty.","../docs/data/changelog.md","Viewer target covers every release with exact version/date, categories, search, date, export.|Typed locale/ISO dates must synchronize with advanced calendar and regex search.|Development versions can be mistaken for releases; filters and export can disagree.|Release notes stay factual at every tone and exclude secrets or private issue data.|A route exists, but no verified release, date, code-name asset, or full picker exists.","packaging,regex,history"),
+  article("packaging","Development and Windows packaging","開發同 Windows 封裝","open","Local checks and NSIS x64 configuration without installer or release proof.","../docs/delivery/development-and-packaging.md","Development uses bundled main/preload plus loopback Vite; production uses esbuild/Vite.|NSIS is assisted x64 install with shortcuts and retained app data on uninstall.|Green build or large executable does not prove launch, signing, install, upgrade, or contents.|Distribution needs provenance, signing, clean-machine tests, immutable tags, exact artifact.|Dependencies, typecheck, focused tests, and audit passed; installer, CI, release, Pages are open.","electron,security,changelog"),
+  article("source-reference","LibreOffice source reference","LibreOffice 原始碼參考","verified","The only permitted external product source paths, pinned to one immutable upstream commit.","../docs/architecture/libreoffice-source-map.md","LibreOffice is referenced only for narrow desktop lifecycle, tabs, appearance, Windows, and preference concepts; Material Email remains original Electron.|Each reference records the official repository, exact path, immutable commit, and strict boundary.|VCL and UNO assumptions do not automatically apply to Electron, Chromium, or Node.js.|A reference is not a threat model, compatibility claim, or permission to infer mail behavior.|Every path shown was checked against official LibreOffice/core master at the recorded SHA.","electron,accessibility,appearance")
+];
+
+ARTICLES.push(
+  article("contacts","Contacts, mailing lists, and vCard","聯絡人、郵件群組同 vCard","foundation","Local structured contacts/lists with bounded conservative vCard import and export.","../docs/pim/contacts-mailing-lists-and-vcard.md","Stable-UID CRUD, ordered structured fields, accent-insensitive search, no-op suppression, and append-only restore exist.|vCard input caps at 5 MiB and 10,000 cards; supported v3/v4 fields and groups round-trip deterministically.|Photos, keys, custom properties, CardDAV, huge-book scale, and renderer integration remain open.|PIM data is private local plaintext; imports never execute URLs or remote content and unknown fields are rejected.|PIM tests cover Unicode, escaping, multiple values, lists, conservative import, strict validation, and restore.","pim-history,calendar,history"),
+  article("calendar","Calendars and events","日曆同活動","foundation","A persisted local Home calendar with events, recurrence metadata, attendees, and alarms.","../docs/pim/calendars-and-events.md","Stable-UID event CRUD/query/restore preserves temporal values, recurrence metadata, attendees, alarms, categories, and status.|Recurrence validates frequency, interval, count-or-until, weekday/month-day, additions, and exceptions.|Occurrence expansion, DST matrix, multiple calendars, invitations, alarm delivery, ICS, CalDAV, and UI remain open.|Schedule data is local plaintext; future sync or invitation transport requires consent and least privilege.|Tests cover Home creation plus event recurrence, attendee, alarm, update, delete, and append-only restore fields.","tasks,pim-history,notifications"),
+  article("tasks","Tasks and refresh ordering","工作同 refresh 排序","foundation","Local task lifecycle plus stale-refresh and in-flight-edit protection.","../docs/pim/tasks-and-refresh-ordering.md","Stable-UID tasks store status, dates, priority, completion, categories, recurrence, and source revision.|Strict schemas bound priority/completion and reject due-before-entry; refresh is merge-only and provider-agnostic.|There is no task provider, recurrence expansion, retry policy, conflict UI, or renderer integration.|Private task data stays local plaintext; request IDs and mutation versions stop stale overwrite.|Tests cover lifecycle fields, action filters, overlapping refresh, local-edit protection, cross-instance locking, and append-only restore.","calendar,pim-history,notifications"),
+  article("pim-history","PIM persistence and transactions","PIM 儲存同交易歷史","verified","Generation-numbered atomic recovery, cross-process locking, and validated append-only entity transactions.","../docs/pim/persistence-and-transactions.md","Serialized writes acquire a cross-instance/process lock, validate full state, fsync/rename current-next-backup slots, recover the highest valid generation, and suppress no-ops.|Schema v1 rejects unknown fields, requires unique UIDs and increasing transaction sequences, and requests file mode 0600.|Migrations, retention, at-rest encryption, and scale testing remain open.|No credential/network/Electron/logging surface exists; ordinary PIM records remain local plaintext protected by app-data ACLs.|Four focused PIM test files with 25 tests cover locking, concurrency, corruption recovery/refusal, CRUD, search, validation, transactions, restore, and races.","contacts,calendar,tasks")
+);
+
+const SOURCE_PATHS = [
+  ["Application lifecycle","vcl/source/app/svapp.cxx"],
+  ["Desktop tabs","vcl/source/control/tabctrl.cxx"],
+  ["Appearance and locale settings","vcl/source/app/settings.cxx"],
+  ["Windows platform integration","vcl/win/app/salinst.cxx"],
+  ["Structured preferences","officecfg/registry/schema/org/openoffice/Office/Common.xcs"]
+];
+const STATUS_ROWS = [
+  ["Sandbox/context isolation","Verified in source","Packaged runtime audit"],["Credential encryption","safeStorage foundation","DPAPI migration matrix"],["MIME/HTML boundary","Focused tests pass","Malformed corpus and reader sandbox"],["Atomic JSON","Concurrency tests pass","Disk-full and power-loss"],["Local Git snapshots","Focused tests pass","Retention, migration, full UI"],["PIM persistence","4 files / 25 focused tests, including cross-process locking","Migration, retention, encryption, scale, and UI"],["Account discovery","DNS SRV mapping tests pass","Live providers and consent UX"],["IMAP/SMTP","Service foundation","Real accounts and interruption matrix"],["Renderer","Integration source present","Visual and assistive proof"],["NSIS","Configuration only","Build/install/launch/upgrade/uninstall"],["CI/release/Pages","Not verified","Workflow, immutable release, deployed site"]
+];
+const nsisStatusRow=STATUS_ROWS.find((row)=>row[0]==="NSIS");
+if(nsisStatusRow)nsisStatusRow.splice(0,3,"NSIS","Local install, launch, retained-data, and uninstall lifecycle verified","Signing, clean-machine, and upgrade proof");
+
+const defaults = { language:"en", funnyEnglish:2, funnyCantonese:3, theme:"system", density:"comfortable", accent:"#6750a4", dimSumEnabled:true };
+const DIM_SUM = [
+  ["Classic Har Gow","蝦餃","hk-dish-0001-classic-har-gow.png"],
+  ["Scallop Har Gow","帶子蝦餃","hk-dish-0002-scallop-har-gow.png"],
+  ["Bamboo Shoot Har Gow","筍尖蝦餃","hk-dish-0003-bamboo-shoot-har-gow.png"],
+  ["Crab Roe Har Gow","蟹籽蝦餃","hk-dish-0004-crab-roe-har-gow.png"],
+  ["Chive Shrimp Dumpling","韭菜蝦餃","hk-dish-0005-chive-shrimp-dumpling.png"],
+  ["Spinach Shrimp Dumpling","菠菜蝦餃","hk-dish-0006-spinach-shrimp-dumpling.png"],
+  ["Pea Shoot Shrimp Dumpling","豆苗蝦餃","hk-dish-0007-pea-shoot-shrimp-dumpling.png"],
+  ["Lobster Dumpling","龍蝦餃","hk-dish-0008-lobster-dumpling.png"],
+  ["Dried Scallop Shrimp Dumpling","瑤柱蝦餃","hk-dish-0009-dried-scallop-shrimp-dumpling.png"],
+  ["Cuttlefish Shrimp Dumpling","墨魚蝦餃","hk-dish-0010-cuttlefish-shrimp-dumpling.png"]
+].map(([en,yue,file])=>({ en,yue,file,url:new URL("./assets/dim-sum/"+file,import.meta.url).href }));
+let releaseMetadataError = "";
+const isRealUtcDate = (value) => { if(!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;const parsed=new Date(value+"T00:00:00.000Z");return !Number.isNaN(parsed.valueOf())&&parsed.toISOString().slice(0,10)===value; };
+const validateReleaseMetadata = (value) => {
+  if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("Release metadata is not an object.");
+  const keys=["schemaVersion","published","version","releaseDate","codeName","photoFile","tag","releaseUrl"].sort();
+  if(Object.keys(value).sort().join("|")!==keys.join("|"))throw new Error("Release metadata fields do not match the site schema.");
+  if(value.schemaVersion!==1||typeof value.published!=="boolean"||!/^\d+\.\d+\.\d+$/.test(value.version))throw new Error("Release metadata schema or version is invalid.");
+  if(!value.published){if([value.releaseDate,value.codeName,value.photoFile,value.tag,value.releaseUrl].some((item)=>item!==null))throw new Error("Development metadata contains a release claim.");return {...value};}
+  if(!isRealUtcDate(value.releaseDate)||value.tag!=="v"+value.version)throw new Error("Published release date or tag is invalid.");
+  const dish=DIM_SUM.find((item)=>item.file===value.photoFile);
+  if(!dish||value.codeName!==dish.en+" · "+dish.yue)throw new Error("Published release dish metadata is invalid.");
+  const releaseUrl=new URL(value.releaseUrl);
+  if(releaseUrl.protocol!=="https:"||releaseUrl.hostname!=="github.com"||releaseUrl.pathname!=="/Ding-Ding-Projects/material-email/releases/tag/"+value.tag||releaseUrl.search||releaseUrl.hash)throw new Error("Published release URL is invalid.");
+  return {...value};
+};
+const loadReleaseMetadata = async () => {
+  try {
+    const response=await fetch(RELEASE_METADATA_URL,{cache:"no-store",credentials:"same-origin"});
+    if(!response.ok)throw new Error("release.json returned HTTP "+response.status+".");
+    releaseMetadata=validateReleaseMetadata(await response.json());
+  } catch(error) {
+    releaseMetadata={...DEVELOPMENT_RELEASE};
+    releaseMetadataError=error instanceof Error?error.message:String(error);
+  }
+};
+const defaultTabs = { order:PAGES.map((item) => item.id), pinned:["home","docs"], closed:[] };
+const read = (key, fallback) => { try { return Object.assign({},fallback,JSON.parse(localStorage.getItem(key) || "null") || {}); } catch { return Object.assign({},fallback); } };
+const stored = read(TAB_KEY,defaultTabs);
+const order = Array.isArray(stored.order) ? stored.order.filter((id) => PAGES.some((item) => item.id === id)) : [];
+for (const id of defaultTabs.order) if (!order.includes(id)) order.push(id);
+const state = {
+  prefs:read(PREF_KEY,defaults),
+  tabs:{ order, pinned:Array.isArray(stored.pinned) ? stored.pinned : defaultTabs.pinned.slice(), closed:Array.isArray(stored.closed) ? stored.closed : [] },
+  active:"home", selected:"electron", manager:false, managerQuery:"", drag:null,
+  search:{ pattern:"", mode:"plain", flags:"i", sample:"Mail sync failed\nQueued message sent\nSecurity boundary", open:false },
+  toasts:[]
+};
+const app = document.getElementById("app");
+const toastRegion = document.getElementById("toast-region");
+const statusRegion = document.getElementById("status-region");
+const esc = (value) => String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+const loc = (value) => state.prefs.language === "yue" ? value.yue : state.prefs.language === "bilingual" ? value.en + " · " + value.yue : value.en;
+const tx = (en,yue) => loc(pair(en,yue));
+const getPage = (id) => PAGES.find((item) => item.id === id) || PAGES[0];
+const releaseAwareArticle = (item) => {
+  let current=item;
+  if(item.id==="electron")current={...item,facts:[item.facts[0],item.facts[1],"Interactive first-run, assistive technology, scaling, signing, and upgrade behavior still need broader proof.",item.facts[3],"A locally built installer was installed and smoke-launched successfully; interactive packaged and scaling audits remain open."]};
+  if(item.id==="packaging")current={...item,status:"verified",summary:"The local Windows installer lifecycle is verified while hosted distribution remains unverified.",facts:[item.facts[0],item.facts[1],"Local install, smoke launch, and uninstall proof does not establish signing, clean-machine, upgrade, provider, or enterprise-policy behavior.",item.facts[3],"Local dist, package, installed-launch, retained-data, and uninstall checks pass; a hosted release and Pages deployment remain unverified."]};
+  if(!releaseMetadata.published)return current;
+  if(item.id==="electron")return {...current,facts:[current.facts[0],current.facts[1],current.facts[2],current.facts[3],"The release workflow installed and launched version "+releaseMetadata.version+" before publication; interactive and scaling audits remain open."]};
+  if(item.id==="changelog")return {...item,status:"foundation",summary:"The published release is identified here while the complete searchable in-app history remains open.",facts:[item.facts[0],item.facts[1],item.facts[2],item.facts[3],"This Pages build records "+releaseMetadata.version+", "+releaseMetadata.releaseDate+", and "+releaseMetadata.codeName+"; the complete in-app history and advanced picker remain open."]};
+  if(item.id==="packaging")return {...current,status:"released",summary:"A verified Windows release is published with its installer and local catalog photo.",facts:[current.facts[0],current.facts[1],"The published installer is still unsigned; clean-machine, upgrade, provider, and enterprise-policy matrices remain open.",current.facts[3],"Release "+releaseMetadata.version+" was published on "+releaseMetadata.releaseDate+" after installer lifecycle and downloaded-asset verification; code name "+releaseMetadata.codeName+"."]};
+  return current;
+};
+const allArticles = () => ARTICLES.map(releaseAwareArticle);
+const getArticle = (id) => allArticles().find((item) => item.id === id) || allArticles()[0];
+const statusName = (value) => value === "released" ? tx("Released","已發布") : value === "verified" ? tx("Verified foundation","已驗證基礎") : value === "foundation" ? tx("Implemented foundation","已實作基礎") : tx("Open","未完成");
+const sectionNames = [pair("Behavior","行為"),pair("Configuration","設定"),pair("Failure modes","失敗模式"),pair("Security considerations","安全考慮"),pair("Verification","驗證")];
+const applyPrefs = () => {
+  document.documentElement.dataset.theme = ["system","light","dark"].includes(state.prefs.theme) ? state.prefs.theme : "system";
+  document.documentElement.dataset.density = ["compact","comfortable","relaxed"].includes(state.prefs.density) ? state.prefs.density : "comfortable";
+  document.documentElement.style.setProperty("--seed",/^#[0-9a-f]{6}$/i.test(state.prefs.accent) ? state.prefs.accent : defaults.accent);
+  document.documentElement.lang = state.prefs.language === "yue" ? "zh-HK" : "en";
+};
+const applyReleasePresentation = () => {
+  const description=document.querySelector('meta[name="description"]');
+  if(description)description.content=releaseMetadata.published?"Documentation and verified release details for Material Email "+releaseMetadata.version+".":"Local documentation for the unreleased Material Email Windows application foundation.";
+  if(!releaseMetadata.published){const truth=document.querySelector(".truth-note strong");if(truth)truth.textContent=releaseMetadataError?tx("Release metadata unavailable; showing the development fallback.","未能讀取 release metadata；顯示開發 fallback。"):tx("No published release or downloadable installer yet.","未有已發布 release 或可下載 installer。");return;}
+  const status=document.querySelector(".top-app-bar .status-chip"),supporting=document.querySelector(".brand-copy small");
+  if(status){status.dataset.status="released";status.textContent=tx("Released ","已發布 ")+releaseMetadata.version;}
+  if(supporting)supporting.textContent=tx("Published ","已發布 ")+releaseMetadata.releaseDate+" · "+releaseMetadata.codeName;
+};
+const savePrefs = () => { localStorage.setItem(PREF_KEY,JSON.stringify(state.prefs)); applyPrefs(); };
+const saveTabs = () => localStorage.setItem(TAB_KEY,JSON.stringify(state.tabs));
+const normalizeFlags = (value) => Array.from(new Set(String(value))).filter((flag) => ["i","m","s","u"].includes(flag)).sort().join("");
+const escapeRegex = (value) => Array.from(value).map((char) => "\\^$.*+?()[]{}|".includes(char) ? "\\" + char : char).join("");
+const risky = (value) => /\((?:\\.|\\[[^\]]*\]|[^()])*[+*](?:\\.|\\[[^\]]*\]|[^()])*\)\s*(?:[+*]|\{\d+(?:,\d*)?\})/.test(value);
+const validate = () => {
+  const flags = normalizeFlags(state.search.flags);
+  if (!state.search.pattern) return { valid:true, empty:true, flags, message:tx("Enter text to search.","輸入文字開始搜尋。") };
+  if (state.search.pattern.length > LIMIT.pattern) return { valid:false,empty:false,flags,message:tx("Pattern is too long.","模式太長。") };
+  if (state.search.mode === "plain") return { valid:true,empty:false,flags,message:tx("Plain-text search is ready.","純文字搜尋準備好。") };
+  if (risky(state.search.pattern)) return { valid:false,empty:false,flags,message:tx("Nested quantifiers are blocked.","已阻止 nested quantifier。") };
+  try { new RegExp(state.search.pattern,flags); return { valid:true,empty:false,flags,message:tx("Valid JavaScript regular expression.","有效 JavaScript 正規表達式。") }; }
+  catch (error) { return { valid:false,empty:false,flags,message:error instanceof Error ? error.message : tx("Invalid expression.","無效表達式。") }; }
+};
+const matcher = () => {
+  const check = validate();
+  if (check.empty) return () => true;
+  if (!check.valid) return () => false;
+  const regex = new RegExp(state.search.mode === "plain" ? escapeRegex(state.search.pattern) : state.search.pattern,check.flags);
+  return (value) => { regex.lastIndex = 0; return regex.test(String(value).slice(0,LIMIT.sample)); };
+};
+const filtered = () => { const match = matcher(); return allArticles().filter((item) => match([item.title.en,item.title.yue,item.summary].concat(item.facts).join("\n"))); };
+const sampleMatches = () => {
+  const check = validate();
+  if (!check.valid || check.empty) return [];
+  const regex = new RegExp(state.search.mode === "plain" ? escapeRegex(state.search.pattern) : state.search.pattern,check.flags + "g");
+  const out = []; let found;
+  while ((found = regex.exec(state.search.sample.slice(0,LIMIT.sample))) && out.length < LIMIT.matches) {
+    out.push({ value:found[0], index:found.index, groups:found.slice(1).map((value) => value || "") });
+    if (!found[0].length) regex.lastIndex += 1;
+  }
+  return out;
+};
+
+const visiblePages = () => state.tabs.order.filter((id) => !state.tabs.closed.includes(id));
+const displayedPages = () => {
+  const visible = visiblePages();
+  return visible.filter((id) => state.tabs.pinned.includes(id)).concat(visible.filter((id) => !state.tabs.pinned.includes(id)));
+};
+const tabHtml = (id) => {
+  const item = getPage(id), active = state.active === id, pinned = state.tabs.pinned.includes(id);
+  return '<div class="workspace-tab' + (active ? " is-active" : "") + (pinned ? " is-pinned" : "") + '" draggable="true" data-drag-page="' + id + '"><button class="tab-main" role="tab" id="tab-' + id + '" aria-selected="' + active + '" aria-controls="panel-' + id + '" tabindex="' + (active ? "0" : "-1") + '" data-action="page" data-page="' + id + '">' + esc(loc(item)) + '</button>' + (pinned ? "" : '<button class="tab-close" data-action="close" data-page="' + id + '" aria-label="' + esc(tx("Close tab","關閉分頁")) + '">×</button>') + '</div>';
+};
+const managerHtml = () => {
+  const query = state.managerQuery.toLowerCase();
+  const items = state.tabs.order.filter((id) => { const item=getPage(id); return !query || (item.en+" "+item.yue).toLowerCase().includes(query); }).map((id) => {
+    const item=getPage(id), closed=state.tabs.closed.includes(id), pinned=state.tabs.pinned.includes(id);
+    return '<li class="tab-manager__row"><button class="tab-manager__label" data-action="page" data-page="'+id+'">'+esc(loc(item))+(closed?" · "+esc(tx("closed","已關閉")):"")+'</button><button data-action="move" data-page="'+id+'" data-dir="-1" aria-label="'+esc(tx("Move left","向左移動")+": "+loc(item))+'">←</button><button data-action="move" data-page="'+id+'" data-dir="1" aria-label="'+esc(tx("Move right","向右移動")+": "+loc(item))+'">→</button><button data-action="pin" data-page="'+id+'">'+esc(pinned?tx("Unpin","取消釘選"):tx("Pin","釘選"))+'</button></li>';
+  }).join("");
+  return '<section class="tab-manager" role="dialog" aria-modal="false" aria-labelledby="tab-manager-title"><div class="tab-manager__head"><h2 id="tab-manager-title">'+esc(tx("Search and arrange tabs","搜尋同排列分頁"))+'</h2><button class="icon-button" data-action="manager" aria-label="'+esc(tx("Close tab manager","關閉分頁管理器"))+'">×</button></div><label class="field"><span>'+esc(tx("Find a tab","搜尋分頁"))+'</span><input data-manager type="search" value="'+esc(state.managerQuery)+'"></label><ul class="tab-manager__list">'+items+'</ul></section>';
+};
+const tabsHtml = () => {
+  const visible=displayedPages(), firstOrdinary=visible.findIndex((id)=>!state.tabs.pinned.includes(id));
+  const tabs=visible.map((id,index)=>(index===firstOrdinary&&firstOrdinary>0?'<span class="tab-separator" aria-hidden="true"></span>':"")+tabHtml(id)).join("");
+  return '<div class="tab-strip-shell"><div class="tab-strip" role="tablist" aria-label="'+esc(tx("Documentation tabs","文件分頁"))+'">'+tabs+'</div><div class="tab-manager-anchor"><button class="icon-button" data-action="manager" aria-expanded="'+state.manager+'" aria-label="'+esc(tx("Search and arrange tabs","搜尋同排列分頁"))+'">⌄</button>'+(state.manager?managerHtml():"")+'</div></div>';
+};
+
+const homeHtml = () => {
+  const counts = (value) => allArticles().filter((item)=>item.status===value).length;
+  const en=["An honest map of an early Windows email client.","A clear map of a young Windows email client.","A lively map of a Windows mail app finding its feet.","Good bones, plus a checklist long enough to need bookmarks.","No ribbon cutting yet; the toolbox is still making cheerful clanking noises."];
+  const yue=["一個早期 Windows 郵件程式嘅誠實地圖。","一個清楚記錄緊嘅 Windows 郵件程式。","Windows 郵件程式起步啦，步伐幾精神。","骨架幾好，清單長到可以當頸巾。","未剪綵，工具箱已經叮叮噹噹咁努力。"];
+  const tone = state.prefs.language==="yue" ? yue[state.prefs.funnyCantonese-1] : state.prefs.language==="bilingual" ? en[state.prefs.funnyEnglish-1]+" · "+yue[state.prefs.funnyCantonese-1] : en[state.prefs.funnyEnglish-1];
+  return '<section class="page" id="panel-home" role="tabpanel" aria-labelledby="tab-home"><div class="hero"><div><p class="eyebrow">'+esc(tx("LOCAL DOCUMENTATION · UNRELEASED","本機文件 · 未發布"))+'</p><h1>Material Email</h1><p>'+esc(tone)+'</p><div class="hero-actions"><button class="button button--filled" data-action="page" data-page="docs">'+esc(tx("Read the docs","閱讀文件"))+'</button><button class="button button--tonal" data-action="page" data-page="status">'+esc(tx("Check status","查看狀態"))+'</button></div></div><div class="status-orbit"><div class="status-orbit__core"><strong>0.1.0</strong><span>'+esc(tx("development","開發版本"))+'</span></div><div class="truth-note"><strong>'+esc(tx("No release or installer yet.","未有 release 或 installer。"))+'</strong></div></div></div><section class="section"><div class="card-grid">'+[["verified",counts("verified")],["foundation",counts("foundation")],["open",counts("open")]].map(([status,count])=>'<article class="card"><span class="status-chip" data-status="'+status+'">'+count+'</span><h2>'+esc(statusName(status))+'</h2><p>'+esc(status==="open"?tx("Explicit gaps remain visible.","缺口清楚列出。"):tx("Evidence is scoped to the claim.","證據只支持相應聲明。"))+'</p></article>').join("")+'</div></section><section class="section"><div class="notice"><strong>'+esc(tx("Local asset note:","本機資產備註："))+'</strong> '+esc(tx("Ten verified bundled dim-sum images support an opt-out 1% surprise after the first visit. No release code name is shown because no release exists.","十張已驗證本機點心圖支援首次訪問之後可關閉嘅 1% 驚喜。未有 release，所以唔顯示 release code name。"))+'</div></section></section>';
+};
+const releasedHomeHtml = () => {
+  const counts=(value)=>allArticles().filter((item)=>item.status===value).length,dish=DIM_SUM.find((item)=>item.file===releaseMetadata.photoFile);
+  const en=["The verified Windows release is ready with its evidence attached.","A tested Windows release has arrived with receipts.","The Windows release has landed, installer and tiny steamer basket included.","The installer passed its obstacle course and brought dim sum to celebrate.","Ribbon cut: Windows installer verified, release shipped, har gow reporting for duty."];
+  const yue=["已驗證 Windows release 連證據一齊準備好。","Windows release 測試完成，單據齊全。","Windows release 已到，installer 同小蒸籠一齊登場。","Installer 過晒障礙賽，仲帶埋點心慶祝。","剪綵喇：Windows installer 已驗證，release 出街，蝦餃正式返工。"];
+  const tone=state.prefs.language==="yue"?yue[state.prefs.funnyCantonese-1]:state.prefs.language==="bilingual"?en[state.prefs.funnyEnglish-1]+" · "+yue[state.prefs.funnyCantonese-1]:en[state.prefs.funnyEnglish-1];
+  const cards=[["released",counts("released")],["verified",counts("verified")],["foundation",counts("foundation")],["open",counts("open")]];
+  return '<section class="page" id="panel-home" role="tabpanel" aria-labelledby="tab-home"><div class="hero"><div><p class="eyebrow">'+esc(tx("PUBLISHED DOCUMENTATION · RELEASE ","已發布文件 · RELEASE ")+releaseMetadata.version)+'</p><h1>Material Email</h1><p>'+esc(tone)+'</p><div class="hero-actions"><a class="button button--filled" target="_blank" rel="noreferrer noopener" href="'+esc(releaseMetadata.releaseUrl)+'">'+esc(tx("View release and installer","查看 release 同 installer"))+'</a><button class="button button--tonal" data-action="page" data-page="docs">'+esc(tx("Read the docs","閱讀文件"))+'</button></div></div><article class="release-summary"><img src="'+esc(dish.url)+'" alt="'+esc(releaseMetadata.codeName)+'"><div><p class="eyebrow">'+esc(tx("BUILD CODE NAME","版本代號"))+'</p><strong>'+esc(releaseMetadata.codeName)+'</strong><span>v'+esc(releaseMetadata.version)+'</span><time datetime="'+esc(releaseMetadata.releaseDate)+'">'+esc(releaseMetadata.releaseDate)+' UTC</time></div></article></div><section class="section"><div class="card-grid">'+cards.map(([status,count])=>'<article class="card"><span class="status-chip" data-status="'+status+'">'+count+'</span><h2>'+esc(statusName(status))+'</h2><p>'+esc(status==="released"?tx("Published release evidence is linked above.","上面有已發布 release 證據。") : status==="open"?tx("Explicit gaps remain visible.","缺口清楚列出。"):tx("Evidence is scoped to the claim.","證據只支持相應聲明。"))+'</p></article>').join("")+'</div></section><section class="section"><div class="notice"><strong>'+esc(tx("Local release asset:","本機 release 資產："))+'</strong> '+esc(tx("The code-name photo and all ten surprise photos are bundled inside this Pages artifact; no food image is fetched remotely.","版本代號相同十張驚喜相全部內置喺呢個 Pages artifact；唔會遙距下載點心相。"))+'</div></section></section>';
+};
+const featuresHtml = () => '<section class="page" id="panel-features" role="tabpanel" aria-labelledby="tab-features"><header class="page-header"><p class="eyebrow">'+esc(tx("COMPLETE INVENTORY","完整清單"))+'</p><h1>'+esc(tx("Every current feature","目前所有功能"))+'</h1><p>'+esc(tx("Foundations, verified work, and delivery gaps appear together.","基礎、已驗證工作同交付缺口一齊列出。"))+'</p></header><div class="table-scroll"><table class="feature-table"><thead><tr><th>'+esc(tx("Feature","功能"))+'</th><th>'+esc(tx("Status","狀態"))+'</th><th>'+esc(tx("Scope","範圍"))+'</th></tr></thead><tbody>'+allArticles().map((item)=>'<tr><td><button class="button button--text" data-action="article" data-article="'+item.id+'">'+esc(loc(item.title))+'</button></td><td><span class="status-chip" data-status="'+item.status+'">'+esc(statusName(item.status))+'</span></td><td>'+esc(item.summary)+'</td></tr>').join("")+'</tbody></table></div></section>';
+
+const regexHtml = () => {
+  const check=validate(), matches=sampleMatches();
+  return '<section class="regex-builder" role="dialog" aria-modal="false" aria-labelledby="regex-builder-title"><div class="popover-head"><h2 id="regex-builder-title">'+esc(tx("Regular expression builder","正規表達式建立器"))+'</h2><button class="icon-button" data-action="regex" aria-label="'+esc(tx("Close regular expression builder","關閉正規表達式建立器"))+'">×</button></div><p class="supporting-copy">'+esc(tx("JavaScript RegExp; patterns and samples stay local.","JavaScript RegExp；模式同 sample 留本機。"))+'</p><div class="segmented"><button data-action="mode" data-mode="plain" class="'+(state.search.mode==="plain"?"is-selected":"")+'">'+esc(tx("Plain text","純文字"))+'</button><button data-action="mode" data-mode="regex" class="'+(state.search.mode==="regex"?"is-selected":"")+'">Regex</button></div><label class="field"><span>'+esc(tx("Pattern","模式"))+'</span><textarea data-pattern maxlength="'+LIMIT.pattern+'">'+esc(state.search.pattern)+'</textarea></label>'+(state.search.mode==="regex"?'<div class="flag-row">'+["i","m","s","u"].map((flag)=>'<label><input data-flag type="checkbox" value="'+flag+'" '+(state.search.flags.includes(flag)?"checked":"")+'> '+flag+'</label>').join("")+'</div>':'')+'<label class="field"><span>'+esc(tx("Sample text","範例文字"))+'</span><textarea data-sample maxlength="'+LIMIT.sample+'">'+esc(state.search.sample)+'</textarea></label><p class="'+(check.valid?"supporting-copy":"field-error")+'">'+esc(check.message)+'</p><section class="match-preview"><h3>'+esc(tx("Matches and captures","配對同擷取"))+' <span class="count-chip">'+matches.length+'</span></h3><ol>'+matches.slice(0,20).map((item)=>'<li><code>'+esc(item.value||"(zero-width)")+'</code> @ '+item.index+(item.groups.length?'<small> '+esc(item.groups.join(" · "))+'</small>':'')+'</li>').join("")+'</ol></section><div class="hero-actions"><button class="button button--text" data-action="copy">'+esc(tx("Copy","複製"))+'</button><button class="button button--outlined" data-action="export">'+esc(tx("Export","匯出"))+'</button><button class="button button--filled" data-action="apply" '+(check.valid?"":"disabled")+'>'+esc(tx("Use in search","套用到搜尋"))+'</button></div></section>';
+};
+const searchHtml = () => {
+  const check=validate();
+  return '<div class="search-anchor"><div class="search-field"><input data-search type="search" value="'+esc(state.search.pattern)+'" maxlength="'+LIMIT.pattern+'" aria-label="'+esc(tx("Search documentation","搜尋文件"))+'" placeholder="'+esc(tx("Search every article","搜尋所有文章"))+'"><button class="regex-button '+(state.search.mode==="regex"?"is-regex":"")+'" data-action="regex" aria-expanded="'+state.search.open+'">.* '+esc(state.search.mode==="regex"?"Regex":tx("Build","建立"))+'</button></div>'+(check.valid?"":'<p class="field-error">'+esc(check.message)+'</p>')+(state.search.open?regexHtml():"")+'</div>';
+};
+const articleHtml = (item) => '<article class="article"><header class="article-header"><div class="chip-row"><span class="category-chip">'+esc(item.id==="packaging"?tx("Delivery","交付"):item.id==="accounts"||item.id==="sync"||item.id==="reader"||item.id==="compose"?tx("Mail","郵件"):tx("Feature","功能"))+'</span><span class="status-chip" data-status="'+item.status+'">'+esc(statusName(item.status))+'</span></div><h1>'+esc(loc(item.title))+'</h1><p>'+esc(item.summary)+'</p><a href="'+esc(item.doc)+'">'+esc(tx("Open the full Markdown article","開啟完整 Markdown 文章"))+'</a></header>'+item.facts.map((fact,index)=>'<section class="article-section"><h2>'+esc(loc(sectionNames[index]))+'</h2><p>'+esc(fact)+'</p></section>').join("")+'<section class="article-section"><h2>'+esc(tx("Suggested articles","建議文章"))+'</h2><div class="suggestions">'+item.related.map((id)=>'<button class="suggestion" data-action="article" data-article="'+id+'">'+esc(loc(getArticle(id).title))+'</button>').join("")+'</div></section></article>';
+const emptyResultsHtml = (check) => '<section class="empty-state" role="status"><h2>'+esc(check.valid?tx("No matching articles","冇符合文章"):tx("The expression needs attention","表達式需要修正"))+'</h2><p>'+esc(check.valid?tx("Try a different plain-text query or regular expression.","試下另一個純文字搜尋或正規表達式。"):tx("Fix the validation error before reviewing filtered articles.","修正驗證錯誤先再睇篩選文章。"))+'</p></section>';
+const docsHtml = () => {
+  const check=validate(), results=filtered();
+  if (results.length&&!results.some((item)=>item.id===state.selected)) state.selected=results[0].id;
+  return '<section class="page" id="panel-docs" role="tabpanel" aria-labelledby="tab-docs"><header class="page-header"><p class="eyebrow">'+esc(tx("SEARCHABLE DOCUMENTATION","可搜尋文件"))+'</p><h1>'+esc(tx("Feature articles","功能文章"))+'</h1><p>'+esc(tx("Plain text is default; the adjacent builder uses the real bounded JavaScript dialect.","預設純文字；相鄰建立器用真正有界 JavaScript dialect。"))+'</p></header><div class="docs-layout"><aside class="docs-index">'+searchHtml()+'<p class="supporting-copy">'+results.length+' '+esc(tx("matching articles","篇符合文章"))+'</p><ul class="docs-results">'+results.map((item)=>'<li><button class="doc-result '+(state.selected===item.id?"is-active":"")+'" data-action="select" data-article="'+item.id+'"><strong>'+esc(loc(item.title))+'</strong><small>'+esc(statusName(item.status))+'</small></button></li>').join("")+'</ul></aside><div>'+(results.length?articleHtml(getArticle(state.selected)):emptyResultsHtml(check))+'</div></div></section>';
+};
+const sourceHtml = () => '<section class="page" id="panel-source" role="tabpanel" aria-labelledby="tab-source"><header class="page-header"><p class="eyebrow">'+esc(tx("ONLY PERMITTED EXTERNAL SOURCE","唯一獲准外部原始碼"))+'</p><h1>'+esc(tx("LibreOffice source map","LibreOffice 原始碼地圖"))+'</h1><p>'+esc(tx("Verified at immutable commit ","已驗證 immutable commit ")+SHA)+'. '+esc(tx("A reference is not copied code or a parity claim.","參考唔係抄碼，亦唔係 parity 聲明。"))+'</p></header><div class="notice">'+esc(tx("The map is limited to general desktop lifecycle, tabs, appearance, Windows integration, and preferences. Every mail feature is an original implementation based on public protocols and local tests.","個地圖只限一般桌面生命週期、分頁、外觀、Windows 整合同偏好設定。所有郵件功能都係按公開協議同本機測試原創實作。"))+'</div><div class="table-scroll section"><table class="source-table"><thead><tr><th>'+esc(tx("Area","範圍"))+'</th><th>'+esc(tx("Exact path","準確路徑"))+'</th></tr></thead><tbody>'+SOURCE_PATHS.map(([area,path])=>'<tr><td>'+esc(area)+'</td><td><a target="_blank" rel="noreferrer noopener" href="'+esc(SOURCE+path)+'"><code>'+esc(path)+'</code></a></td></tr>').join("")+'</tbody></table></div></section>';
+const statusHtml = () => '<section class="page" id="panel-status" role="tabpanel" aria-labelledby="tab-status"><header class="page-header"><p class="eyebrow">'+esc(tx("NO RELEASE CLAIM","冇發布聲明"))+'</p><h1>'+esc(tx("Verification status","驗證狀態"))+'</h1><p>'+esc(tx("Configured, implemented, locally tested, remotely verified, and released are different states.","已設定、已實作、本機測試、遠端驗證同已發布係唔同狀態。"))+'</p></header><div class="table-scroll"><table class="matrix"><thead><tr><th>'+esc(tx("Area","範圍"))+'</th><th>'+esc(tx("Evidence now","目前證據"))+'</th><th>'+esc(tx("Still required","仍然需要"))+'</th></tr></thead><tbody>'+STATUS_ROWS.map((row)=>'<tr>'+row.map((cell)=>'<td>'+esc(cell)+'</td>').join("")+'</tr>').join("")+'</tbody></table></div></section>';
+const settingsHtml = () => '<section class="page" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings"><header class="page-header"><p class="eyebrow">'+esc(tx("PERSISTED LOCALLY","本機保存"))+'</p><h1>'+esc(tx("Documentation appearance","文件外觀"))+'</h1><p>'+esc(tx("Controls apply immediately; no preference leaves the browser.","控制即時套用；偏好唔會離開瀏覽器。"))+'</p></header><div class="settings-grid"><section class="setting-card"><h2>'+esc(tx("Language and tone","語言同語氣"))+'</h2><p>'+esc(tx("Humor styles warnings too, but never changes facts.","幽默亦會調味警告，但永遠唔改事實。"))+'</p><label class="field"><span>'+esc(tx("Language","語言"))+'</span><select data-pref="language"><option value="en">English</option><option value="yue">廣東話</option><option value="bilingual">English · 廣東話</option></select></label><label class="field"><span>English '+esc(tx("humor","幽默"))+' <output class="range-output">'+state.prefs.funnyEnglish+'</output></span><input data-pref="funnyEnglish" type="range" min="1" max="5" value="'+state.prefs.funnyEnglish+'"></label><label class="field"><span>'+esc(tx("Cantonese humor","廣東話幽默"))+' <output class="range-output">'+state.prefs.funnyCantonese+'</output></span><input data-pref="funnyCantonese" type="range" min="1" max="5" value="'+state.prefs.funnyCantonese+'"></label></section><section class="setting-card"><h2>'+esc(tx("Theme and density","主題同密度"))+'</h2><label class="field"><span>'+esc(tx("Theme","主題"))+'</span><select data-pref="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label class="field"><span>'+esc(tx("Density","密度"))+'</span><select data-pref="density"><option value="compact">Compact</option><option value="comfortable">Comfortable</option><option value="relaxed">Relaxed</option></select></label><label class="field"><span>'+esc(tx("Accent color","強調色"))+'</span><input data-pref="accent" type="color" value="'+esc(state.prefs.accent)+'"></label><label class="switch-row"><input data-pref="dimSumEnabled" type="checkbox" '+(state.prefs.dimSumEnabled?"checked":"")+'><span>'+esc(tx("Enable the 1% local dim-sum surprise","啟用 1% 本機點心驚喜"))+'</span></label></section><section class="setting-card"><h2>'+esc(tx("Reset and gaps","重設同缺口"))+'</h2><p>'+esc(tx("This foundation does not claim the required Word-depth every-element editor or full color-space translator.","呢個基礎唔聲稱已有 Word 深度全元素 editor 或完整色彩空間轉換器。"))+'</p><button class="button button--outlined" data-action="reset-prefs">'+esc(tx("Reset appearance","重設外觀"))+'</button><button class="button button--text" data-action="reset-tabs">'+esc(tx("Reset tabs","重設分頁"))+'</button></section></div></section>';
+
+const releasedStatusHtml = () => {
+  const rows=STATUS_ROWS.map((row)=>row[0]==="NSIS"?["NSIS","Installed launch/uninstall lifecycle and release asset verified","Signing, clean-machine, and upgrade proof"]:row[0]==="CI/release/Pages"?["CI/release/Pages","Release "+releaseMetadata.version+" metadata and assets verified before this Pages upload","Independent deployment monitoring and future releases"]:row);
+  return '<section class="page" id="panel-status" role="tabpanel" aria-labelledby="tab-status"><header class="page-header"><p class="eyebrow">'+esc(tx("PUBLISHED RELEASE","已發布 RELEASE"))+'</p><h1>'+esc(tx("Release and verification status","Release 同驗證狀態"))+'</h1><p>'+esc(tx("This published page received metadata only after the Windows release job verified its installer, tag, and catalog photo.","呢個已發布頁面只會喺 Windows release job 驗證 installer、tag 同目錄相片之後收到 metadata。"))+'</p><a class="button button--filled release-link" target="_blank" rel="noreferrer noopener" href="'+esc(releaseMetadata.releaseUrl)+'">'+esc(tx("Open release ","開啟 release ")+releaseMetadata.version)+'</a></header><div class="table-scroll"><table class="matrix"><thead><tr><th>'+esc(tx("Area","範圍"))+'</th><th>'+esc(tx("Evidence now","目前證據"))+'</th><th>'+esc(tx("Still required","仍然需要"))+'</th></tr></thead><tbody>'+rows.map((row)=>'<tr>'+row.map((cell)=>'<td>'+esc(cell)+'</td>').join("")+'</tr>').join("")+'</tbody></table></div></section>';
+};
+const pageHtml = () => state.active==="features"?featuresHtml():state.active==="docs"?docsHtml():state.active==="source"?sourceHtml():state.active==="status"?(releaseMetadata.published?releasedStatusHtml():statusHtml()):state.active==="settings"?settingsHtml():(releaseMetadata.published?releasedHomeHtml():homeHtml());
+const inactivePanelsHtml = () => visiblePages().filter((id)=>id!==state.active).map((id)=>'<section id="panel-'+id+'" role="tabpanel" aria-labelledby="tab-'+id+'" hidden></section>').join("");
+const shellHtml = () => '<div class="app-shell"><header class="top-app-bar"><span class="brand-mark" role="img" aria-label="'+esc(tx("Material Email documentation","Material Email 文件"))+'">M</span><div class="brand-copy"><strong>'+esc(tx("Material Email documentation","Material Email 文件"))+'</strong><small>'+esc(tx("Local · Windows foundation · not released","本機 · Windows 基礎 · 未發布"))+'</small></div><span class="status-chip" data-status="open">'+esc(tx("Unreleased","未發布"))+'</span><button class="icon-button" data-action="page" data-page="settings" aria-label="'+esc(tx("Settings","設定"))+'">⚙</button></header>'+tabsHtml()+'<main id="main-content" tabindex="-1">'+pageHtml()+inactivePanelsHtml()+'</main></div>';
+const renderToasts = () => { toastRegion.innerHTML=state.toasts.map((item)=>'<article class="toast" tabindex="0"><div><strong>'+esc(item.title)+'</strong><span>'+esc(item.body)+'</span>'+(item.image?'<img src="'+esc(item.image)+'" alt="'+esc(item.alt)+'">':'')+'</div><button class="icon-button" data-action="dismiss" data-toast="'+item.id+'" aria-label="'+esc(tx("Dismiss notification","關閉通知"))+'">×</button></article>').join(""); };
+const notify = (title,body,image,alt) => { const id=String(Date.now())+Math.random(); state.toasts.unshift({id,title,body,image,alt}); state.toasts=state.toasts.slice(0,4); statusRegion.textContent=title+". "+body; renderToasts(); setTimeout(()=>{state.toasts=state.toasts.filter((item)=>item.id!==id);renderToasts();},6500); };
+const maybeDimSum = () => {
+  const seenKey="material-email.docs.first-visit.v1";
+  if(!localStorage.getItem(seenKey)){localStorage.setItem(seenKey,"seen");return;}
+  if(!state.prefs.dimSumEnabled)return;
+  const draw=crypto.getRandomValues(new Uint32Array(1))[0]/4294967296;
+  if(draw>=0.01)return;
+  const choice=DIM_SUM[crypto.getRandomValues(new Uint32Array(1))[0]%DIM_SUM.length];
+  notify(tx("A tiny dim-sum hello","一個細細點心問候"),tx(choice.en,choice.yue),choice.url,choice.en+" · "+choice.yue);
+};
+const render = (focus, selection) => {
+  if (!visiblePages().includes(state.active)) state.active=visiblePages()[0]||"home";
+  applyPrefs(); app.innerHTML=shellHtml(); applyReleasePresentation(); app.setAttribute("aria-busy","false"); renderToasts(); document.title=loc(getPage(state.active))+" · Material Email";
+  document.querySelectorAll("[data-pref]").forEach((control)=>{ if (control instanceof HTMLSelectElement) control.value=String(state.prefs[control.dataset.pref]); });
+  if (focus) {const target=document.querySelector(focus);if(target instanceof HTMLElement){target.focus();if(selection&&(target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement)){const end=Math.min(target.value.length,selection.end);target.setSelectionRange(Math.min(end,selection.start),end,selection.direction);}}}
+};
+const activate = (id, focus="#main-content") => { if(!PAGES.some((item)=>item.id===id))return; state.tabs.closed=state.tabs.closed.filter((item)=>item!==id);state.active=id;saveTabs();render(focus); };
+const openArticle = (id) => { state.selected=getArticle(id).id;state.search.pattern="";state.search.open=false;activate("docs"); };
+const exportPattern = () => {
+  const content="# Material Email documentation search\n\nMode: "+state.search.mode+"\nPattern: "+state.search.pattern+"\nFlags: "+normalizeFlags(state.search.flags)+"\n\nSample:\n"+state.search.sample;
+  const url=URL.createObjectURL(new Blob([content],{type:"text/markdown"}));const link=document.createElement("a");link.href=url;link.download="material-email-docs-search.md";link.click();URL.revokeObjectURL(url);
+};
+
+document.addEventListener("click",(event)=>{
+  const target=event.target.closest("[data-action]");if(!(target instanceof HTMLElement))return;const action=target.dataset.action;
+  if(action==="page")return activate(target.dataset.page);
+  if(action==="article")return openArticle(target.dataset.article);
+  if(action==="select"){state.selected=getArticle(target.dataset.article).id;return render('[data-article="'+state.selected+'"]');}
+  if(action==="manager"){state.manager=!state.manager;return render(state.manager?"[data-manager]":'[data-action="manager"]');}
+  if(action==="close"){const id=target.dataset.page;if(!state.tabs.pinned.includes(id))state.tabs.closed.push(id);saveTabs();return render("#main-content");}
+  if(action==="pin"){const id=target.dataset.page;state.tabs.pinned=state.tabs.pinned.includes(id)?state.tabs.pinned.filter((item)=>item!==id):state.tabs.pinned.concat(id);state.tabs.closed=state.tabs.closed.filter((item)=>item!==id);saveTabs();return render("#tab-"+id);}
+  if(action==="move"){const id=target.dataset.page,index=state.tabs.order.indexOf(id),next=Math.max(0,Math.min(state.tabs.order.length-1,index+Number(target.dataset.dir)));state.tabs.order.splice(index,1);state.tabs.order.splice(next,0,id);saveTabs();return render("#tab-"+id);}
+  if(action==="regex"){state.search.open=!state.search.open;return render(state.search.open?"[data-pattern]":"[data-search]");}
+  if(action==="mode"){state.search.mode=target.dataset.mode==="regex"?"regex":"plain";return render("[data-pattern]");}
+  if(action==="apply"){state.search.open=false;return render("[data-search]");}
+  if(action==="copy"){navigator.clipboard.writeText(state.search.pattern).then(()=>notify(tx("Pattern copied","已複製模式"),tx("Clipboard now has the current pattern.","剪貼簿已有目前模式。"))).catch(()=>notify(tx("Copy unavailable","未能複製"),tx("The pattern remains in the builder.","模式仍然留喺建立器。")));return;}
+  if(action==="export")return exportPattern();
+  if(action==="dismiss"){state.toasts=state.toasts.filter((item)=>item.id!==target.dataset.toast);return renderToasts();}
+  if(action==="reset-prefs"){state.prefs=Object.assign({},defaults);savePrefs();notify(tx("Appearance reset","外觀已重設"),tx("Local defaults restored.","已回復本機預設。"));return render("#panel-settings");}
+  if(action==="reset-tabs"){state.tabs={order:defaultTabs.order.slice(),pinned:defaultTabs.pinned.slice(),closed:[]};saveTabs();return render("#panel-settings");}
+});
+document.addEventListener("input",(event)=>{
+  const target=event.target;if(!(target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement))return;
+  const selection={start:target.selectionStart??target.value.length,end:target.selectionEnd??target.value.length,direction:target.selectionDirection??"none"};
+  if(target.matches("[data-search],[data-pattern]")){state.search.pattern=target.value.slice(0,LIMIT.pattern);return render(target.matches("[data-search]")?"[data-search]":"[data-pattern]",selection);}
+  if(target.matches("[data-sample]")){state.search.sample=target.value.slice(0,LIMIT.sample);return render("[data-sample]",selection);}
+  if(target.matches("[data-manager]")){state.managerQuery=target.value;return render("[data-manager]",selection);}
+  if(target.matches('[data-pref="funnyEnglish"],[data-pref="funnyCantonese"]')){state.prefs[target.dataset.pref]=Number(target.value);savePrefs();return render('[data-pref="'+target.dataset.pref+'"]');}
+});
+document.addEventListener("change",(event)=>{
+  const target=event.target;if(!(target instanceof HTMLInputElement||target instanceof HTMLSelectElement))return;
+  if(target.matches("[data-flag]")){const flags=new Set(state.search.flags);target.checked?flags.add(target.value):flags.delete(target.value);state.search.flags=normalizeFlags(Array.from(flags).join(""));return render('[data-flag][value="'+target.value+'"]');}
+  if(target.matches("[data-pref]")){state.prefs[target.dataset.pref]=target.type==="range"?Number(target.value):target.type==="checkbox"?target.checked:target.value;savePrefs();return render('[data-pref="'+target.dataset.pref+'"]');}
+});
+document.addEventListener("keydown",(event)=>{
+  const tab=event.target.closest('[role="tab"]');if(tab instanceof HTMLElement){const ids=displayedPages(),index=ids.indexOf(tab.dataset.page);let next=index;if(event.key==="ArrowRight")next=(index+1)%ids.length;else if(event.key==="ArrowLeft")next=(index-1+ids.length)%ids.length;else if(event.key==="Home")next=0;else if(event.key==="End")next=ids.length-1;else return;event.preventDefault();return activate(ids[next],"#tab-"+ids[next]);}
+  if(event.key==="Escape"&&state.search.open){state.search.open=false;render("[data-search]");}else if(event.key==="Escape"&&state.manager){state.manager=false;render('[data-action="manager"]');}
+});
+document.addEventListener("dragstart",(event)=>{const tab=event.target.closest("[data-drag-page]");if(tab instanceof HTMLElement){state.drag=tab.dataset.dragPage;tab.classList.add("is-dragging");}});
+document.addEventListener("dragover",(event)=>{if(event.target.closest("[data-drag-page]"))event.preventDefault();});
+document.addEventListener("drop",(event)=>{const tab=event.target.closest("[data-drag-page]");if(!(tab instanceof HTMLElement)||!state.drag)return;event.preventDefault();const from=state.tabs.order.indexOf(state.drag),to=state.tabs.order.indexOf(tab.dataset.dragPage);state.tabs.order.splice(from,1);state.tabs.order.splice(to,0,state.drag);saveTabs();const id=state.drag;state.drag=null;render("#tab-"+id);});
+const initialize = async () => {
+  await loadReleaseMetadata();
+  applyPrefs();render();maybeDimSum();
+};
+initialize();
