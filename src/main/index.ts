@@ -16,6 +16,7 @@ import type {
   TransactionFilter,
 } from "../shared/contracts.js";
 import { ipcPayloadSchemas, parseIpcArgs } from "./ipc-validation.js";
+import { assessExternalLink } from "../shared/external-link-safety.js";
 import {
   assertTrustedRendererClaim,
   isTrustedRendererFrameUrl,
@@ -199,7 +200,8 @@ const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> =
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    const assessment = assessExternalLink(url);
+    if (assessment.risk !== "dangerous" && assessment.normalizedUrl) void shell.openExternal(assessment.normalizedUrl);
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", event => event.preventDefault());
