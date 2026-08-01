@@ -311,6 +311,24 @@ test("persists Material settings and demo state across a real Electron restart",
   await page.screenshot({ path: "test-results/material-email-live.png", fullPage: true });
 });
 
+test("keeps native Windows notifications opt-in and persists the setting", async () => {
+  await ensureDemo();
+  await openWorkspaceTab(/^Settings/i, "settings-page");
+
+  const nativeNotifications = page.getByRole("switch", { name: /Native Windows notifications/i });
+  await expect(nativeNotifications).not.toBeChecked();
+  await nativeNotifications.check();
+  await expect(nativeNotifications).toBeChecked();
+  await expect.poll(() => page.evaluate(() => window.materialEmail.bootstrap().then(result => result.preferences.nativeNotificationsEnabled))).toBe(true);
+
+  await restart();
+  await openWorkspaceTab(/^Settings/i, "settings-page");
+  await expect(page.getByRole("switch", { name: /Native Windows notifications/i })).toBeChecked();
+  await expect(page.getByRole("combobox", { name: /Language mode/i })).toBeVisible();
+  await expect(page.locator('input[type="range"][data-pref="funnyEnglish"]')).toBeVisible();
+  await expect(page.locator('input[type="range"][data-pref="funnyCantonese"]')).toBeVisible();
+});
+
 test("filters and copies verified releases from the live Changelog page", async () => {
   await ensureDemo();
   await openWorkspaceTab(/^Changelog/i, "changelog-page");
