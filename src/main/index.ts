@@ -71,6 +71,7 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("dialog:attachments", ipcPayloadSchemas.none, () => service.chooseAttachments());
   handleValidated("account:create-demo", ipcPayloadSchemas.none, () => service.createDemoAccount());
   handleValidated("account:discover", ipcPayloadSchemas.accountDiscover, ([email]) => service.discoverAccount(email));
+  handleValidated("account:inspect-tls-certificate", ipcPayloadSchemas.tlsCertificateInspection, ([request]) => service.inspectTlsCertificate(request));
   handleValidated("account:test", ipcPayloadSchemas.accountDraft, ([draft]) => service.testAccount(draft));
   handleValidated("account:add", ipcPayloadSchemas.accountDraft, ([draft]) => service.addAccount(draft));
   handleValidated("account:remove", ipcPayloadSchemas.accountId, ([accountId]) => service.removeAccount(accountId));

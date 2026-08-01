@@ -40,6 +40,8 @@ import type {
   UnifiedFolderKind,
   CachedMailSearchHit,
   CachedMailSearchResult,
+  TlsCertificateAuthorizationIssue,
+  TlsCertificateInspectionResult,
 } from "../shared/contracts";
 import {
   AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
@@ -2272,11 +2274,50 @@ const renderConnectionDiagnosticItems = (
   }).join("")}</ul>`
   : `<p class="connection-preflight__ready">${icon("check")}<span>${escapeHtml(tx("No local hostname or conventional TLS/port conflict detected. A real connection test is still required.", "本機未發現主機名或者常用 TLS／連接埠衝突；仍然需要真正連線測試。"))}</span></p>`;
 
+const tlsAuthorizationIssueLabel = (issue: TlsCertificateAuthorizationIssue | null): string => {
+  switch (issue) {
+    case "hostname-mismatch": return tx("Hostname mismatch", "主機名唔吻合");
+    case "expired": return tx("Certificate expired", "證書已過期");
+    case "not-yet-valid": return tx("Certificate is not valid yet", "證書尚未生效");
+    case "revoked": return tx("Certificate reported revoked", "證書被報告已撤銷");
+    case "untrusted-chain": return tx("Chain is not trusted by this runtime", "呢個執行環境唔信任證書鏈");
+    case "invalid-signature": return tx("Certificate signature is invalid", "證書簽署無效");
+    case "unknown": return tx("Runtime reported another authorization problem", "執行環境報告另一個授權問題");
+    default: return tx("No authorization problem reported", "未有報告授權問題");
+  }
+};
+
+const renderTlsCertificateInspection = (result: TlsCertificateInspectionResult): string => {
+  if (result.outcome === "not-applicable") {
+    return `<div class="tls-inspection-result__summary">${icon("info")}<div><strong>${escapeHtml(tx("Plain transport has no TLS certificate", "純文字傳輸冇 TLS 證書"))}</strong><p>${escapeHtml(tx("No network connection was opened. Choose TLS or STARTTLS before requesting a live certificate inspection.", "未有開啟任何網絡連線。請先選擇 TLS 或 STARTTLS，再要求即時證書檢查。"))}</p></div></div>`;
+  }
+  const endpoint = connectionEndpointName(result.endpoint);
+  const transport = result.transport === "implicit-tls" ? "TLS" : "STARTTLS";
+  const chainState = result.chainComplete
+    ? tx("The returned chain reached a self-signed root.", "傳回嘅證書鏈去到自簽根證書。")
+    : result.chainTruncated
+      ? tx("The returned chain exceeded the eight-certificate display bound.", "傳回嘅證書鏈超過八張證書顯示上限。")
+      : tx("The server/runtime did not provide a provably complete chain.", "伺服器／執行環境未有提供可以證明完整嘅證書鏈。")
+  return `<div class="tls-inspection-result__summary">${icon(result.authorized && result.hostnameMatch ? "check" : "warning")}<div><strong>${escapeHtml(tx(`${endpoint.english} live ${transport} inspection completed`, `${endpoint.cantonese}即時 ${transport} 檢查完成`))}</strong><p>${escapeHtml(tx("This was an explicit certificate-only diagnostic. No account username, password, token, or mail content was sent.", "呢次係明確啟動、只檢查證書嘅診斷。未有傳送帳戶使用者名稱、密碼、權杖或者郵件內容。"))}</p></div></div>
+    <dl class="tls-inspection-facts">
+      <div><dt>${escapeHtml(tx("Hostname", "主機名"))}</dt><dd>${escapeHtml(result.hostnameMatch ? tx("Matches certificate", "同證書吻合") : tx("Does not match certificate", "同證書唔吻合"))}</dd></div>
+      <div><dt>${escapeHtml(tx("Runtime trust", "執行環境信任"))}</dt><dd>${escapeHtml(result.authorized ? tx("Authorized", "已授權") : tlsAuthorizationIssueLabel(result.authorizationIssue))}</dd></div>
+      <div><dt>${escapeHtml(tx("Protocol", "協定"))}</dt><dd>${escapeHtml(result.protocol ?? tx("Not reported", "未有報告"))}</dd></div>
+      <div><dt>${escapeHtml(tx("Cipher", "加密套件"))}</dt><dd>${escapeHtml(result.cipher ?? tx("Not reported", "未有報告"))}</dd></div>
+      <div><dt>${escapeHtml(tx("Bound", "時間上限"))}</dt><dd>${escapeHtml(tx(`${result.timeoutMs / 1_000} seconds total`, `總共 ${result.timeoutMs / 1_000} 秒`))}</dd></div>
+    </dl>
+    <p class="tls-inspection-chain-state">${escapeHtml(chainState)}</p>
+    <ol class="tls-certificate-chain" aria-label="${escapeHtml(tx("Redacted certificate chain, leaf first", "已遮蔽證書鏈，葉證書行先"))}">${result.chain.map(certificate => `<li><strong>${escapeHtml(tx(certificate.position === 0 ? "Leaf certificate" : `Chain certificate ${certificate.position + 1}`, certificate.position === 0 ? "葉證書" : `證書鏈第 ${certificate.position + 1} 張`))}</strong><span><code>${escapeHtml(certificate.certificateId)}</code> · ${escapeHtml(certificate.publicKeyBits ? `${certificate.publicKeyAlgorithm.toUpperCase()} ${certificate.publicKeyBits}` : certificate.publicKeyAlgorithm.toUpperCase())}</span><span>${escapeHtml(tx("Valid", "有效期"))}: ${escapeHtml(certificate.validFrom ? formatDate(certificate.validFrom) : tx("unknown", "未知"))} – ${escapeHtml(certificate.validTo ? formatDate(certificate.validTo) : tx("unknown", "未知"))}${certificate.selfSigned ? ` · ${escapeHtml(tx("self-signed", "自簽"))}` : ""}</span></li>`).join("")}</ol>
+    <p class="tls-inspection-redaction">${icon("info")}<span>${escapeHtml(tx("Redacted output: subject and issuer names, SAN entries, serial numbers, full fingerprints, PEM/DER bytes, and server greetings stay in the main process and are not displayed or persisted. Short certificate IDs are one-way SHA-256 prefixes for this review only.", "已遮蔽輸出：主體同簽發者名稱、SAN 項目、序號、完整指紋、PEM／DER 內容同伺服器歡迎訊息都留喺主程序，唔會顯示或者儲存。短證書 ID 只係今次審閱用嘅單向 SHA-256 前綴。"))}</span></p>`;
+};
+
 const renderConnectionPreflight = (settings: MailConnectionSettings): string => {
   const diagnostics = diagnoseMailConnection(settings).filter(diagnostic => diagnostic.code !== "hostname-empty");
   return `<section class="connection-preflight" data-testid="connection-preflight" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="connection-preflight-title" aria-describedby="connection-preflight-description" tabindex="-1">
     <header><span class="settings-card__icon">${icon("check")}</span><div><h3 id="connection-preflight-title">${escapeHtml(tx("Certificate and connection preflight", "證書同連線預檢"))}</h3><p id="connection-preflight-description">${escapeHtml(tx("Local checks only: the app has not opened a connection or inspected a server certificate. TLS will compare the certificate identity with the exact mail host entered here.", "只做本機檢查：應用程式未有開啟連線，亦未有檢查伺服器證書。TLS 會用證書身份配對呢度輸入嘅確切郵件主機。"))}</p></div></header>
     <div id="connection-preflight-list" data-connection-preflight-list>${renderConnectionDiagnosticItems(diagnostics, settings)}</div>
+    <div class="tls-inspection-actions"><p>${escapeHtml(tx("Optional live inspection starts only when you press a button. It uses the host, port, and TLS mode shown above with a five-second total timeout and never sends account credentials.", "選用即時檢查只會喺你撳掣先開始。佢會用上面顯示嘅主機、連接埠同 TLS 模式，總時間上限五秒，而且永遠唔會傳送帳戶憑證。"))}</p><div class="button-row"><button class="button button--outlined" type="button" data-action="inspect-tls-certificate" data-tls-endpoint="incoming" data-testid="inspect-incoming-certificate">${icon("search")}<span>${escapeHtml(tx("Inspect incoming certificate", "檢查收取證書"))}</span></button><button class="button button--outlined" type="button" data-action="inspect-tls-certificate" data-tls-endpoint="outgoing" data-testid="inspect-outgoing-certificate">${icon("search")}<span>${escapeHtml(tx("Inspect outgoing certificate", "檢查寄出證書"))}</span></button></div></div>
+    <div class="tls-inspection-results"><section class="tls-inspection-result" data-tls-inspection-result="incoming" role="status" aria-live="polite" aria-atomic="true" aria-label="${escapeHtml(tx("Incoming certificate inspection result", "收取證書檢查結果"))}"></section><section class="tls-inspection-result" data-tls-inspection-result="outgoing" role="status" aria-live="polite" aria-atomic="true" aria-label="${escapeHtml(tx("Outgoing certificate inspection result", "寄出證書檢查結果"))}"></section></div>
   </section>`;
 };
 
@@ -3147,6 +3188,62 @@ const updateConnectionPreflight = (
     if (firstInvalid instanceof HTMLElement) firstInvalid.focus();
   }
   return diagnostics;
+};
+
+const inspectTlsCertificateFromSetup = async (button: HTMLElement): Promise<void> => {
+  const endpoint = button.dataset.tlsEndpoint;
+  if (endpoint !== "incoming" && endpoint !== "outgoing") return;
+  const form = button.closest<HTMLFormElement>('[data-form="account-setup"]');
+  if (!form) return;
+  const settings = connectionSettingsFromForm(form);
+  const localErrors = diagnoseMailConnection(settings).filter(diagnostic => diagnostic.endpoint === endpoint && diagnostic.severity === "error");
+  if (localErrors.length) {
+    updateConnectionPreflight(form, true, settings);
+    pushToast(
+      "error",
+      "Live certificate inspection did not start",
+      "Correct the highlighted local host, port, or TLS-mode conflict first. No network connection was opened and no credentials were sent.",
+      "即時證書檢查未有開始",
+      "請先修正已標示嘅本機主機、連接埠或者 TLS 模式衝突。未有開啟網絡連線，亦未有傳送憑證。",
+    );
+    return;
+  }
+  const resultRegion = form.querySelector<HTMLElement>(`[data-tls-inspection-result="${endpoint}"]`);
+  if (!resultRegion || button.getAttribute("aria-busy") === "true") return;
+  const original = button.innerHTML;
+  button.setAttribute("aria-busy", "true");
+  button.setAttribute("disabled", "");
+  button.innerHTML = `${icon("refresh", "is-spinning")}<span>${escapeHtml(tx("Inspecting certificate…", "檢查證書緊……"))}</span>`;
+  applyBilingualSemantics(button);
+  resultRegion.setAttribute("role", "status");
+  resultRegion.setAttribute("aria-busy", "true");
+  resultRegion.innerHTML = `<p class="tls-inspection-progress">${icon("refresh", "is-spinning")}<span>${escapeHtml(tx("Opening the bounded credential-free diagnostic connection…", "開緊有時限、唔用憑證嘅診斷連線……"))}</span></p>`;
+  applyBilingualSemantics(resultRegion);
+  try {
+    const server = settings[endpoint];
+    const result = await api.inspectTlsCertificate({ endpoint, host: server.host, port: server.port, security: server.security });
+    resultRegion.setAttribute("role", "status");
+    resultRegion.innerHTML = renderTlsCertificateInspection(result);
+    applyBilingualSemantics(resultRegion);
+    pushToast(
+      result.outcome === "inspected" ? "success" : "info",
+      result.outcome === "inspected" ? "Certificate inspection completed" : "No TLS certificate to inspect",
+      result.outcome === "inspected" ? "Redacted certificate metadata is shown in account setup. This does not prove provider interoperability." : "Plain transport opened no network connection and has no certificate.",
+      result.outcome === "inspected" ? "證書檢查完成" : "冇 TLS 證書可以檢查",
+      result.outcome === "inspected" ? "帳戶設定已顯示遮蔽後嘅證書資料。呢個結果唔代表已證明供應商互通性。" : "純文字傳輸未有開啟網絡連線，亦冇證書。",
+    );
+  } catch (error) {
+    const message = errorMessage(error);
+    resultRegion.setAttribute("role", "alert");
+    resultRegion.innerHTML = `<div class="tls-inspection-result__summary tls-inspection-result__summary--error">${icon("error")}<div><strong>${escapeHtml(tx("Certificate inspection failed", "證書檢查失敗"))}</strong><p>${escapeHtml(tx(message, `檢查未完成：${message}`))}</p></div></div>`;
+    applyBilingualSemantics(resultRegion);
+    pushToast("error", "Certificate inspection failed", message, "證書檢查失敗", `檢查未完成：${message}`);
+  } finally {
+    resultRegion.setAttribute("aria-busy", "false");
+    button.removeAttribute("aria-busy");
+    button.removeAttribute("disabled");
+    button.innerHTML = original;
+  }
 };
 
 const handleAccountSubmit = async (form: HTMLFormElement, mode: "test" | "add"): Promise<void> => {
@@ -4636,6 +4733,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       state.setupOpen = true; state.setupContext = state.bootstrap?.accounts.length ? "settings" : "first-run"; state.discoveries = []; state.selectedDiscovery = null; state.setupEmail = ""; render(); break;
     case "close-account-setup": if (state.bootstrap?.accounts.length) { state.setupOpen = false; render(); } break;
     case "discover-account": await discoverAccount(); break;
+    case "inspect-tls-certificate": await inspectTlsCertificateFromSetup(button); break;
     case "create-demo":
       await withBusy("create-demo", async () => {
         const account = await api.createDemoAccount();

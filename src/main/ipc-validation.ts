@@ -10,6 +10,7 @@ import {
   type CachedMailSearchQuery,
   type LocalHistoryPruneRequest,
   type Preferences,
+  type TlsCertificateInspectionRequest,
 } from "../shared/contracts.js";
 
 const noControlCharacters = (value: string): boolean => !/[\u0000-\u001f\u007f]/u.test(value);
@@ -56,6 +57,13 @@ const serverSettingsSchema = z.strictObject({
   security: z.enum(["tls", "starttls", "plain"]),
   username: usernameSchema,
 });
+
+const tlsCertificateInspectionSchema = z.strictObject({
+  endpoint: z.enum(["incoming", "outgoing"]),
+  host: hostSchema,
+  port: z.number().int().min(1).max(65_535),
+  security: z.enum(["tls", "starttls", "plain"]),
+}) as z.ZodType<TlsCertificateInspectionRequest>;
 
 export const accountDraftSchema = z.strictObject({
   displayName: z.string().trim().min(1).max(120).refine(noControlCharacters, "Display names cannot contain control characters."),
@@ -174,6 +182,7 @@ const cachedMailSearchSchema = z.strictObject({
 export const ipcPayloadSchemas = {
   none: z.tuple([]),
   accountDiscover: z.tuple([emailSchema]),
+  tlsCertificateInspection: z.tuple([tlsCertificateInspectionSchema]),
   accountDraft: z.tuple([accountDraftSchema]),
   accountId: z.tuple([identifierSchema]),
   accountFolder: z.tuple([identifierSchema, folderPathSchema]),

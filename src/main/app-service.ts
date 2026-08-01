@@ -50,6 +50,8 @@ import type {
   UnifiedFolderKind,
   CachedMailSearchQuery,
   CachedMailSearchResult,
+  TlsCertificateInspectionRequest,
+  TlsCertificateInspectionResult,
 } from "../shared/contracts.js";
 import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT, LOCAL_HISTORY_RETENTION_DAYS_DEFAULT } from "../shared/contracts.js";
 import {
@@ -84,6 +86,7 @@ import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js"
 import { collectCachedUnifiedMessages } from "../shared/unified-folders.js";
 import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-mail-index.js";
 import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
+import { inspectTlsCertificate } from "./tls-certificate-diagnostics.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -329,6 +332,10 @@ export class AppService {
 
   async discoverAccount(email: string): Promise<AccountDiscoveryResult[]> {
     return this.#discovery.discover(email);
+  }
+
+  async inspectTlsCertificate(input: TlsCertificateInspectionRequest): Promise<TlsCertificateInspectionResult> {
+    return inspectTlsCertificate(input);
   }
 
   async addAccount(input: AccountDraft): Promise<AccountSummary> {

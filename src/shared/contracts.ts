@@ -71,6 +71,49 @@ export interface AccountDraft {
   secret: string;
 }
 
+export interface TlsCertificateInspectionRequest {
+  endpoint: "incoming" | "outgoing";
+  host: string;
+  port: number;
+  security: MailSecurity;
+}
+
+export type TlsCertificateAuthorizationIssue =
+  | "hostname-mismatch"
+  | "expired"
+  | "not-yet-valid"
+  | "revoked"
+  | "untrusted-chain"
+  | "invalid-signature"
+  | "unknown";
+
+export interface TlsCertificateChainSummary {
+  position: number;
+  certificateId: string;
+  issuerId: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  publicKeyAlgorithm: string;
+  publicKeyBits?: number;
+  selfSigned: boolean;
+}
+
+export interface TlsCertificateInspectionResult {
+  outcome: "inspected" | "not-applicable";
+  endpoint: "incoming" | "outgoing";
+  transport: "implicit-tls" | "starttls" | "plain";
+  inspectedAt: string;
+  timeoutMs: number;
+  authorized: boolean | null;
+  hostnameMatch: boolean | null;
+  authorizationIssue: TlsCertificateAuthorizationIssue | null;
+  protocol: string | null;
+  cipher: string | null;
+  chain: TlsCertificateChainSummary[];
+  chainComplete: boolean;
+  chainTruncated: boolean;
+}
+
 export interface AccountDiscoveryResult {
   source: "dns-srv" | "provider-preset" | "conventional";
   displayName: string;
@@ -433,6 +476,7 @@ export interface MaterialEmailApi {
   chooseAttachments(): Promise<string[]>;
   createDemoAccount(): Promise<AccountSummary>;
   discoverAccount(email: string): Promise<AccountDiscoveryResult[]>;
+  inspectTlsCertificate(request: TlsCertificateInspectionRequest): Promise<TlsCertificateInspectionResult>;
   addAccount(draft: AccountDraft): Promise<AccountSummary>;
   testAccount(draft: AccountDraft): Promise<{ incoming: true; outgoing: true }>;
   removeAccount(accountId: string): Promise<void>;

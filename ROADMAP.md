@@ -47,7 +47,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Give command-palette search its own plain-text-first model, adjacent anchored regex builder, invalid-pattern execution guard, and focused real-Electron proof
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
 - [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 41 files / 202 tests on the current tree; the previously recorded Electron suite passed 15 / 15 scenarios, focused remote-content/bilingual passed 2 / 2, focused command-palette search passed 1 / 1, focused connection preflight passed 1 / 1, and focused history retention/deletion evidence passed 1 / 1)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 42 files / 207 tests on the current tree; the previously recorded Electron suite passed 15 / 15 scenarios, focused remote-content/bilingual passed 2 / 2, focused command-palette search passed 1 / 1, focused local connection preflight passed 1 / 1, focused explicit live TLS inspection passed 1 / 1, and focused history retention/deletion evidence passed 1 / 1)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling matrices (the primary workspace-tab Arrow/Home/End slice alone is verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
@@ -78,7 +78,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Pure external-link risk assessment (HTTP, credentials, host and Unicode deception signals)
 - [x] Phishing review dialog with normalized destination, risk reasons, one-time expiry, and trusted renderer confirmation
 - [x] Bounded local certificate-reference-name and TLS/port diagnostics before connection
-- [ ] Live certificate-chain, trust, expiry, revocation, interception, exact hostname-mismatch, and provider-interoperability diagnostics
+- [x] Explicit user-initiated TLS certificate-chain inspection with credential-free IMAP/SMTP STARTTLS, five-second timeout, redacted metadata, and no-network plain/default behavior
+- [ ] Live-provider interoperability plus OCSP/CRL revocation, certificate transparency, interception/pinning, proxy, and IPv6-connectivity matrices
 
 ## Data and platform open
 

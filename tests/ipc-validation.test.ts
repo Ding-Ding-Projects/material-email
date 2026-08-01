@@ -78,6 +78,29 @@ describe("non-PIM IPC validation", () => {
     expect(() => ipcPayloadSchemas.revisionLabel.parse(["a".repeat(40), "x".repeat(121)])).toThrow();
   });
 
+  it("accepts only credential-free bounded TLS certificate inspection requests", () => {
+    expect(ipcPayloadSchemas.tlsCertificateInspection.parse([{
+      endpoint: "incoming",
+      host: "imap.example.test",
+      port: 993,
+      security: "tls",
+    }])).toHaveLength(1);
+    expect(() => ipcPayloadSchemas.tlsCertificateInspection.parse([{
+      endpoint: "outgoing",
+      host: "smtp.example.test",
+      port: 587,
+      security: "starttls",
+      username: "must-not-cross-this-ipc",
+      secret: "must-not-cross-this-ipc",
+    }])).toThrow();
+    expect(() => ipcPayloadSchemas.tlsCertificateInspection.parse([{
+      endpoint: "incoming",
+      host: "imap.example.test",
+      port: 0,
+      security: "tls",
+    }])).toThrow();
+  });
+
   it("accepts only fixed-length opaque external-link request IDs", () => {
     expect(ipcPayloadSchemas.externalLinkRequest.parse(["abcdefghijklmnopqrstuvwxyzABCDEF"])).toEqual(["abcdefghijklmnopqrstuvwxyzABCDEF"]);
     for (const candidate of ["short", "a".repeat(31), "a".repeat(33), `${"a".repeat(31)}!`]) {

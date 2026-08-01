@@ -1059,6 +1059,31 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .connection-diagnostic--error > .icon { color: var(--error); }
 .connection-preflight__ready { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--success-container); color: color-mix(in srgb, var(--success) 74%, var(--on-surface)); font-size: 0.73rem; }
 .connection-preflight__ready .icon { width: 18px; height: 18px; flex: 0 0 auto; }
+.tls-inspection-actions { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--outline-variant); }
+.tls-inspection-actions > p { margin: 0; color: var(--on-surface-variant); font-size: 0.73rem; line-height: 1.45; }
+.tls-inspection-actions .button-row { flex-wrap: wrap; }
+.tls-inspection-results { display: grid; gap: 8px; }
+.tls-inspection-result:empty { display: none; }
+.tls-inspection-result { display: grid; gap: 9px; padding: 11px; border: 1px solid var(--outline-variant); border-radius: var(--radius-sm); background: var(--surface-container-low); }
+.tls-inspection-progress { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--on-surface-variant); }
+.tls-inspection-progress .icon { width: 18px; height: 18px; }
+.tls-inspection-result__summary { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: start; gap: 8px; }
+.tls-inspection-result__summary > .icon { width: 22px; height: 22px; color: var(--warning); }
+.tls-inspection-result__summary > div { min-width: 0; }
+.tls-inspection-result__summary strong, .tls-inspection-result__summary p { overflow-wrap: anywhere; }
+.tls-inspection-result__summary p { margin: 3px 0 0; color: var(--on-surface-variant); font-size: 0.73rem; line-height: 1.45; }
+.tls-inspection-result__summary--error { color: var(--on-error-container); }
+.tls-inspection-result__summary--error > .icon { color: var(--error); }
+.tls-inspection-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 0; }
+.tls-inspection-facts > div { min-width: 0; padding: 7px 8px; border-radius: 8px; background: var(--surface-container); }
+.tls-inspection-facts dt { color: var(--on-surface-variant); font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.tls-inspection-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; font-size: 0.75rem; font-weight: 650; }
+.tls-inspection-chain-state { margin: 0; color: var(--on-surface-variant); font-size: 0.72rem; }
+.tls-certificate-chain { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.tls-certificate-chain li { display: grid; gap: 2px; padding: 8px 9px; border-left: 3px solid var(--primary); border-radius: 0 8px 8px 0; background: var(--surface-container); font-size: 0.72rem; }
+.tls-certificate-chain code { user-select: all; }
+.tls-inspection-redaction { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--on-surface-variant); font-size: 0.68rem; line-height: 1.45; }
+.tls-inspection-redaction .icon { width: 16px; height: 16px; flex: 0 0 auto; }
 .security-disclosure { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px; border-radius: var(--radius-sm); background: var(--secondary-container); color: var(--on-secondary-container); font-size: 0.75rem; }
 .security-disclosure .icon { width: 18px; height: 18px; }
 .setup-actions { position: sticky; bottom: -1px; display: flex; align-items: center; gap: 8px; padding: 12px 0 2px; background: linear-gradient(transparent, var(--surface-container-low) 18%); }
@@ -1163,6 +1188,7 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
   .changelog-filter .date-filter .field { width: 100%; }
   .form-grid, .server-grid, .credential-grid, .bulk-options { grid-template-columns: 1fr; }
   .server-grid .field--wide:last-child { grid-column: 1; }
+  .tls-inspection-facts { grid-template-columns: 1fr; }
   .notification-card, .history-card { grid-template-columns: 42px minmax(0, 1fr); }
   .notification-card > .button, .history-card > .button, .history-card > .button-row, .history-card > .view-only-label { grid-column: 2; justify-self: start; }
   .tab-search-results, .group-result-list { grid-template-columns: 1fr; }

@@ -18,6 +18,7 @@ const api: MaterialEmailApi = {
   chooseAttachments: () => ipcRenderer.invoke("dialog:attachments"),
   createDemoAccount: () => ipcRenderer.invoke("account:create-demo"),
   discoverAccount: email => ipcRenderer.invoke("account:discover", email),
+  inspectTlsCertificate: request => ipcRenderer.invoke("account:inspect-tls-certificate", request),
   addAccount: draft => ipcRenderer.invoke("account:add", draft),
   testAccount: draft => ipcRenderer.invoke("account:test", draft),
   removeAccount: accountId => ipcRenderer.invoke("account:remove", accountId),
