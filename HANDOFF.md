@@ -56,4 +56,4 @@ Open security work includes broader IPC payload testing, attachment scanning/qua
 
 ## Known open product gaps
 
-Browser OAuth, POP, unified folders, threading, native Windows notifications, SQLite mail indexing, complete history diff/retention UI, CardDAV/CalDAV/ICS/task providers, broad vCard interoperability, recurrence expansion, alarm delivery, PIM at-rest encryption, message cryptography, attachment scanning/quarantine, rebuilt-installer and clean-machine lifecycle proof, CI releases, wiki synchronization, and Pages deployment remain open.
+Browser OAuth, POP, unified folders, threading, SQLite mail indexing, complete history diff/retention UI, CardDAV/CalDAV/ICS/task providers, broad vCard interoperability, recurrence expansion, alarm delivery, PIM at-rest encryption, message cryptography, attachment scanning/quarantine, rebuilt-installer and clean-machine lifecycle proof, CI releases, wiki synchronization, and Pages deployment remain open. Native Windows notifications and the factual in-app changelog are now implemented, with focused Electron coverage for their settings and release-history surfaces.

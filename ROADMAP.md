@@ -72,7 +72,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Add searchable semantic history action counts, date ranges, and export foundation
 - [ ] Complete appearance editing for every element, including picker self-customization and import/export
 - [x] Add persisted tab pinning, fixed grouping, overflow, reviewed bulk close, and four independent discovery searches
-- [ ] Add a factual in-app changelog covering each released version
+- [x] Add a factual in-app changelog covering each released version
 - [x] Add the off-by-default serialized TTS narrator foundation
 - [ ] Prove narrator coexistence with screen readers, quiet settings, and natural Hong Kong Cantonese voices
 - [x] Add the 1% startup dim-sum draw using a bundled verified local catalog
