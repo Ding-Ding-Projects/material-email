@@ -523,6 +523,11 @@ export interface NotificationRecord {
   action?: NotificationAction;
 }
 
+export interface WindowControlState {
+  maximized: boolean;
+  minimized: boolean;
+}
+
 export type NotificationCategory = "account" | "mail" | "delivery" | "security" | "history" | "system";
 
 export type NotificationPageTarget = "mail" | "drafts" | "outbox" | "settings" | "history" | "tools";
@@ -743,6 +748,9 @@ export interface MaterialEmailApi {
   importTabAppearanceTheme(): Promise<{ fileName: string; theme: TabAppearanceThemeDocument } | null>;
   detectEditors(): Promise<Array<{ id: string; name: string; path: string }>>;
   openExternalEditor(path?: string): Promise<void>;
+  getWindowState(): Promise<WindowControlState>;
+  onWindowStateChanged(callback: (state: WindowControlState) => void): () => void;
+  onWindowCloseRequested(callback: () => void): () => void;
   minimize(): Promise<void>;
   maximize(): Promise<boolean>;
   close(): Promise<void>;

@@ -18,12 +18,15 @@ export type IconName =
   | "info"
   | "mail"
   | "menu"
+  | "maximize"
+  | "minimize"
   | "more"
   | "notifications"
   | "pin"
   | "refresh"
   | "regex"
   | "reply"
+  | "restore"
   | "search"
   | "send"
   | "settings"
@@ -54,12 +57,15 @@ const paths: Record<IconName, string> = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  maximize: '<rect x="5" y="5" width="14" height="14" rx="1"/>',
+  minimize: '<path d="M5 18.5h14"/>',
   more: '<circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/>',
   notifications: '<path d="M6 17h12l-1.5-2.5V10a4.5 4.5 0 0 0-9 0v4.5L6 17Zm4 3h4"/>',
   pin: '<path d="m8 3 8 8-2 2 3 4-1 1-4-3-2 2-8-8 2-2 4 2 2-2-2-4Z"/>',
   refresh: '<path d="M20 6v5h-5M4 18v-5h5M18.5 10a7 7 0 0 0-12-3L4 11m16 2-2.5 4a7 7 0 0 1-12-3"/>',
   regex: '<path d="M5 6v9a3 3 0 0 0 3 3h1m3-12 7 12m0-12-7 12M4 5h5"/>',
   reply: '<path d="m11 6-7 6 7 6v-4c5 0 8 1 10 4-1-6-4-9-10-9V6Z"/>',
+  restore: '<path d="M8 8V5h11v11h-3M5 8h11v11H5z"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',
   send: '<path d="M3 4 21 12 3 20l3-7 9-1-9-1-3-7Z"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.7-.5-1.2.9-1.9-2.1-2.1-1.9.9-1.2-.5-.7-2h-3l-.7 2-1.2.5-1.9-.9L2.6 6.7l.9 1.9L3 9.8l-2 .7v3l2 .7.5 1.2-.9 1.9 2.1 2.1 1.9-.9 1.2.5.7 2h3l.7-2 1.2-.5 1.9.9 2.1-2.1-.9-1.9.5-1.2 2-.7Z"/>',

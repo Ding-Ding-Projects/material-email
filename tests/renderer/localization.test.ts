@@ -6,6 +6,7 @@ import {
   localizedNotificationKind,
   localizedSurfaceTone,
   localizedTone,
+  localizedWindowControl,
   notificationToastToneScale,
   selectToneVariant,
 } from "../../src/renderer/lib/localization";
@@ -91,5 +92,19 @@ describe("renderer language and humor selection", () => {
     expect(localizedNotificationAction(undo, { language: "yue" })).toBe("撤銷還原");
     expect(localizedNotificationAction(open, { language: "bilingual" })).toBe("Open Settings · 開啟設定");
     expect(retry).toEqual({ kind: "retry", target: "pending-operation", accountId: "account-1", operationId: "operation-1" });
+  });
+
+  it("keeps every window-control action explicit while applying independent humor levels", () => {
+    for (const action of ["minimize", "maximize", "restore", "close"] as const) {
+      const english = localizedWindowControl(action, { language: "en", funnyEnglish: 5, funnyCantonese: 1 });
+      const cantonese = localizedWindowControl(action, { language: "yue", funnyEnglish: 1, funnyCantonese: 5 });
+      expect(english.toLowerCase()).toContain(action);
+      expect(cantonese).not.toBe("");
+    }
+    expect(localizedWindowControl("close", {
+      language: "bilingual",
+      funnyEnglish: 1,
+      funnyCantonese: 5,
+    })).toBe("Close window · 關閉視窗——未完成更改要先見迷你寫字板督察");
   });
 });

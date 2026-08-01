@@ -2,6 +2,7 @@ import type { NotificationAction, NotificationCategory, Preferences } from "../.
 
 export type LocalizedTonePreferences = Pick<Preferences, "language" | "funnyEnglish" | "funnyCantonese">;
 export type ToneScale = readonly (string | null | undefined)[];
+export type WindowControlAction = "minimize" | "maximize" | "restore" | "close";
 
 export interface LocalizedToneScale {
   english: ToneScale;
@@ -116,6 +117,79 @@ export const localizedSurfaceTone = (
   preferences: LocalizedTonePreferences,
   combineBilingual?: (english: string, cantonese: string) => string,
 ): string => localizedTone(preferences, SURFACE_TONE_COPY[surface], combineBilingual);
+
+const WINDOW_CONTROL_COPY = {
+  minimize: {
+    english: [
+      "Minimize window",
+      "Minimize window to the taskbar",
+      "Minimize window — keep it handy on the taskbar",
+      "Minimize window — tuck it onto the taskbar",
+      "Minimize window — send it for a tiny taskbar nap",
+    ],
+    cantonese: [
+      "最小化視窗",
+      "最小化視窗去工作列",
+      "最小化視窗——放喺工作列隨時再開",
+      "最小化視窗——暫時塞佢入工作列",
+      "最小化視窗——送佢去工作列瞓個迷你晏覺",
+    ],
+  },
+  maximize: {
+    english: [
+      "Maximize window",
+      "Maximize window to fill the screen",
+      "Maximize window — use the available screen",
+      "Maximize window — give the workspace more elbow room",
+      "Maximize window — let the workspace stretch its tiny elbows",
+    ],
+    cantonese: [
+      "最大化視窗",
+      "最大化視窗填滿畫面",
+      "最大化視窗——用盡可用畫面",
+      "最大化視窗——畀工作空間鬆動多啲",
+      "最大化視窗——畀工作空間伸盡佢對迷你手踭",
+    ],
+  },
+  restore: {
+    english: [
+      "Restore window",
+      "Restore window to its saved size",
+      "Restore window — return to the saved size",
+      "Restore window — bring back its previous fit",
+      "Restore window — put its made-to-measure outfit back on",
+    ],
+    cantonese: [
+      "還原視窗",
+      "還原視窗去已儲存大小",
+      "還原視窗——返回已儲存大小",
+      "還原視窗——著返之前嗰個尺寸",
+      "還原視窗——著返件度身訂造視窗衫",
+    ],
+  },
+  close: {
+    english: [
+      "Close window",
+      "Close window; unsaved work will be reviewed first",
+      "Close window — unsaved work gets a review first",
+      "Close window — unfinished edits stop for inspection first",
+      "Close window — unfinished edits face the tiny clipboard inspector first",
+    ],
+    cantonese: [
+      "關閉視窗",
+      "關閉視窗；未儲存內容會先畀你審閱",
+      "關閉視窗——未儲存內容會先停低審閱",
+      "關閉視窗——未完成更改要先過檢查站",
+      "關閉視窗——未完成更改要先見迷你寫字板督察",
+    ],
+  },
+} as const satisfies Record<WindowControlAction, LocalizedToneScale>;
+
+export const localizedWindowControl = (
+  action: WindowControlAction,
+  preferences: LocalizedTonePreferences,
+  combineBilingual?: (english: string, cantonese: string) => string,
+): string => localizedTone(preferences, WINDOW_CONTROL_COPY[action], combineBilingual);
 
 export const notificationToastToneScale = (englishBody: string, cantoneseBody: string): LocalizedToneScale => ({
   english: [

@@ -51,6 +51,7 @@ import type {
   CachedMailSearchResult,
   TlsCertificateAuthorizationIssue,
   TlsCertificateInspectionResult,
+  WindowControlState,
 } from "../shared/contracts";
 import {
   AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
@@ -69,6 +70,7 @@ import {
   localizedNotificationKind,
   localizedSurfaceTone,
   localizedTone,
+  localizedWindowControl,
   notificationToastToneScale,
   type SurfaceTone,
 } from "./lib/localization";
@@ -226,7 +228,8 @@ type ConfirmationState =
   | { kind: "save-risky-attachments"; target: number | "all"; review: AttachmentSaveReview }
   | { kind: "release-quarantined-attachment"; item: QuarantinedAttachment }
   | { kind: "delete-quarantined-attachment"; item: QuarantinedAttachment }
-  | { kind: "external-link"; request: ExternalLinkReviewRequest };
+  | { kind: "external-link"; request: ExternalLinkReviewRequest }
+  | { kind: "close-window" };
 
 interface FiltersState {
   historyFrom: string;
@@ -342,6 +345,7 @@ interface RendererState {
   localDrafts: LocalDraftSummary[];
   pendingOperations: PendingOperationSummary[];
   outboxItems: OutboxSummary[];
+  windowControls: WindowControlState;
 }
 
 const TAB_DEFINITIONS: readonly TabDefinition[] = [
@@ -512,6 +516,7 @@ const state: RendererState = {
   localDrafts: [],
   pendingOperations: [],
   outboxItems: [],
+  windowControls: { maximized: false, minimized: false },
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -528,6 +533,9 @@ let narratorSpeaking = false;
 let draggedTab: PageId | null = null;
 let disposeMailtoActivation: (() => void) | null = null;
 let disposeExternalLinkReview: (() => void) | null = null;
+let disposeWindowState: (() => void) | null = null;
+let disposeWindowCloseRequest: (() => void) | null = null;
+let windowCloseApproved = false;
 let mailNavigationSequence = 0;
 let accountRequestSequence = 0;
 let folderRequestSequence = 0;
@@ -591,6 +599,9 @@ const tone = (english: readonly [string, string, string, string, string], canton
 
 const surfaceTone = (surface: SurfaceTone): string =>
   localizedSurfaceTone(surface, preferences(), bilingualText);
+
+const windowControlCopy = (action: "minimize" | "maximize" | "restore" | "close"): string =>
+  localizedWindowControl(action, preferences(), bilingualText);
 
 const applyBilingualSemantics = (root: ParentNode): void => {
   if (preferences().language !== "bilingual") return;
@@ -1141,6 +1152,7 @@ const initialize = async (): Promise<void> => {
   try {
     if (!api || typeof api.bootstrap !== "function") throw new Error("The secure desktop bridge is unavailable. Restart the packaged application.");
     const bootstrap = await api.bootstrap();
+    state.windowControls = await api.getWindowState().catch(() => ({ maximized: false, minimized: false }));
     state.oauthAuthorization = await api.getOAuthAuthorizationStatus().catch(() => DEFAULT_OAUTH_AUTHORIZATION);
     state.oauthTokenVault = await api.getOAuthTokenVaultStatus().catch(() => DEFAULT_OAUTH_TOKEN_VAULT);
     state.bootstrap = bootstrap;
@@ -1521,6 +1533,11 @@ function renderApplication(): string {
         ${(state.bootstrap?.pendingOperationCount ?? 0) > 0 ? `<button class="pending-indicator" type="button" data-action="sync" aria-label="${escapeHtml(tx(`${state.bootstrap?.pendingOperationCount ?? 0} pending mail operations`, `${state.bootstrap?.pendingOperationCount ?? 0} 個待處理郵件操作`))}" data-tooltip="${escapeHtml(tx("Pending operations—synchronize to retry", "有待處理操作——同步以重試"))}">${icon("refresh")}<span>${state.bootstrap?.pendingOperationCount ?? 0}</span></button>` : ""}
         <button class="icon-button" type="button" data-action="open-command-palette" aria-label="${escapeHtml(tx("Open command palette", "開啟指令面板"))}" data-tooltip="${escapeHtml(tx("Command palette (Ctrl+K)", "指令面板 (Ctrl+K)"))}">${icon("search")}</button>
         <button class="icon-button" type="button" data-action="open-notifications" aria-label="${escapeHtml(tx("Open notifications", "開啟通知"))}" data-tooltip="${escapeHtml(tx("Notifications", "通知"))}">${icon("notifications")}${unread ? `<span class="status-dot" aria-label="${unread} ${escapeHtml(tx("unread messages", "封未讀郵件"))}"></span>` : ""}</button>
+      </div>
+      <div class="window-controls" role="group" aria-label="${escapeHtml(tx("Window controls", "視窗控制"))}" data-testid="window-controls">
+        <button class="window-control-button" type="button" data-action="window-minimize" data-focus-key="window-minimize" aria-label="${escapeHtml(windowControlCopy("minimize"))}" data-tooltip="${escapeHtml(windowControlCopy("minimize"))}">${icon("minimize")}</button>
+        <button class="window-control-button" type="button" data-action="window-maximize" data-focus-key="window-maximize" aria-label="${escapeHtml(windowControlCopy(state.windowControls.maximized ? "restore" : "maximize"))}" data-tooltip="${escapeHtml(windowControlCopy(state.windowControls.maximized ? "restore" : "maximize"))}" aria-pressed="${state.windowControls.maximized}">${icon(state.windowControls.maximized ? "restore" : "maximize")}</button>
+        <button class="window-control-button window-control-button--close" type="button" data-action="window-close" data-focus-key="window-close" aria-label="${escapeHtml(windowControlCopy("close"))}" data-tooltip="${escapeHtml(windowControlCopy("close"))}">${icon("close")}</button>
       </div>
     </header>
     <nav class="spaces-rail" aria-label="${escapeHtml(tx("App spaces", "應用程式空間"))}">
@@ -3848,6 +3865,41 @@ function renderConfirmation(): string {
     cancelLabel = tx("Do not open", "唔好開啟");
     const riskLabel = request.risk === "dangerous" ? tx("Dangerous", "危險") : request.risk === "caution" ? tx("Caution", "小心") : tx("No detected warning", "未發現警號");
     detailsMarkup = `<div class="external-link-review" id="confirmation-details"><p><strong>${escapeHtml(tx("Destination", "目的地"))}</strong><code class="external-link-review__url" tabindex="0"><bdi>${escapeHtml(request.normalizedUrl)}</bdi></code></p><p><strong>${escapeHtml(tx("Host", "主機"))}</strong> <bdi>${escapeHtml(request.hostname)}</bdi> · <span class="attachment-risk-badge attachment-risk-badge--${request.risk}">${escapeHtml(riskLabel)}</span></p>${request.reasons.length ? `<p><strong>${escapeHtml(tx("Why it was flagged", "點解標記咗"))}</strong> ${escapeHtml(request.reasons.map(externalLinkReasonLabel).join(" · "))}</p>` : ""}</div>`;
+  } else if (confirmation.kind === "close-window") {
+    title = tone(
+      [
+        "Close Material Email with unsaved work?",
+        "Review unsaved work before closing Material Email?",
+        "Close Material Email after discarding unsaved work?",
+        "Close Material Email after the unfinished edits leave the desk?",
+        "Close Material Email after the tiny unfinished-edit committee clocks out?",
+      ],
+      [
+        "有未儲存內容，仍然關閉 Material 郵件？",
+        "關閉 Material 郵件之前先審閱未儲存內容？",
+        "捨棄未儲存內容之後關閉 Material 郵件？",
+        "未完成更改離開張枱之後，關閉 Material 郵件？",
+        "迷你未完成更改委員會收工之後，關閉 Material 郵件？",
+      ],
+    );
+    body = tone(
+      [
+        "Unsaved composer or local-record changes will be discarded. Saved drafts, messages, and local history stay unchanged.",
+        "Unsaved composer or local-record changes will be discarded; saved drafts, messages, and local history stay unchanged.",
+        "Unsaved composer or local-record changes will be discarded. Saved data stays put while unfinished edits leave.",
+        "Unsaved composer or local-record changes will be discarded. Saved data keeps its seat; only unfinished edits leave.",
+        "Unsaved composer or local-record changes will be discarded. Saved data keeps every chair; only the unsaved scribbles miss the closing tram.",
+      ],
+      [
+        "未儲存嘅撰寫內容或者本機記錄更改會被捨棄。已儲存草稿、郵件同本機歷史唔會改變。",
+        "未儲存嘅撰寫內容或者本機記錄更改會被捨棄；已儲存草稿、郵件同本機歷史唔會改變。",
+        "未儲存嘅撰寫內容或者本機記錄更改會被捨棄。已儲存資料坐定定，未完成更改先離場。",
+        "未儲存嘅撰寫內容或者本機記錄更改會被捨棄。已儲存資料繼續坐低，淨係未完成更改離場。",
+        "未儲存嘅撰寫內容或者本機記錄更改會被捨棄。已儲存資料霸實晒啲櫈，淨係未儲存塗鴉趕唔切尾班車。",
+      ],
+    );
+    confirmLabel = tx("Discard unsaved work and close", "捨棄未儲存內容並關閉");
+    cancelLabel = tx("Keep Material Email open", "保持 Material 郵件開啟");
   } else {
     title = tx("Send without a subject?", "冇主旨都寄出？");
     body = tx("Recipients and body are present, but the subject is empty. The message will still be sent or queued if you continue.", "收件人同內容都有，但主旨係空白。繼續之後，郵件仍然會寄出或者排入寄件匣。 ");
@@ -5415,6 +5467,11 @@ const handleConfirmation = async (): Promise<void> => {
     });
     return;
   }
+  if (confirmation.kind === "close-window") {
+    windowCloseApproved = true;
+    await api.close();
+    return;
+  }
   if (confirmation.kind === "bulk-close-tabs") {
     for (const id of confirmation.tabIds) {
       if (!state.tabPreferences.closed.includes(id)) state.tabPreferences.closed.push(id);
@@ -6387,6 +6444,21 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "toggle-compose-copies": captureComposer(); if (state.compose) { state.compose.showCopies = !state.compose.showCopies; render(); } break;
     case "minimize-compose": captureComposer(); if (state.compose) { state.compose.minimized = !state.compose.minimized; render(); } break;
     case "request-close-compose": captureComposer(); if (composerIsDirty()) showConfirmation({ kind: "discard-compose" }); else { state.compose = null; render(); } break;
+    case "window-minimize": await api.minimize(); break;
+    case "window-maximize": {
+      pendingFocusKey = "window-maximize";
+      state.windowControls.maximized = await api.maximize();
+      state.windowControls.minimized = false;
+      render();
+      break;
+    }
+    case "window-close": {
+      captureComposer();
+      updatePimEditorDirty();
+      if (composerIsDirty() || state.pimEditorDirty) showConfirmation({ kind: "close-window" }, "window-close");
+      else await api.close();
+      break;
+    }
     case "cancel-confirmation": cancelConfirmation(); break;
     case "confirm-action": await handleConfirmation(); break;
   }
@@ -6946,12 +7018,19 @@ document.addEventListener("keydown", event => {
 });
 
 window.addEventListener("beforeunload", event => {
+  if (windowCloseApproved) return;
   captureComposer();
   updatePimEditorDirty();
-  if (composerIsDirty() || state.pimEditorDirty) { event.preventDefault(); event.returnValue = ""; }
+  if (composerIsDirty() || state.pimEditorDirty) {
+    event.preventDefault();
+    event.returnValue = "";
+    if (!state.confirmation) showConfirmation({ kind: "close-window" });
+  }
 });
 window.addEventListener("unload", () => disposeMailtoActivation?.());
 window.addEventListener("unload", () => disposeExternalLinkReview?.());
+window.addEventListener("unload", () => disposeWindowState?.());
+window.addEventListener("unload", () => disposeWindowCloseRequest?.());
 window.addEventListener("unload", () => stopOAuthStatusPolling());
 
 if (typeof api?.onMailto === "function") disposeMailtoActivation = api.onMailto(url => handleMailtoActivation(url));
@@ -6964,6 +7043,25 @@ if (typeof api?.onExternalLinkReview === "function") {
     }
     showConfirmation({ kind: "external-link", request });
   });
+}
+if (typeof api?.onWindowStateChanged === "function") {
+  disposeWindowState = api.onWindowStateChanged(next => {
+    state.windowControls = next;
+    if (state.phase === "ready") render();
+  });
+}
+const reviewWindowClose = (): void => {
+  captureComposer();
+  updatePimEditorDirty();
+  if (composerIsDirty() || state.pimEditorDirty) {
+    if (!state.confirmation) showConfirmation({ kind: "close-window" }, "window-close");
+    return;
+  }
+  windowCloseApproved = true;
+  void api.close();
+};
+if (typeof api?.onWindowCloseRequested === "function") {
+  disposeWindowCloseRequest = api.onWindowCloseRequested(reviewWindowClose);
 }
 
 const tabFocusKey = (id: PageId): string => `workspace-tab-${id}`;

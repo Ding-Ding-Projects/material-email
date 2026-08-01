@@ -72,6 +72,7 @@ describe("Electron security boundary", () => {
       "editor:open",
       "external-link:confirm",
       "external-link:cancel",
+      "window:state",
       "window:minimize",
       "window:maximize",
       "window:close",

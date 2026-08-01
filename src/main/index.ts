@@ -1,6 +1,6 @@
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
-import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
 import type { z } from "zod";
 import { AppService } from "./app-service.js";
 import { nativeNotificationCopy } from "./native-notification-copy.js";
@@ -16,6 +16,7 @@ import type {
   MailingListPatch,
   TaskPatch,
   TransactionFilter,
+  WindowControlState,
 } from "../shared/contracts.js";
 import { ipcPayloadSchemas, parseIpcArgs } from "./ipc-validation.js";
 import { ExternalLinkReviewQueue } from "./external-link-review.js";
@@ -28,12 +29,20 @@ import {
   resolveRendererLoadTarget,
   type RendererLoadTarget,
 } from "./renderer-trust.js";
+import {
+  WINDOW_MIN_HEIGHT,
+  WINDOW_MIN_WIDTH,
+  WindowStateStore,
+  resolveWindowBounds,
+} from "./window-state.js";
 
 let mainWindow: BrowserWindow | null = null;
 let activeTrustedRendererUrl: string | null = null;
 let service: AppService;
 let oauthAuthorization: OAuthAuthorizationService;
 let oauthTokenVault: WindowsSafeStorageOAuthTokenVault;
+let windowStateStore: WindowStateStore;
+let windowCloseApproved = false;
 const nativeNotificationLastShown = new Map<string, number>();
 const pendingMailto: string[] = [];
 const externalLinkReviews = new ExternalLinkReviewQueue();
@@ -45,6 +54,16 @@ if (isolatedUserData) app.setPath("userData", path.resolve(isolatedUserData));
 
 const rendererPath = path.join(__dirname, "../renderer/index.html");
 const preloadPath = path.join(__dirname, "preload.cjs");
+
+const currentWindowControlState = (): WindowControlState => ({
+  maximized: mainWindow?.isMaximized() ?? false,
+  minimized: mainWindow?.isMinimized() ?? false,
+});
+
+const emitWindowControlState = (): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("window:state-changed", currentWindowControlState());
+};
 
 const registerIpc = (trustedRendererUrl: string): void => {
   const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
@@ -196,6 +215,7 @@ const registerIpc = (trustedRendererUrl: string): void => {
     await shell.openExternal(url);
   });
   handleValidated("external-link:cancel", ipcPayloadSchemas.externalLinkRequest, ([requestId]) => externalLinkReviews.cancel(requestId));
+  handleValidated("window:state", ipcPayloadSchemas.none, () => currentWindowControlState());
   handleValidated("window:minimize", ipcPayloadSchemas.none, () => mainWindow?.minimize());
   handleValidated("window:maximize", ipcPayloadSchemas.none, () => {
     if (!mainWindow) return false;
@@ -203,7 +223,11 @@ const registerIpc = (trustedRendererUrl: string): void => {
     else mainWindow.maximize();
     return mainWindow.isMaximized();
   });
-  handleValidated("window:close", ipcPayloadSchemas.none, () => mainWindow?.close());
+  handleValidated("window:close", ipcPayloadSchemas.none, () => {
+    if (!mainWindow) return;
+    windowCloseApproved = true;
+    mainWindow.close();
+  });
 };
 
 const deliverMailto = (commandLine: string[]): void => {
@@ -227,17 +251,21 @@ const deliverExternalLinkReview = (rawUrl: string): void => {
 
 const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> => {
   activeTrustedRendererUrl = rendererTarget.trustedUrl;
-  mainWindow = new BrowserWindow({
-    width: 1500,
-    height: 940,
-    minWidth: 760,
-    minHeight: 560,
+  const persistedWindowState = await windowStateStore.read();
+  const bounds = resolveWindowBounds(
+    persistedWindowState,
+    [screen.getPrimaryDisplay(), ...screen.getAllDisplays().filter(display => display.id !== screen.getPrimaryDisplay().id)]
+      .map(display => display.workArea),
+  );
+  const window = new BrowserWindow({
+    ...bounds,
+    minWidth: WINDOW_MIN_WIDTH,
+    minHeight: WINDOW_MIN_HEIGHT,
     show: false,
     backgroundColor: "#fff7ff",
     title: "Material Email",
     autoHideMenuBar: true,
     titleBarStyle: "hidden",
-    titleBarOverlay: { color: "#f8f2fa", symbolColor: "#1d1b20", height: 48 },
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -248,16 +276,61 @@ const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> =
     },
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow = window;
+  windowCloseApproved = false;
+  window.webContents.setWindowOpenHandler(({ url }) => {
     const assessment = assessExternalLink(url);
     if (assessment.risk === "ordinary" && assessment.normalizedUrl) void shell.openExternal(assessment.normalizedUrl);
     else deliverExternalLinkReview(url);
     return { action: "deny" };
   });
+  let persistenceTimer: NodeJS.Timeout | null = null;
+  const persistWindowState = (): void => {
+    if (window.isDestroyed()) return;
+    const normalBounds = window.getNormalBounds();
+    void windowStateStore.save({
+      schemaVersion: 1,
+      bounds: normalBounds,
+      maximized: window.isMaximized(),
+    }).catch(() => undefined);
+  };
+  const queueWindowStatePersistence = (): void => {
+    if (persistenceTimer) clearTimeout(persistenceTimer);
+    persistenceTimer = setTimeout(() => {
+      persistenceTimer = null;
+      persistWindowState();
+    }, 150);
+  };
+  window.on("move", queueWindowStatePersistence);
+  window.on("resize", queueWindowStatePersistence);
+  window.on("maximize", () => {
+    persistWindowState();
+    emitWindowControlState();
+  });
+  window.on("unmaximize", () => {
+    persistWindowState();
+    emitWindowControlState();
+  });
+  window.on("minimize", emitWindowControlState);
+  window.on("restore", emitWindowControlState);
+  window.on("close", event => {
+    persistWindowState();
+    if (windowCloseApproved) return;
+    if (
+      activeTrustedRendererUrl
+      && !window.webContents.isLoading()
+      && isTrustedRendererFrameUrl(window.webContents.getURL(), activeTrustedRendererUrl)
+    ) {
+      event.preventDefault();
+      window.webContents.send("window:close-requested");
+    }
+  });
   mainWindow.webContents.on("will-navigate", event => event.preventDefault());
   mainWindow.webContents.on("will-redirect", event => event.preventDefault());
   mainWindow.once("ready-to-show", () => {
-    if (!isCiSmoke && !isHeadlessHarness) mainWindow?.show();
+    if (persistedWindowState.maximized) window.maximize();
+    persistWindowState();
+    if (!isCiSmoke && !isHeadlessHarness) window.show();
   });
   mainWindow.webContents.once("did-finish-load", async () => {
     if (
@@ -280,6 +353,7 @@ const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> =
     }
   });
   mainWindow.on("closed", () => {
+    if (persistenceTimer) clearTimeout(persistenceTimer);
     externalLinkReviews.clear();
     void oauthAuthorization.cancel();
     mainWindow = null;
@@ -307,6 +381,7 @@ else {
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   service = new AppService(app.getPath("userData"));
+  windowStateStore = new WindowStateStore(path.join(app.getPath("userData"), "window-state.json"));
   oauthAuthorization = new OAuthAuthorizationService({ openExternal: url => shell.openExternal(url) });
   oauthTokenVault = new WindowsSafeStorageOAuthTokenVault({
     filePath: path.join(app.getPath("userData"), "oauth-token-vault.json"),

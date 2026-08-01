@@ -103,6 +103,17 @@ const api: MaterialEmailApi = {
   importTabAppearanceTheme: () => ipcRenderer.invoke("appearance-theme:import"),
   detectEditors: () => ipcRenderer.invoke("editor:detect"),
   openExternalEditor: editorPath => ipcRenderer.invoke("editor:open", editorPath),
+  getWindowState: () => ipcRenderer.invoke("window:state"),
+  onWindowStateChanged: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof callback>[0]) => callback(state);
+    ipcRenderer.on("window:state-changed", listener);
+    return () => ipcRenderer.removeListener("window:state-changed", listener);
+  },
+  onWindowCloseRequested: callback => {
+    const listener = () => callback();
+    ipcRenderer.on("window:close-requested", listener);
+    return () => ipcRenderer.removeListener("window:close-requested", listener);
+  },
   minimize: () => ipcRenderer.invoke("window:minimize"),
   maximize: () => ipcRenderer.invoke("window:maximize"),
   close: () => ipcRenderer.invoke("window:close"),

@@ -3,6 +3,7 @@
 | Article | Status | Purpose |
 | --- | --- | --- |
 | [Material interface and accessibility](material-interface-and-accessibility.md) | Renderer integrated; screen-reader matrix open | M3 shell and accessibility contract |
+| [Windows window controls](windows-window-controls.md) | Focused implementation and real-Electron verification complete | Caption actions, placement persistence, and guarded close |
 | [Language and humor controls](language-and-humor.md) | Data model present; full copy audit open | English, Cantonese, bilingual, and tone controls |
 | [Search and regex builder](search-and-regex-builder.md) | Command palette verified; complete surface matrix open | Plain search, regex dialect, bounds, and builder requirements |
 | [Tabs and discovery](tabs-and-discovery.md) | Renderer integrated; final interaction audit open | Tab behavior, search scopes, and bulk close |
