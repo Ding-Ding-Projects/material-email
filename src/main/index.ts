@@ -108,7 +108,10 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("notifications:native", ipcPayloadSchemas.nativeNotification, async ([kind]) => {
     if (!(await service.getPreferences()).nativeNotificationsEnabled || !Notification.isSupported()) return false;
     const title = "Material Email";
-    const body = kind === "error" ? "An email task needs your attention." : kind === "warning" ? "An email task needs review." : kind === "success" ? "An email task finished." : "Material Email has an update.";
+    const english = kind === "error" ? "An email task needs your attention." : kind === "warning" ? "An email task needs review." : kind === "success" ? "An email task finished." : "Material Email has an update.";
+    const cantonese = kind === "error" ? "有封郵件工作要你留意。" : kind === "warning" ? "有封郵件工作要你覆核。" : kind === "success" ? "郵件工作完成喇。" : "Material Email 有新消息。";
+    const language = (await service.getPreferences()).language;
+    const body = language === "yue" ? cantonese : language === "bilingual" ? `${english} · ${cantonese}` : english;
     new Notification({ title, body, silent: true }).show();
     return true;
   });
