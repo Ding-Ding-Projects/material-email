@@ -11,6 +11,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Per-channel IPC sender authentication for the current main `WebContents`, top frame, and exact trusted renderer location
 - [x] Windows-backed `safeStorage` encryption for persisted account secrets
 - [x] Manual IMAP/SMTP account schema and connection tests
+- [x] Ephemeral main-process OAuth authorization-code/PKCE state machine with exact loopback callback validation, timeout/cancel/error cleanup, status-only IPC, and no token exchange/persistence/logging
 - [x] Bounded local certificate/hostname preflight with conventional TLS/STARTTLS port diagnostics, bilingual accessible errors, and a main-process no-connection guard
 - [x] IMAP folder/message listing, message retrieval, flags, and moves
 - [x] SMTP sending and local draft persistence
@@ -60,7 +61,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 
 ## Mail capabilities open
 
-- [ ] Interactive OAuth authorization flow and token lifecycle
+- [ ] Register and verify live OAuth providers, then implement reviewed token exchange, encrypted token storage/refresh rotation, revocation, scope/consent handling, account connection, and public-provider interoperability
 - [ ] POP support
 - [x] User-facing retry ceilings and conflict resolution for queued mail operations
 - [x] Local cached Unified Inbox, Starred, and Unread views with account attribution, shared regex search, and stable composite selection

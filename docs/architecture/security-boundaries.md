@@ -37,12 +37,12 @@ External editor launch accepts only a real Windows `.exe` with an executable sig
 - Keeping HTTP(S) links does not make their destinations trustworthy.
 - Attachment contents can still be malicious even when filenames are normalized.
 - Regex risk detection is heuristic and not a hard execution timeout.
-- OAuth-labeled credentials are currently token inputs, not a verified browser authorization lifecycle.
+- OAuth account setup no longer accepts a pasted token. An ephemeral main-process authorization-code/PKCE state machine validates an exact `127.0.0.1` callback and exposes status-only IPC, but production has no provider client registration or token exchange and cannot connect an OAuth account.
 - A stale window, child frame, or unexpected renderer location cannot invoke a handler; replacing the main window also invalidates the old sender.
 
 ## Security considerations
 
-Do not enable plaintext transport by default. Add clear warnings before allowing it. Attachment quarantine now supplies risky-extension and MIME/extension classification, randomized local payload names, provenance, integrity checking, and explicit release/delete; antivirus/content scanning and external reputation remain open. Message links need phishing and look-alike-domain treatment. Future OAuth must use a system-browser flow, PKCE where applicable, state/nonce validation, strict redirect handling, scoped tokens, rotation, and revocation.
+Do not enable plaintext transport by default. Add clear warnings before allowing it. Attachment quarantine now supplies risky-extension and MIME/extension classification, randomized local payload names, provenance, integrity checking, and explicit release/delete; antivirus/content scanning and external reputation remain open. Message links need phishing and look-alike-domain treatment. The OAuth foundation uses a system-browser opener, PKCE S256, timing-safe state comparison, exact loopback redirect handling, bounded terminal cleanup, and no persistence/logging. Provider registration, nonce/consent policy where applicable, code exchange, scoped encrypted tokens, refresh rotation, revocation, and provider interoperability still require dedicated review.
 
 The local Git history validates snapshots before commit and accepts restores only from commits in the current append-only lineage. Credentials remain ciphertext, but access permissions, stable encryption identifiers, restore migrations, and repository-retention behavior require continuing review.
 

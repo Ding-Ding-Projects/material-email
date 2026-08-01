@@ -16,7 +16,7 @@ If submission fails before a recipient verdict is available, the message is plac
 
 ## Configuration
 
-SMTP uses TLS, required STARTTLS, or explicit plain mode according to account settings. Connection, greeting, and socket timeouts are bounded. Authentication uses password or an already supplied OAuth2 access token.
+SMTP uses TLS, required STARTTLS, or explicit plain mode according to account settings. Connection, greeting, and socket timeouts are bounded. Newly configured accounts use password authentication; the OAuth browser foundation deliberately stops before token exchange and cannot currently create a sending account. Previously persisted OAuth-labeled accounts remain a migration boundary rather than evidence of a reviewed token lifecycle.
 
 ## Failure modes
 

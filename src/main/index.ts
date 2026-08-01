@@ -17,6 +17,7 @@ import type {
 } from "../shared/contracts.js";
 import { ipcPayloadSchemas, parseIpcArgs } from "./ipc-validation.js";
 import { ExternalLinkReviewQueue } from "./external-link-review.js";
+import { OAuthAuthorizationService } from "./oauth-authorization.js";
 import { assessExternalLink } from "../shared/external-link-safety.js";
 import {
   assertTrustedRendererClaim,
@@ -28,6 +29,7 @@ import {
 let mainWindow: BrowserWindow | null = null;
 let activeTrustedRendererUrl: string | null = null;
 let service: AppService;
+let oauthAuthorization: OAuthAuthorizationService;
 const nativeNotificationLastShown = new Map<string, number>();
 const pendingMailto: string[] = [];
 const externalLinkReviews = new ExternalLinkReviewQueue();
@@ -71,6 +73,9 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("dialog:attachments", ipcPayloadSchemas.none, () => service.chooseAttachments());
   handleValidated("account:create-demo", ipcPayloadSchemas.none, () => service.createDemoAccount());
   handleValidated("account:discover", ipcPayloadSchemas.accountDiscover, ([email]) => service.discoverAccount(email));
+  handleValidated("account:oauth-status", ipcPayloadSchemas.none, () => oauthAuthorization.status());
+  handleValidated("account:oauth-start", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthAuthorization.start(provider));
+  handleValidated("account:oauth-cancel", ipcPayloadSchemas.none, () => oauthAuthorization.cancel());
   handleValidated("account:inspect-tls-certificate", ipcPayloadSchemas.tlsCertificateInspection, ([request]) => service.inspectTlsCertificate(request));
   handleValidated("account:test", ipcPayloadSchemas.accountDraft, ([draft]) => service.testAccount(draft));
   handleValidated("account:add", ipcPayloadSchemas.accountDraft, ([draft]) => service.addAccount(draft));
@@ -258,6 +263,7 @@ const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> =
   });
   mainWindow.on("closed", () => {
     externalLinkReviews.clear();
+    void oauthAuthorization.cancel();
     mainWindow = null;
     activeTrustedRendererUrl = null;
   });
@@ -283,6 +289,7 @@ else {
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   service = new AppService(app.getPath("userData"));
+  oauthAuthorization = new OAuthAuthorizationService({ openExternal: url => shell.openExternal(url) });
   const rendererTarget = resolveRendererLoadTarget({
     isPackaged: app.isPackaged,
     rendererPath,
@@ -297,4 +304,5 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
 });
 
+app.on("before-quit", () => void oauthAuthorization?.dispose());
 app.on("window-all-closed", () => app.quit());

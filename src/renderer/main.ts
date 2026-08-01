@@ -24,6 +24,8 @@ import type {
   LocalHistoryDeletionEvidence,
   LocalDraftSummary,
   OutboxSummary,
+  OAuthAuthorizationSnapshot,
+  OAuthProviderId,
   PendingOperationSummary,
   MailingList,
   MailingListPatch,
@@ -221,6 +223,8 @@ interface RendererState {
   discoveries: AccountDiscoveryResult[];
   selectedDiscovery: AccountDiscoveryResult | null;
   setupEmail: string;
+  oauthAuthorization: OAuthAuthorizationSnapshot;
+  oauthProvider: OAuthProviderId;
   localRevisions: LocalRevision[];
   localRevisionsLoaded: boolean;
   localRevisionsError: string;
@@ -305,6 +309,17 @@ const DEFAULT_PREFERENCES: Preferences = {
   historyRetentionDays: LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
 };
 
+const DEFAULT_OAUTH_AUTHORIZATION: OAuthAuthorizationSnapshot = {
+  phase: "idle",
+  provider: null,
+  expiresAt: null,
+  failure: null,
+  providers: [
+    { id: "google", name: "Google", configured: false },
+    { id: "microsoft", name: "Microsoft", configured: false },
+  ],
+};
+
 const defaultTabs = (): TabPreferences<PageId> => ({
   order: [...ALL_TAB_IDS],
   pinned: ["mail"],
@@ -342,6 +357,8 @@ const state: RendererState = {
   discoveries: [],
   selectedDiscovery: null,
   setupEmail: "",
+  oauthAuthorization: DEFAULT_OAUTH_AUTHORIZATION,
+  oauthProvider: "google",
   localRevisions: [],
   localRevisionsLoaded: false,
   localRevisionsError: "",
@@ -423,6 +440,7 @@ let pendingFocusKey: string | null = null;
 let confirmationNeedsInitialFocus = false;
 let tabContextNeedsInitialFocus = false;
 let appearanceEditorNeedsInitialFocus = false;
+let oauthStatusPollTimer: number | null = null;
 
 const preferences = (): Preferences => state.bootstrap?.preferences ?? DEFAULT_PREFERENCES;
 
@@ -1009,6 +1027,7 @@ const initialize = async (): Promise<void> => {
   try {
     if (!api || typeof api.bootstrap !== "function") throw new Error("The secure desktop bridge is unavailable. Restart the packaged application.");
     const bootstrap = await api.bootstrap();
+    state.oauthAuthorization = await api.getOAuthAuthorizationStatus().catch(() => DEFAULT_OAUTH_AUTHORIZATION);
     state.bootstrap = bootstrap;
     applyPreferences();
     state.setupOpen = bootstrap.isFirstRun || bootstrap.accounts.length === 0;
@@ -1301,6 +1320,8 @@ const render = (): void => {
   else replaceApplicationMarkup(renderApplication());
   decorateStableFocusKeys();
   applyBilingualSemantics(app);
+  const accountSetupForm = app.querySelector<HTMLFormElement>('[data-form="account-setup"]');
+  if (accountSetupForm) syncAccountAuthenticationMode(accountSetupForm);
   for (const [selector, testId] of [
     [".settings-grid", "settings-controls"],
     ['[data-form="compose"]', "compose-form"],
@@ -2321,6 +2342,83 @@ const renderConnectionPreflight = (settings: MailConnectionSettings): string => 
   </section>`;
 };
 
+const oauthAuthorizationIsActive = (snapshot = state.oauthAuthorization): boolean =>
+  snapshot.phase === "preparing" || snapshot.phase === "opening-browser" || snapshot.phase === "waiting-for-callback";
+
+const oauthAuthorizationCopy = (): { title: string; body: string; alert: boolean } => {
+  const snapshot = state.oauthAuthorization;
+  switch (snapshot.phase) {
+    case "preparing": return {
+      title: tx("Preparing the private callback", "準備緊私人回呼"),
+      body: tx("Material Email is binding a temporary loopback port and creating a fresh PKCE challenge. Nothing has been saved.", "Material Email 正綁定臨時 loopback 連接埠，同埋建立全新 PKCE challenge。仲未儲存任何嘢。"),
+      alert: false,
+    };
+    case "opening-browser": return {
+      title: tx("Opening browser authorization", "開緊瀏覽器授權"),
+      body: tx("The authorization URL stays in the main process. This window receives status only—no URL, verifier, code, or token crosses the desktop bridge.", "授權網址留喺主程序。呢個視窗只會收到狀態——網址、verifier、授權碼同權杖全部唔會跨過桌面連接。"),
+      alert: false,
+    };
+    case "waiting-for-callback": return {
+      title: tx("Waiting for the exact loopback callback", "等緊完全吻合嘅 loopback 回呼"),
+      body: tx(
+        `The temporary listener accepts only its exact 127.0.0.1 port, path, and state${snapshot.expiresAt ? ` until ${formatDate(snapshot.expiresAt)}` : ""}. You can cancel without saving anything.`,
+        `臨時監聽器只接受完全吻合嘅 127.0.0.1 連接埠、路徑同 state${snapshot.expiresAt ? `，有效至 ${formatDate(snapshot.expiresAt)}` : ""}。你可以取消，唔會儲存任何嘢。`,
+      ),
+      alert: false,
+    };
+    case "authorization-received": return {
+      title: tx("Callback validated; account still disconnected", "回呼已驗證；帳戶仍然未連接"),
+      body: tx("The one-time authorization code was discarded. This build has no token exchange, token storage, or live provider account connection.", "一次性授權碼已捨棄。呢個版本冇 token exchange、權杖儲存或者即時供應商帳戶連接。"),
+      alert: false,
+    };
+    case "cancelled": return {
+      title: tx("Browser authorization cancelled", "瀏覽器授權已取消"),
+      body: tx("The loopback listener closed and its temporary state was cleared. No code or token was saved.", "Loopback 監聽器已關閉，臨時狀態亦已清除。冇儲存授權碼或者權杖。"),
+      alert: false,
+    };
+    case "timed-out": return {
+      title: tx("Browser authorization timed out", "瀏覽器授權已逾時"),
+      body: tx("The temporary listener closed after its bounded wait. Start a new attempt only when provider registration is available.", "臨時監聽器喺有限等候時間之後已關閉。供應商註冊可用時先開始新一次。"),
+      alert: true,
+    };
+    case "error": {
+      const copy = (() => {
+        switch (snapshot.failure) {
+          case "provider-not-configured": return tx("This build has no client registration for that provider. No browser or listener was opened.", "呢個版本冇嗰個供應商嘅 client registration。未有開瀏覽器或者監聽器。") ;
+          case "callback-listener-failed": return tx("The temporary loopback listener could not start or remain available. No provider credential was sent or saved.", "臨時 loopback 監聽器啟動唔到或者未能維持。冇傳送或者儲存供應商憑證。") ;
+          case "browser-open-failed": return tx("Windows could not open the authorization URL. The temporary listener closed and its secrets were cleared.", "Windows 開唔到授權網址。臨時監聽器已關閉，秘密狀態亦已清除。") ;
+          case "provider-denied": return tx("The provider reported that authorization was denied. No code or token was retained.", "供應商報告授權被拒絕。冇保留授權碼或者權杖。") ;
+          case "provider-error": return tx("The provider returned an error. Provider details were not copied into the app, and no code or token was retained.", "供應商傳回錯誤。供應商詳細資料冇複製入應用程式，亦冇保留授權碼或者權杖。") ;
+          default: return tx("The callback did not satisfy the exact local checks. Temporary authorization state was cleared.", "回呼未能通過精準本機檢查。臨時授權狀態已清除。") ;
+        }
+      })();
+      return { title: tx("Browser authorization stopped safely", "瀏覽器授權已安全停止"), body: copy, alert: true };
+    }
+    default: return {
+      title: tx("Browser authorization foundation", "瀏覽器授權地基"),
+      body: tx("Choose a provider to inspect availability. The current public build has no provider client registration, so it cannot complete a live login or token exchange.", "揀供應商查看可用狀態。目前公開版本冇供應商 client registration，所以唔可以完成即時登入或者 token exchange。"),
+      alert: false,
+    };
+  }
+};
+
+const renderOAuthAuthorizationPanel = (): string => {
+  const snapshot = state.oauthAuthorization;
+  const active = oauthAuthorizationIsActive(snapshot);
+  const selected = snapshot.providers.find(provider => provider.id === state.oauthProvider) ?? snapshot.providers[0];
+  const copy = oauthAuthorizationCopy();
+  return `<section class="oauth-foundation" data-testid="oauth-foundation" data-oauth-panel hidden aria-labelledby="oauth-foundation-title" aria-describedby="oauth-foundation-boundary">
+    <header><span class="settings-card__icon">${icon("account")}</span><div><h3 id="oauth-foundation-title">${escapeHtml(tx("OAuth browser authorization foundation", "OAuth 瀏覽器授權地基"))}</h3><p>${escapeHtml(tx("Local, bounded, and intentionally stopped before token exchange", "本機、有界，而且刻意喺 token exchange 之前停低"))}</p></div></header>
+    <p class="oauth-foundation__boundary" id="oauth-foundation-boundary">${icon("info")}<span>${escapeHtml(tx("No provider client registration ships in this build. The app never asks you to paste an OAuth token; the foundation keeps PKCE verifier, callback state, authorization URL, and code out of renderer IPC and persistent storage.", "呢個版本冇附帶供應商 client registration。應用程式永遠唔會叫你貼 OAuth 權杖；呢個地基會將 PKCE verifier、回呼 state、授權網址同授權碼留喺 renderer IPC 同持久儲存之外。"))}</span></p>
+    <div class="oauth-foundation__controls">
+      <label class="field"><span>${escapeHtml(tx("Browser provider", "瀏覽器供應商"))}</span><select name="oauthProvider" data-action-change="select-oauth-provider" aria-describedby="oauth-provider-support" ${active ? "disabled" : ""}>${snapshot.providers.map(provider => `<option value="${provider.id}" ${provider.id === state.oauthProvider ? "selected" : ""}>${escapeHtml(`${provider.name} — ${provider.configured ? tx("configured", "已設定") : tx("not configured", "未設定")}`)}</option>`).join("")}</select></label>
+      <p id="oauth-provider-support" class="supporting-copy">${escapeHtml(selected?.configured ? tx("This provider configuration can exercise the local authorization foundation. A connected mail account still requires a separately reviewed token exchange and secure token lifecycle.", "呢個供應商設定可以運行本機授權地基。要連接郵件帳戶，仍然需要另行審閱 token exchange 同安全權杖生命週期。") : tx("Provider registration unavailable. The button stays disabled; no browser, loopback listener, mail server, or provider endpoint will be contacted.", "供應商註冊不可用。按鈕會保持停用；唔會聯絡瀏覽器、loopback 監聽器、郵件伺服器或者供應商端點。"))}</p>
+    </div>
+    <div class="oauth-foundation__status${copy.alert ? " oauth-foundation__status--error" : ""}" data-testid="oauth-status" role="${copy.alert ? "alert" : "status"}" aria-live="${copy.alert ? "assertive" : "polite"}" aria-atomic="true" aria-busy="${active}">${icon(copy.alert ? "warning" : active ? "refresh" : snapshot.phase === "authorization-received" ? "check" : "info", active ? "is-spinning" : "")}<div><strong>${escapeHtml(copy.title)}</strong><p>${escapeHtml(copy.body)}</p></div></div>
+    <div class="button-row oauth-foundation__actions"><button class="button button--tonal" type="button" data-action="start-oauth-authorization" data-focus-key="oauth-start" ${!selected?.configured || active ? "disabled" : ""}>${icon("forward")}<span>${escapeHtml(tx("Start browser authorization", "開始瀏覽器授權"))}</span></button>${active ? `<button class="button button--outlined" type="button" data-action="cancel-oauth-authorization" data-focus-key="oauth-cancel">${icon("close")}<span>${escapeHtml(tx("Cancel authorization", "取消授權"))}</span></button>` : ""}</div>
+  </section>`;
+};
+
 function renderAccountSetup(): string {
   const discovery = state.selectedDiscovery;
   const incoming = discovery?.incoming ?? { host: "", port: 993, security: "tls" as const, username: state.setupEmail };
@@ -2367,11 +2465,13 @@ function renderAccountSetup(): string {
             </div>
           </div>
           <div class="credential-grid">
-            <label class="field"><span>${escapeHtml(tx("Authentication", "驗證方式"))}</span><select name="authMode"><option value="password" ${!discovery || discovery.authModes.includes("password") ? "" : "disabled"}>${escapeHtml(tx("Password", "密碼"))}</option><option value="oauth2" ${discovery?.authModes.includes("oauth2") ? "" : "disabled"}>OAuth 2 access token</option></select></label>
-            <label class="field"><span>${escapeHtml(tx("Password or OAuth access token", "密碼或者 OAuth 存取權杖"))}</span><input type="password" name="secret" required maxlength="16384" autocomplete="current-password" /></label>
+            <label class="field"><span>${escapeHtml(tx("Authentication", "驗證方式"))}</span><select name="authMode" aria-describedby="authentication-boundary"><option value="password" ${!discovery || discovery.authModes.includes("password") ? "" : "disabled"}>${escapeHtml(tx("Password", "密碼"))}</option><option value="oauth2">${escapeHtml(tx("OAuth 2 browser foundation", "OAuth 2 瀏覽器地基"))}</option></select></label>
+            <label class="field" data-password-credential><span>${escapeHtml(tx("Password", "密碼"))}</span><input type="password" name="secret" required maxlength="16384" autocomplete="current-password" /></label>
           </div>
+          <p id="authentication-boundary" class="supporting-copy">${escapeHtml(tx("Password mode can test and save an encrypted password. OAuth mode cannot accept a pasted token and cannot connect an account in this build.", "密碼模式可以測試同加密儲存密碼。OAuth 模式喺呢個版本唔接受貼上權杖，亦唔可以連接帳戶。"))}</p>
+          ${renderOAuthAuthorizationPanel()}
           ${renderConnectionPreflight({ incoming, outgoing })}
-          <p class="security-disclosure">${icon("info")}<span>${escapeHtml(tx("Required TLS never falls back to plain text. Testing contacts the named mail servers; adding saves the credential only after both checks succeed.", "必須使用 TLS 時絕對唔會降級到純文字。測試會聯絡指定郵件伺服器；兩邊檢查成功之後先會儲存憑證。"))}</span></p>
+          <p class="security-disclosure">${icon("info")}<span>${escapeHtml(tx("Required TLS never falls back to plain text. Password testing contacts the named mail servers; adding saves the encrypted password only after both checks succeed. OAuth foundation actions never test mail or save a token.", "必須使用 TLS 時絕對唔會降級到純文字。密碼測試會聯絡指定郵件伺服器；兩邊檢查成功之後先會加密儲存密碼。OAuth 地基操作唔會測試郵件或者儲存權杖。"))}</span></p>
           <footer class="setup-actions">
             ${state.setupContext === "settings" ? `<button class="button button--text" type="button" data-action="close-account-setup">${escapeHtml(tx("Cancel", "取消"))}</button>` : ""}
             <span class="action-spacer"></span>
@@ -3086,6 +3186,129 @@ const captureComposer = (): void => {
   state.compose.draft.text = String(data.get("text") ?? "").slice(0, 2_000_000);
 };
 
+const syncAccountAuthenticationMode = (form: HTMLFormElement): void => {
+  const authMode = form.elements.namedItem("authMode");
+  const password = form.elements.namedItem("secret");
+  const oauthMode = authMode instanceof HTMLSelectElement && authMode.value === "oauth2";
+  const passwordField = form.querySelector<HTMLElement>("[data-password-credential]");
+  const oauthPanel = form.querySelector<HTMLElement>("[data-oauth-panel]");
+  if (passwordField) passwordField.hidden = oauthMode;
+  if (password instanceof HTMLInputElement) {
+    password.required = !oauthMode;
+    if (oauthMode) password.value = "";
+  }
+  if (oauthPanel) oauthPanel.hidden = !oauthMode;
+  for (const submit of form.querySelectorAll<HTMLButtonElement>("[data-account-submit]")) {
+    submit.disabled = oauthMode || isBusy("account-test") || isBusy("account-add");
+  }
+};
+
+const updateOAuthAuthorizationPanel = (focusKey?: "oauth-start" | "oauth-cancel"): void => {
+  const form = document.querySelector<HTMLFormElement>('[data-form="account-setup"]');
+  const panel = form?.querySelector<HTMLElement>("[data-oauth-panel]");
+  if (!form || !panel) return;
+  const preservedFocusKey = document.activeElement instanceof HTMLElement
+    && document.activeElement.closest("[data-oauth-panel]")
+    ? document.activeElement.dataset.focusKey as "oauth-start" | "oauth-cancel" | undefined
+    : undefined;
+  panel.outerHTML = renderOAuthAuthorizationPanel();
+  syncAccountAuthenticationMode(form);
+  applyBilingualSemantics(form);
+  const nextFocusKey = focusKey ?? preservedFocusKey;
+  if (nextFocusKey) requestAnimationFrame(() => form.querySelector<HTMLElement>(`[data-focus-key="${nextFocusKey}"]`)?.focus());
+};
+
+const stopOAuthStatusPolling = (): void => {
+  if (oauthStatusPollTimer !== null) window.clearTimeout(oauthStatusPollTimer);
+  oauthStatusPollTimer = null;
+};
+
+const oauthAuthorizationSnapshotsEqual = (left: OAuthAuthorizationSnapshot, right: OAuthAuthorizationSnapshot): boolean =>
+  left.phase === right.phase
+  && left.provider === right.provider
+  && left.expiresAt === right.expiresAt
+  && left.failure === right.failure
+  && left.providers.length === right.providers.length
+  && left.providers.every((provider, index) => {
+    const candidate = right.providers[index];
+    return candidate?.id === provider.id && candidate.name === provider.name && candidate.configured === provider.configured;
+  });
+
+const scheduleOAuthStatusPoll = (): void => {
+  stopOAuthStatusPolling();
+  if (!state.setupOpen || !oauthAuthorizationIsActive()) return;
+  oauthStatusPollTimer = window.setTimeout(async () => {
+    oauthStatusPollTimer = null;
+    try {
+      const next = await api.getOAuthAuthorizationStatus();
+      if (!oauthAuthorizationSnapshotsEqual(state.oauthAuthorization, next)) {
+        state.oauthAuthorization = next;
+        updateOAuthAuthorizationPanel();
+      }
+      scheduleOAuthStatusPoll();
+    } catch {
+      pushToast(
+        "error",
+        "OAuth status unavailable",
+        "The desktop bridge could not read the local authorization state. No connected account or token is claimed.",
+        "OAuth 狀態不可用",
+        "桌面連接讀唔到本機授權狀態。唔會聲稱已有連接帳戶或者權杖。",
+      );
+    }
+  }, 250);
+};
+
+const refreshOAuthAuthorizationStatus = async (): Promise<void> => {
+  state.oauthAuthorization = await api.getOAuthAuthorizationStatus();
+  const selectedExists = state.oauthAuthorization.providers.some(provider => provider.id === state.oauthProvider);
+  if (!selectedExists) state.oauthProvider = state.oauthAuthorization.providers[0]?.id ?? "google";
+  updateOAuthAuthorizationPanel();
+  scheduleOAuthStatusPoll();
+};
+
+const startOAuthAuthorizationFromSetup = async (): Promise<void> => {
+  const provider = state.oauthAuthorization.providers.find(candidate => candidate.id === state.oauthProvider);
+  if (!provider?.configured || oauthAuthorizationIsActive()) return;
+  state.oauthAuthorization = {
+    ...state.oauthAuthorization,
+    phase: "preparing",
+    provider: provider.id,
+    expiresAt: null,
+    failure: null,
+  };
+  updateOAuthAuthorizationPanel();
+  try {
+    state.oauthAuthorization = await api.startOAuthAuthorization(provider.id);
+    updateOAuthAuthorizationPanel(oauthAuthorizationIsActive() ? "oauth-cancel" : "oauth-start");
+    scheduleOAuthStatusPoll();
+  } catch {
+    await refreshOAuthAuthorizationStatus().catch(() => undefined);
+    pushToast(
+      "error",
+      "Browser authorization did not start",
+      "The local OAuth foundation stopped before account connection. No token was saved.",
+      "瀏覽器授權未有開始",
+      "本機 OAuth 地基喺連接帳戶之前已停止。冇儲存權杖。",
+    );
+  }
+};
+
+const cancelOAuthAuthorizationFromSetup = async (): Promise<void> => {
+  stopOAuthStatusPolling();
+  try {
+    state.oauthAuthorization = await api.cancelOAuthAuthorization();
+    updateOAuthAuthorizationPanel("oauth-start");
+  } catch {
+    pushToast(
+      "error",
+      "Authorization cancellation status unavailable",
+      "The desktop bridge did not confirm cancellation. Close account setup or the app to tear down the local listener.",
+      "授權取消狀態不可用",
+      "桌面連接未能確認取消。關閉帳戶設定或者應用程式，就會拆走本機監聽器。",
+    );
+  }
+};
+
 const accountDraftFromForm = (form: HTMLFormElement): AccountDraft => {
   const data = new FormData(form);
   const incomingSecurity = String(data.get("incomingSecurity"));
@@ -3247,6 +3470,18 @@ const inspectTlsCertificateFromSetup = async (button: HTMLElement): Promise<void
 };
 
 const handleAccountSubmit = async (form: HTMLFormElement, mode: "test" | "add"): Promise<void> => {
+  const authMode = form.elements.namedItem("authMode");
+  if (authMode instanceof HTMLSelectElement && authMode.value === "oauth2") {
+    pushToast(
+      "warning",
+      "OAuth account connection is not available",
+      "This build can exercise only the local PKCE and callback foundation. It has no reviewed token exchange, token lifecycle, or connected-account path.",
+      "OAuth 帳戶連接不可用",
+      "呢個版本只可以運行本機 PKCE 同回呼地基。仲未有經審閱嘅 token exchange、權杖生命週期或者帳戶連接路徑。",
+    );
+    updateOAuthAuthorizationPanel("oauth-start");
+    return;
+  }
   if (!form.reportValidity()) return;
   let draft: AccountDraft;
   try {
@@ -4730,12 +4965,22 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       break;
     }
     case "open-account-setup":
-      state.setupOpen = true; state.setupContext = state.bootstrap?.accounts.length ? "settings" : "first-run"; state.discoveries = []; state.selectedDiscovery = null; state.setupEmail = ""; render(); break;
-    case "close-account-setup": if (state.bootstrap?.accounts.length) { state.setupOpen = false; render(); } break;
+      state.setupOpen = true; state.setupContext = state.bootstrap?.accounts.length ? "settings" : "first-run"; state.discoveries = []; state.selectedDiscovery = null; state.setupEmail = ""; render();
+      await refreshOAuthAuthorizationStatus().catch(() => pushToast("error", "OAuth status unavailable", "Account setup remains in password mode. No OAuth provider or token state is claimed.", "OAuth 狀態不可用", "帳戶設定會維持密碼模式。唔會聲稱有 OAuth 供應商或者權杖狀態。"));
+      break;
+    case "close-account-setup":
+      if (state.bootstrap?.accounts.length) {
+        if (oauthAuthorizationIsActive()) await cancelOAuthAuthorizationFromSetup();
+        state.setupOpen = false; stopOAuthStatusPolling(); render();
+      }
+      break;
     case "discover-account": await discoverAccount(); break;
+    case "start-oauth-authorization": await startOAuthAuthorizationFromSetup(); break;
+    case "cancel-oauth-authorization": await cancelOAuthAuthorizationFromSetup(); break;
     case "inspect-tls-certificate": await inspectTlsCertificateFromSetup(button); break;
     case "create-demo":
       await withBusy("create-demo", async () => {
+        if (oauthAuthorizationIsActive()) await cancelOAuthAuthorizationFromSetup();
         const account = await api.createDemoAccount();
         await refreshMetadata();
         state.setupOpen = false;
@@ -4893,7 +5138,17 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
   if (control.closest('[data-testid="pim-editor"]') && control.name) updatePimEditorDirty();
   const accountSetupForm = control.closest<HTMLFormElement>('[data-form="account-setup"]');
   if (accountSetupForm && CONNECTION_PREFLIGHT_FIELD_NAMES.has(control.name)) updateConnectionPreflight(accountSetupForm);
+  if (accountSetupForm && control.name === "authMode") {
+    syncAccountAuthenticationMode(accountSetupForm);
+    if (control.value === "oauth2") await refreshOAuthAuthorizationStatus().catch(() => undefined);
+    return;
+  }
   const changeAction = control.dataset.actionChange;
+  if (changeAction === "select-oauth-provider" && (control.value === "google" || control.value === "microsoft")) {
+    state.oauthProvider = control.value;
+    updateOAuthAuthorizationPanel();
+    return;
+  }
   if (changeAction === "switch-account" && control.value) { await loadAccount(control.value, false); return; }
   if (changeAction === "move-message" && control.value) {
     const destination = state.folders.find(folder => folder.path === control.value);
@@ -5219,6 +5474,7 @@ window.addEventListener("beforeunload", event => {
 });
 window.addEventListener("unload", () => disposeMailtoActivation?.());
 window.addEventListener("unload", () => disposeExternalLinkReview?.());
+window.addEventListener("unload", () => stopOAuthStatusPolling());
 
 if (typeof api?.onMailto === "function") disposeMailtoActivation = api.onMailto(url => handleMailtoActivation(url));
 if (typeof api?.onExternalLinkReview === "function") {

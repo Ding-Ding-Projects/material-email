@@ -12,6 +12,7 @@ import {
   type Preferences,
   type TlsCertificateInspectionRequest,
 } from "../shared/contracts.js";
+import { OAUTH_PROVIDER_IDS } from "../shared/oauth.js";
 
 const noControlCharacters = (value: string): boolean => !/[\u0000-\u001f\u007f]/u.test(value);
 const noHeaderBreaks = (value: string): boolean => !/[\r\n\u0000]/u.test(value);
@@ -182,6 +183,7 @@ const cachedMailSearchSchema = z.strictObject({
 export const ipcPayloadSchemas = {
   none: z.tuple([]),
   accountDiscover: z.tuple([emailSchema]),
+  oauthProvider: z.tuple([z.enum(OAUTH_PROVIDER_IDS)]),
   tlsCertificateInspection: z.tuple([tlsCertificateInspectionSchema]),
   accountDraft: z.tuple([accountDraftSchema]),
   accountId: z.tuple([identifierSchema]),

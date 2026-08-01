@@ -78,6 +78,14 @@ describe("non-PIM IPC validation", () => {
     expect(() => ipcPayloadSchemas.revisionLabel.parse(["a".repeat(40), "x".repeat(121)])).toThrow();
   });
 
+  it("accepts only known OAuth providers and no callback or token-shaped payload", () => {
+    expect(ipcPayloadSchemas.oauthProvider.parse(["google"])).toEqual(["google"]);
+    expect(ipcPayloadSchemas.oauthProvider.parse(["microsoft"])).toEqual(["microsoft"]);
+    expect(() => ipcPayloadSchemas.oauthProvider.parse(["custom-provider"])).toThrow();
+    expect(() => ipcPayloadSchemas.oauthProvider.parse(["google", "authorization-code"])).toThrow();
+    expect(() => ipcPayloadSchemas.oauthProvider.parse([{ provider: "google", token: "must-not-cross-ipc" }])).toThrow();
+  });
+
   it("accepts only credential-free bounded TLS certificate inspection requests", () => {
     expect(ipcPayloadSchemas.tlsCertificateInspection.parse([{
       endpoint: "incoming",

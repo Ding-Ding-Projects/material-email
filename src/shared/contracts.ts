@@ -17,6 +17,7 @@ import type {
 } from "../main/pim/types.js";
 import type { AttachmentRiskAssessment, AttachmentSaveReview } from "./attachment-safety.js";
 import type { ExternalLinkReason, ExternalLinkRisk } from "./external-link-safety.js";
+import type { OAuthAuthorizationSnapshot, OAuthProviderId } from "./oauth.js";
 
 export type {
   CalendarEvent,
@@ -43,6 +44,13 @@ export type {
   AttachmentSaveReview,
 } from "./attachment-safety.js";
 export type { ExternalLinkAssessment, ExternalLinkReason, ExternalLinkRisk } from "./external-link-safety.js";
+export type {
+  OAuthAuthorizationFailure,
+  OAuthAuthorizationPhase,
+  OAuthAuthorizationSnapshot,
+  OAuthProviderAvailability,
+  OAuthProviderId,
+} from "./oauth.js";
 
 export type LanguageMode = "en" | "yue" | "bilingual";
 export type ThemeMode = "light" | "dark" | "system";
@@ -476,6 +484,9 @@ export interface MaterialEmailApi {
   chooseAttachments(): Promise<string[]>;
   createDemoAccount(): Promise<AccountSummary>;
   discoverAccount(email: string): Promise<AccountDiscoveryResult[]>;
+  getOAuthAuthorizationStatus(): Promise<OAuthAuthorizationSnapshot>;
+  startOAuthAuthorization(provider: OAuthProviderId): Promise<OAuthAuthorizationSnapshot>;
+  cancelOAuthAuthorization(): Promise<OAuthAuthorizationSnapshot>;
   inspectTlsCertificate(request: TlsCertificateInspectionRequest): Promise<TlsCertificateInspectionResult>;
   addAccount(draft: AccountDraft): Promise<AccountSummary>;
   testAccount(draft: AccountDraft): Promise<{ incoming: true; outgoing: true }>;

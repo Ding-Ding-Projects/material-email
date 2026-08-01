@@ -340,6 +340,9 @@ export class AppService {
 
   async addAccount(input: AccountDraft): Promise<AccountSummary> {
     const draft = accountDraftSchema.parse(input);
+    if (draft.authMode === "oauth2") {
+      throw new Error("OAuth token exchange and connected-account persistence are not available in this build. No token was saved.");
+    }
     assertConnectionPreflight(draft);
     const existing = await this.#store.read();
     if (existing.accounts.some(account => account.email.toLowerCase() === draft.email.toLowerCase())) {
@@ -369,6 +372,9 @@ export class AppService {
 
   async testAccount(input: AccountDraft): Promise<{ incoming: true; outgoing: true }> {
     const draft = accountDraftSchema.parse(input);
+    if (draft.authMode === "oauth2") {
+      throw new Error("OAuth token exchange and connected-account testing are not available in this build. No token was sent.");
+    }
     assertConnectionPreflight(draft);
     const runtime: RuntimeAccount = {
       id: "test",
