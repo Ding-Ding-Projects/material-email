@@ -58,10 +58,8 @@ describe("non-PIM IPC validation", () => {
     ).toThrow();
   });
 
-  it("validates POP3 account options and keeps the demo IPC credential-free", () => {
+  it("validates only the bounded live POP3 account-test payload and argument-free cancellation", () => {
     const pop3 = {
-      transport: "local-demo" as const,
-      retrievalMode: "new-only" as const,
       leaveOnServer: true as const,
       messageLimit: 3,
     };
@@ -71,12 +69,14 @@ describe("non-PIM IPC validation", () => {
       incoming: { ...accountDraft().incoming, host: "pop.example.test", port: 995 },
       pop3,
     }])[0]).toMatchObject({ incomingProtocol: "pop3", pop3 });
-    expect(ipcPayloadSchemas.pop3Foundation.parse([pop3])).toEqual([pop3]);
     expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), incomingProtocol: "pop3" }])).toThrow();
-    expect(() => ipcPayloadSchemas.pop3Foundation.parse([{ ...pop3, leaveOnServer: false }])).toThrow();
-    expect(() => ipcPayloadSchemas.pop3Foundation.parse([{ ...pop3, retrievalMode: "all" }])).toThrow();
-    expect(() => ipcPayloadSchemas.pop3Foundation.parse([{ ...pop3, messageLimit: 51 }])).toThrow();
-    expect(() => ipcPayloadSchemas.pop3Foundation.parse([{ ...pop3, username: "must-not-cross-this-ipc", secret: "must-not-cross-this-ipc" }])).toThrow();
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), incomingProtocol: "pop3", pop3: { ...pop3, leaveOnServer: false } }])).toThrow();
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), incomingProtocol: "pop3", pop3: { ...pop3, messageLimit: 51 } }])).toThrow();
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), incomingProtocol: "pop3", pop3: { ...pop3, mode: "fixture" } }])).toThrow();
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), incomingProtocol: "pop3", incoming: { ...accountDraft().incoming, security: "plain" }, pop3 }])).toThrow(/implicit TLS or STARTTLS/iu);
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), incomingProtocol: "pop3", secret: "safe\r\nDELE 1", pop3 }])).toThrow(/line breaks or NUL/iu);
+    expect(ipcPayloadSchemas.none.parse([])).toEqual([]);
+    expect(() => ipcPayloadSchemas.none.parse(["cancel-all"])).toThrow();
   });
 
   it("bounds compose content and requires absolute picker-shaped attachment paths", () => {

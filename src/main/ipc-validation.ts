@@ -83,8 +83,6 @@ const accountDraftBaseShape = {
 };
 
 export const pop3AccountOptionsSchema = z.strictObject({
-  transport: z.enum(["local-demo", "live-network"]),
-  retrievalMode: z.literal("new-only"),
   leaveOnServer: z.literal(true),
   messageLimit: z.number().int().min(POP3_MESSAGE_LIMIT_MIN).max(POP3_MESSAGE_LIMIT_MAX),
 }) as z.ZodType<Pop3AccountOptions>;
@@ -114,7 +112,13 @@ export const iCalendarExportRequestSchema = z.discriminatedUnion("scope", [
 
 export const accountDraftSchema = z.union([
   z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("imap").default("imap") }),
-  z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("pop3"), pop3: pop3AccountOptionsSchema }),
+  z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("pop3"), pop3: pop3AccountOptionsSchema }).superRefine((value, context) => {
+    if (value.authMode !== "password") context.addIssue({ code: "custom", path: ["authMode"], message: "POP3 account testing requires password authentication." });
+    if (value.incoming.security !== "tls" && value.incoming.security !== "starttls") {
+      context.addIssue({ code: "custom", path: ["incoming", "security"], message: "POP3 account testing requires implicit TLS or STARTTLS." });
+    }
+    if (/[\r\n\0]/u.test(value.secret)) context.addIssue({ code: "custom", path: ["secret"], message: "POP3 credentials cannot contain line breaks or NUL." });
+  }),
 ]) as z.ZodType<AccountDraft>;
 
 const recipientSchema = z
@@ -232,7 +236,6 @@ export const ipcPayloadSchemas = {
   accountDiscover: z.tuple([emailSchema]),
   oauthProvider: z.tuple([z.enum(OAUTH_PROVIDER_IDS)]),
   tlsCertificateInspection: z.tuple([tlsCertificateInspectionSchema]),
-  pop3Foundation: z.tuple([pop3AccountOptionsSchema]),
   pimProviderFoundation: z.tuple([pimProviderProfileInputSchema]),
   pimIcsImport: z.tuple([z.enum(["skip", "update"])]),
   pimIcsExport: z.tuple([iCalendarExportRequestSchema]),

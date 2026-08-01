@@ -11,7 +11,8 @@ const SEARCH_FALLBACK = "The search could not complete. Review the search settin
 const MAX_VISIBLE_ERROR_CHARACTERS = 480;
 const MAIL_ERROR_CODES = new Set([
   "EAUTH", "AUTHENTICATIONFAILED", "ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETDOWN", "ENETUNREACH",
-  "EPIPE", "ETIMEDOUT", "ESOCKETTIMEDOUT", "ETIMEOUT", "ENOTFOUND", "EAI_AGAIN", "EAI_FAIL",
+  "EPIPE", "ETIMEDOUT", "ESOCKETTIMEDOUT", "ETIMEOUT", "ENOTFOUND", "EAI_AGAIN", "EAI_FAIL", "ECANCELLED",
+  "ETLS", "EPROTOCOL", "ETOOBIG",
 ]);
 const PUBLIC_MAIL_MESSAGES = new Set([
   MAIL_FALLBACK,
@@ -21,6 +22,9 @@ const PUBLIC_MAIL_MESSAGES = new Set([
   "The server rejected the account sign-in. Check the credential or provider authorization, then retry.",
   "The secure connection could not be verified. Review the server name, security mode, and certificate diagnostics before retrying.",
   "The network connection ended before the mail operation completed. Check the network and retry.",
+  "The POP3 account test was cancelled. Its connection was closed and no account was saved.",
+  "The POP3 server response exceeded the safe account-test limit. No account was saved.",
+  "The POP3 server response did not satisfy the bounded account-test protocol checks. No account was saved.",
 ]);
 
 const errorCode = (error: unknown): string => {
@@ -48,6 +52,15 @@ const containsSensitiveImplementationDetail = (message: string): boolean =>
 
 const mailFailureMessage = (message: string, code: string): string => {
   if (PUBLIC_MAIL_MESSAGES.has(message)) return message;
+  if (code === "ECANCELLED" || /POP3 account test was cancelled/iu.test(message)) {
+    return "The POP3 account test was cancelled. Its connection was closed and no account was saved.";
+  }
+  if (code === "ETOOBIG" || /POP3 server response exceeded/iu.test(message)) {
+    return "The POP3 server response exceeded the safe account-test limit. No account was saved.";
+  }
+  if (code === "EPROTOCOL" || /bounded account test could not safely accept/iu.test(message)) {
+    return "The POP3 server response did not satisfy the bounded account-test protocol checks. No account was saved.";
+  }
   if (code === "ECONNREFUSED" || /\b(?:ECONNREFUSED|connection refused)\b/iu.test(message)) {
     return "The server refused the connection. Check the server address, port, security mode, and network, then retry.";
   }
@@ -60,7 +73,7 @@ const mailFailureMessage = (message: string, code: string): string => {
   if (["EAUTH", "AUTHENTICATIONFAILED"].includes(code) || /\b(?:authentication failed|invalid (?:login|credentials)|login failed|EAUTH)\b/iu.test(message)) {
     return "The server rejected the account sign-in. Check the credential or provider authorization, then retry.";
   }
-  if (/\b(?:certificate|self[- ]signed|ERR_TLS|CERT_[A-Z_]+|TLS handshake|SSL handshake)\b/iu.test(message)) {
+  if (code === "ETLS" || /\b(?:certificate|self[- ]signed|ERR_TLS|CERT_[A-Z_]+|TLS handshake|SSL handshake|secure POP3 connection)\b/iu.test(message)) {
     return "The secure connection could not be verified. Review the server name, security mode, and certificate diagnostics before retrying.";
   }
   if (["ENETUNREACH", "EHOSTUNREACH", "ENETDOWN", "ECONNRESET", "EPIPE"].includes(code)

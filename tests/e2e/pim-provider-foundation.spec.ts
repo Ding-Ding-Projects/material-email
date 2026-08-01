@@ -47,8 +47,8 @@ test("validates provider profiles in an accessible bilingual no-network settings
   await form.getByTestId("run-pim-provider-foundation").click();
   await expect(result).toContainText(/Profile rejected locally/i);
   await expect(result).toContainText(/must use HTTPS/i);
-  await expect(result.locator(".pop3-foundation__facts div").filter({ hasText: /Endpoint contacted/i }).locator("dd")).toContainText(/^No/);
-  await expect(result.locator(".pop3-foundation__facts div").filter({ hasText: /Credential used/i }).locator("dd")).toContainText(/^No/);
+  await expect(result.locator(".provider-foundation__facts div").filter({ hasText: /Endpoint contacted/i }).locator("dd")).toContainText(/^No/);
+  await expect(result.locator(".provider-foundation__facts div").filter({ hasText: /Credential used/i }).locator("dd")).toContainText(/^No/);
 
   await form.locator('[name="endpointUrl"]').fill("https://DAV.Example.test:443/address-books/");
   await form.getByTestId("run-pim-provider-foundation").click();
@@ -57,8 +57,8 @@ test("validates provider profiles in an accessible bilingual no-network settings
   await expect(result).toContainText(/Bounded local vCard envelope/i);
   await expect(result).toContainText(/Provider collection discovery/i);
   await expect(result).toContainText(/Unavailable; no provider proof/i);
-  await expect(result.locator(".pop3-foundation__facts div").filter({ hasText: /Live synchronization/i }).locator("dd")).toContainText(/^Not provided/);
-  await expect(result.locator(".pop3-foundation__facts div").filter({ hasText: /Recurrence/i }).locator("dd")).toContainText(/not expanded/i);
+  await expect(result.locator(".provider-foundation__facts div").filter({ hasText: /Live synchronization/i }).locator("dd")).toContainText(/^Not provided/);
+  await expect(result.locator(".provider-foundation__facts div").filter({ hasText: /Recurrence/i }).locator("dd")).toContainText(/not expanded/i);
 
   await form.locator('[name="kind"]').selectOption("ics-file");
   await expect(form.locator('[name="authMode"]')).toBeDisabled();

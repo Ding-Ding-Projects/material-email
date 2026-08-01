@@ -89,54 +89,47 @@ export type DensityMode = "compact" | "comfortable" | "relaxed";
 export type MailSecurity = "tls" | "starttls" | "plain";
 export type AuthMode = "password" | "oauth2";
 export type IncomingMailProtocol = "imap" | "pop3";
-export type Pop3TransportMode = "local-demo" | "live-network";
 
 export const POP3_MESSAGE_LIMIT_MIN = 1;
 export const POP3_MESSAGE_LIMIT_MAX = 50;
 
 export interface Pop3AccountOptions {
-  transport: Pop3TransportMode;
-  retrievalMode: "new-only";
   leaveOnServer: true;
   messageLimit: number;
 }
 
-export type Pop3SessionState = "idle" | "connecting" | "authorization" | "transaction" | "update" | "disconnected" | "unsupported";
-export type Pop3SessionEvent = "start" | "greeting" | "demo-authorized" | "retrieve-list" | "quit" | "disconnect" | "reject-live-network";
-
-export interface Pop3StateTransition {
-  sequence: number;
-  from: Pop3SessionState;
-  event: Pop3SessionEvent;
-  to: Pop3SessionState;
+export interface Pop3AccountTestCapabilities {
+  capa: true;
+  stls: boolean;
+  uidl: true;
+  user: boolean;
+  pipelining: boolean;
+  top: boolean;
 }
 
-export type Pop3CapabilityName = "UIDL" | "TOP" | "STLS" | "PIPELINING" | "DELE";
-
-export interface Pop3CapabilityStatus {
-  name: Pop3CapabilityName;
-  available: boolean;
-  used: boolean;
-}
-
-export interface Pop3DemoMessage {
-  uidl: string;
-  subject: string;
-  octets: number;
-}
-
-export interface Pop3FoundationSnapshot {
-  transport: Pop3TransportMode;
-  state: Pop3SessionState;
-  capabilities: Pop3CapabilityStatus[];
-  transitions: Pop3StateTransition[];
-  messages: Pop3DemoMessage[];
-  serverContacted: false;
-  credentialsUsed: false;
+export interface Pop3AccountTestResult {
+  incoming: true;
+  outgoing: false;
+  incomingProtocol: "pop3";
+  transport: "implicit-tls" | "starttls";
+  tlsAuthorized: boolean;
+  tlsProtocol: string;
+  tlsCipher: string;
+  capabilities: Pop3AccountTestCapabilities;
+  messageCount: number;
+  mailboxOctets: number;
+  sampledMessageCount: number;
+  uidlVerified: true;
+  listVerified: true;
+  leaveOnServer: true;
   deletionAttempted: false;
+  messagesRetrieved: false;
+  credentialsPersisted: false;
   fullSynchronization: false;
-  boundary: "local-demo-only" | "live-network-unsupported";
+  quitConfirmed: true;
 }
+
+export type AccountTestResult = { incoming: true; outgoing: true } | Pop3AccountTestResult;
 
 export const PIM_PROVIDER_ENDPOINT_LIMIT = 2_048;
 export const PIM_INTERCHANGE_MAX_BYTES = 1_048_576;
@@ -674,10 +667,10 @@ export interface MaterialEmailApi {
   clearOAuthTokenVault(provider: OAuthProviderId): Promise<OAuthTokenVaultActionResult>;
   revokeOAuthTokenVault(provider: OAuthProviderId): Promise<OAuthTokenVaultActionResult>;
   inspectTlsCertificate(request: TlsCertificateInspectionRequest): Promise<TlsCertificateInspectionResult>;
-  runPop3Foundation(options: Pop3AccountOptions): Promise<Pop3FoundationSnapshot>;
+  cancelPop3AccountTest(): Promise<boolean>;
   runPimProviderFoundation(profile: PimProviderProfileInput): Promise<PimProviderFoundationSnapshot>;
   addAccount(draft: AccountDraft): Promise<AccountSummary>;
-  testAccount(draft: AccountDraft): Promise<{ incoming: true; outgoing: true }>;
+  testAccount(draft: AccountDraft): Promise<AccountTestResult>;
   removeAccount(accountId: string): Promise<void>;
   syncAccount(accountId: string): Promise<SyncResult>;
   listFolders(accountId: string): Promise<FolderSummary[]>;

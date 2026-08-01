@@ -103,7 +103,7 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("account:oauth-vault-clear", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.clear(provider));
   handleValidated("account:oauth-vault-revoke", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.revokeAndClear(provider));
   handleValidated("account:inspect-tls-certificate", ipcPayloadSchemas.tlsCertificateInspection, ([request]) => service.inspectTlsCertificate(request));
-  handleValidated("account:pop3-foundation", ipcPayloadSchemas.pop3Foundation, ([options]) => service.runPop3Foundation(options));
+  handleValidated("account:pop3-test-cancel", ipcPayloadSchemas.none, () => service.cancelPop3AccountTest());
   handleValidated("pim:provider-foundation", ipcPayloadSchemas.pimProviderFoundation, ([profile]) => service.runPimProviderFoundation(profile));
   handleValidated("account:test", ipcPayloadSchemas.accountDraft, ([draft]) => service.testAccount(draft));
   handleValidated("account:add", ipcPayloadSchemas.accountDraft, ([draft]) => service.addAccount(draft));
@@ -369,6 +369,7 @@ const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> =
     if (persistenceTimer) clearTimeout(persistenceTimer);
     externalLinkReviews.clear();
     void oauthAuthorization.cancel();
+    service.cancelPop3AccountTest();
     mainWindow = null;
     activeTrustedRendererUrl = null;
   });
@@ -416,5 +417,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => void oauthAuthorization?.dispose());
+app.on("before-quit", () => {
+  void oauthAuthorization?.dispose();
+  service?.cancelPop3AccountTest();
+});
 app.on("window-all-closed", () => app.quit());

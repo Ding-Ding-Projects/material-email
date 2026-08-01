@@ -28,7 +28,7 @@ describe("Electron security boundary", () => {
       "account:oauth-status",
       "account:oauth-start",
       "account:oauth-cancel",
-      "account:pop3-foundation",
+      "account:pop3-test-cancel",
       "account:test",
       "account:add",
       "account:remove",
@@ -111,6 +111,15 @@ describe("Electron security boundary", () => {
     expect(testAccount).toContain("try {");
     expect(testAccount).toContain("finally {");
     expect(testAccount).toContain("transport.close()");
+
+    const pop3 = await read("src/main/pop3-test-transport.ts");
+    expect(pop3).toContain('type Pop3Command = "CAPA" | "STLS" | "USER" | "PASS" | "STAT" | "UIDL" | "LIST" | "QUIT"');
+    expect(pop3).not.toMatch(/type Pop3Command[^\n]*\bDELE\b/u);
+    expect(pop3).not.toMatch(/\.(?:command|required|multiline)\("(?:DELE|RETR|TOP)"/u);
+    expect(pop3).toContain('signal?.addEventListener("abort", abortActiveConnection');
+    expect(pop3).toContain("secureSocket?.destroy()");
+    expect(pop3).toContain("plainSocket?.destroy()");
+    expect(pop3).not.toMatch(/\b(?:console|safeStorage|JsonStore|writeFile|appendFile)\b/u);
   });
 
   it("ships a restrictive local-only renderer policy without evaluated code", async () => {
