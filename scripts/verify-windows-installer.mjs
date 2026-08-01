@@ -3,7 +3,15 @@ import { spawn } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { assertStrictUpgrade, parseInstallerVerifierArguments } from "./installer-upgrade.mjs";
+import {
+  assertInstallerProfileSmoke,
+  assertStrictUpgrade,
+  installerDefaultProfileExpectation,
+  installerEvidenceLimitations,
+  installerRetainedProfileExpectation,
+  parseInstallerVerifierArguments,
+  prepareRetainedInstallerProfileState,
+} from "./installer-upgrade.mjs";
 import { inspectWindowsInstallerFile, inspectWindowsPackage, sha256File } from "./verify-package.mjs";
 
 if (process.platform !== "win32") throw new Error("Windows installer lifecycle verification requires Windows.");
@@ -103,8 +111,11 @@ validateReleaseMetadata(metadata, candidate);
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "material-email-installer-qa-"));
 const installDirectory = path.join(temporaryRoot, "installed");
 const userDataDirectory = path.join(temporaryRoot, "retained-user-data");
+const cleanCandidateUserDataDirectory = baseline ? path.join(temporaryRoot, "candidate-clean-user-data") : userDataDirectory;
 const smokePath = path.join(temporaryRoot, "ci-smoke.json");
 const retentionProbe = path.join(userDataDirectory, "installer-qa-retention-probe.txt");
+const profileStatePath = path.join(userDataDirectory, "material-email-state-v1.json");
+const windowStatePath = path.join(userDataDirectory, "window-state.json");
 const executablePath = path.join(installDirectory, "Material Email.exe");
 let installed = false;
 let uninstalled = false;
@@ -128,12 +139,12 @@ const install = async artifact => {
   return sha256File(executablePath);
 };
 
-const launchSmoke = async (artifact, expectedMetadata) => {
+const launchSmoke = async (artifact, expectedMetadata, profileDirectory, profileExpectation = null, label = "Installed application") => {
   await rm(smokePath, { force: true });
   await runExecutable(
     executablePath,
     ["--ci-smoke", `--ci-smoke-output=${smokePath}`],
-    { env: { ...process.env, MATERIAL_EMAIL_USER_DATA_DIR: userDataDirectory } },
+    { env: { ...process.env, MATERIAL_EMAIL_USER_DATA_DIR: profileDirectory } },
   );
   if (!(await exists(smokePath))) throw new Error("Installed application did not write its CI smoke result.");
   const smoke = JSON.parse(await readFile(smokePath, "utf8"));
@@ -147,11 +158,25 @@ const launchSmoke = async (artifact, expectedMetadata) => {
   if (expectedMetadata && smoke.releaseDate !== expectedMetadata.releaseDate) {
     throw new Error(`Installed application reported release date ${smoke.releaseDate}; expected ${expectedMetadata.releaseDate}.`);
   }
+  const profile = profileExpectation ? assertInstallerProfileSmoke(smoke, profileExpectation, label) : null;
   return {
     version: smoke.version,
     codeName: typeof smoke.codeName === "string" ? smoke.codeName : null,
     releaseDate: typeof smoke.releaseDate === "string" ? smoke.releaseDate : null,
+    profile,
   };
+};
+
+const requireAbsentProfile = async (profileDirectory, label) => {
+  if (await exists(profileDirectory)) throw new Error(`${label} must not exist before its first packaged launch.`);
+};
+
+const seedRetainedProfile = async () => {
+  if (!(await exists(profileStatePath))) throw new Error("The packaged first launch did not create its isolated settings state.");
+  const currentState = JSON.parse(await readFile(profileStatePath, "utf8"));
+  const retainedState = prepareRetainedInstallerProfileState(currentState);
+  await writeFile(profileStatePath, `${JSON.stringify(retainedState, null, 2)}\n`, "utf8");
+  await writeFile(windowStatePath, `${JSON.stringify(installerRetainedProfileExpectation.windowState, null, 2)}\n`, "utf8");
 };
 
 const readVerifiedProbeHash = async expectedHash => {
@@ -171,22 +196,78 @@ const uninstall = async () => {
 try {
   let baselineSmoke = null;
   let baselineInstalledExecutableSha256 = null;
+  let candidateInstalledExecutableSha256 = null;
+  let candidateCleanProfileSmoke = null;
+  let candidateSmoke = null;
+  let candidateCleanProfileWasAbsent = false;
+  await requireAbsentProfile(userDataDirectory, baseline ? "Baseline isolated profile" : "Candidate isolated profile");
   if (baseline) {
     baselineInstalledExecutableSha256 = await install(baseline);
-    baselineSmoke = await launchSmoke(baseline);
+    baselineSmoke = await launchSmoke(baseline, null, userDataDirectory);
+  } else {
+    candidateInstalledExecutableSha256 = await install(candidate);
+    candidateCleanProfileWasAbsent = true;
+    candidateCleanProfileSmoke = await launchSmoke(
+      candidate,
+      metadata,
+      cleanCandidateUserDataDirectory,
+      installerDefaultProfileExpectation,
+      "Candidate clean isolated profile",
+    );
   }
 
   await mkdir(userDataDirectory, { recursive: true });
   await writeFile(retentionProbe, `${randomUUID()}\n`, "utf8");
   const retentionProbeSha256 = await sha256File(retentionProbe);
+  await seedRetainedProfile();
+  const settingsStateSeedSha256 = await sha256File(profileStatePath);
+  const windowStateSeedSha256 = await sha256File(windowStatePath);
 
-  const candidateInstalledExecutableSha256 = await install(candidate);
+  if (baseline) {
+    candidateInstalledExecutableSha256 = await install(candidate);
+    candidateCleanProfileWasAbsent = !(await exists(cleanCandidateUserDataDirectory));
+    if (!candidateCleanProfileWasAbsent) throw new Error("Candidate clean isolated profile existed before its first packaged launch.");
+    candidateCleanProfileSmoke = await launchSmoke(
+      candidate,
+      metadata,
+      cleanCandidateUserDataDirectory,
+      installerDefaultProfileExpectation,
+      "Candidate clean isolated profile",
+    );
+  }
   const retainedAfterUpgradeSha256 = baseline ? await readVerifiedProbeHash(retentionProbeSha256) : null;
-  const candidateSmoke = await launchSmoke(candidate, metadata);
-  if (baseline) await readVerifiedProbeHash(retentionProbeSha256);
+  const settingsStateAfterUpgradeSha256 = baseline ? await sha256File(profileStatePath) : null;
+  const windowStateAfterUpgradeSha256 = baseline ? await sha256File(windowStatePath) : null;
+  if (baseline && settingsStateAfterUpgradeSha256 !== settingsStateSeedSha256) {
+    throw new Error("The retained settings state changed during candidate installation.");
+  }
+  if (baseline && windowStateAfterUpgradeSha256 !== windowStateSeedSha256) {
+    throw new Error("The retained window state changed during candidate installation.");
+  }
+  candidateSmoke = await launchSmoke(
+    candidate,
+    metadata,
+    userDataDirectory,
+    installerRetainedProfileExpectation,
+    "Candidate retained isolated profile",
+  );
+  await readVerifiedProbeHash(retentionProbeSha256);
+  const settingsStateAfterCandidateLaunchSha256 = await sha256File(profileStatePath);
+  if (settingsStateAfterCandidateLaunchSha256 !== settingsStateSeedSha256) {
+    throw new Error("The retained settings state changed during candidate launch.");
+  }
+  const windowStateAfterCandidateLaunchSha256 = await sha256File(windowStatePath);
 
   await uninstall();
   const retainedAfterUninstallSha256 = await readVerifiedProbeHash(retentionProbeSha256);
+  const settingsStateAfterUninstallSha256 = await sha256File(profileStatePath);
+  const windowStateAfterUninstallSha256 = await sha256File(windowStatePath);
+  if (settingsStateAfterUninstallSha256 !== settingsStateAfterCandidateLaunchSha256) {
+    throw new Error("The retained settings state changed during uninstall.");
+  }
+  if (windowStateAfterUninstallSha256 !== windowStateAfterCandidateLaunchSha256) {
+    throw new Error("The retained window state changed during uninstall.");
+  }
 
   result = {
     ok: true,
@@ -197,8 +278,7 @@ try {
       windowsRelease: os.release(),
       isolatedInstallDirectory: true,
       isolatedUserDataDirectory: true,
-      cleanMachine: false,
-      defaultWindowsProfile: false,
+      ...installerEvidenceLimitations(),
     },
     installerPath: candidate.installerPath,
     installerName: candidate.installerName,
@@ -218,13 +298,35 @@ try {
     candidateVersion: candidate.version,
     candidateInstallerSha256: candidate.sha256,
     candidateInstalledExecutableSha256,
+    candidateCleanProfileSmoke,
     candidateSmoke,
+    candidateCleanProfileWasAbsent,
+    cleanIsolatedProfileLaunchVerified: candidateCleanProfileWasAbsent && candidateCleanProfileSmoke?.profile?.mode === "isolated-user-data",
+    defaultSettingsVerifiedInIsolatedProfile: candidateCleanProfileSmoke?.profile?.isFirstRun === true,
+    retainedSettingsVerifiedInIsolatedProfile: candidateSmoke?.profile?.isFirstRun === true,
+    retainedWindowStateVerifiedInIsolatedProfile: candidateSmoke?.profile?.isFirstRun === true,
     upgradeVerified: baseline !== null,
     upgradeInstallDirectoryReused: baseline !== null,
     retainedAfterUpgrade: baseline !== null && retainedAfterUpgradeSha256 === retentionProbeSha256,
+    retainedSettingsAfterUpgrade: baseline !== null && settingsStateAfterUpgradeSha256 === settingsStateSeedSha256,
+    retainedWindowStateAfterUpgrade: baseline !== null && windowStateAfterUpgradeSha256 === windowStateSeedSha256,
     retentionProbeSha256,
     retainedAfterUpgradeSha256,
     retainedAfterUninstallSha256,
+    settingsStateSeedSha256,
+    settingsStateAfterUpgradeSha256,
+    settingsStateAfterCandidateLaunchSha256,
+    settingsStateAfterUninstallSha256,
+    windowStateSeedSha256,
+    windowStateAfterUpgradeSha256,
+    windowStateAfterCandidateLaunchSha256,
+    windowStateAfterUninstallSha256,
+    retainedSettingsAfterUninstall: settingsStateAfterUninstallSha256 === settingsStateAfterCandidateLaunchSha256,
+    retainedWindowStateAfterUninstall: windowStateAfterUninstallSha256 === windowStateAfterCandidateLaunchSha256,
+    authenticode: {
+      checked: false,
+      status: "not-verified",
+    },
     deleteAppDataOnUninstall: false,
   };
 } finally {
@@ -246,6 +348,9 @@ if (baseline) {
 } else {
   console.log(`PASS installed ${candidate.installerName} silently and launched its packaged executable`);
 }
+console.log("PASS candidate launched once from an absent isolated profile with default settings and window state");
+console.log("PASS deterministic settings and window state survived candidate launch and uninstall in isolated user data");
 console.log(`PASS metadata ${result.version} · ${result.codeName || "no code name assigned"}${result.releaseDate ? ` · ${result.releaseDate}` : " · development build (no release date)"}`);
 console.log("PASS silent uninstall removed the executable and retained isolated user data by policy");
+console.log("LIMIT clean machine, default Windows profile, interactive first launch, and Authenticode signature were not verified");
 console.log(`PASS lifecycle report ${options.reportPath}`);

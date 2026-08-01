@@ -342,10 +342,23 @@ const createWindow = async (rendererTarget: RendererLoadTarget): Promise<void> =
     }
     if (isCiSmoke) {
       const result = await service.bootstrap();
+      persistWindowState();
+      await windowStateStore.flush();
       if (ciSmokeOutput) {
         await writeFile(
           ciSmokeOutput,
-          `${JSON.stringify({ ok: true, version: result.version, releaseDate: result.release.releaseDate, codeName: result.release.codeName })}\n`,
+          `${JSON.stringify({
+            ok: true,
+            version: result.version,
+            releaseDate: result.release.releaseDate,
+            codeName: result.release.codeName,
+            profile: {
+              mode: isolatedUserData ? "isolated-user-data" : "windows-default-user-data",
+              isFirstRun: result.isFirstRun,
+              preferences: result.preferences,
+              windowState: persistedWindowState,
+            },
+          })}\n`,
           "utf8",
         );
       }

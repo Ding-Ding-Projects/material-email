@@ -3,6 +3,117 @@ import path from "node:path";
 const versionPattern = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)";
 const installerPattern = new RegExp(`^Material-Email-(${versionPattern})-Windows-x64\\.exe$`);
 
+export const installerDefaultProfileExpectation = Object.freeze({
+  isFirstRun: true,
+  preferences: Object.freeze({
+    language: "en",
+    funnyEnglish: 2,
+    funnyCantonese: 3,
+    theme: "system",
+    density: "comfortable",
+    accent: "#6750A4",
+    fontFamily: "Segoe UI Variable",
+    fontScale: 1,
+    fontWeight: 400,
+    dimSumEnabled: true,
+    narratorEnabled: false,
+    narratorLanguage: "en",
+    nativeNotificationsEnabled: false,
+    historyRetentionDays: 365,
+  }),
+  windowState: Object.freeze({
+    schemaVersion: 1,
+    bounds: Object.freeze({ width: 1_500, height: 940 }),
+    maximized: false,
+  }),
+});
+
+export const installerRetainedProfileExpectation = Object.freeze({
+  isFirstRun: true,
+  preferences: Object.freeze({
+    language: "bilingual",
+    funnyEnglish: 5,
+    funnyCantonese: 1,
+    theme: "dark",
+    density: "compact",
+    accent: "#005AC1",
+    fontFamily: "Segoe UI Variable",
+    fontScale: 1.15,
+    fontWeight: 600,
+    dimSumEnabled: false,
+    narratorEnabled: false,
+    narratorLanguage: "yue",
+    nativeNotificationsEnabled: false,
+    historyRetentionDays: 731,
+  }),
+  windowState: Object.freeze({
+    schemaVersion: 1,
+    bounds: Object.freeze({ width: 960, height: 640 }),
+    maximized: false,
+  }),
+});
+
+const preferenceProbeKeys = Object.freeze(Object.keys(installerDefaultProfileExpectation.preferences));
+
+const requireRecord = (value, label) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
+  return value;
+};
+
+export const selectInstallerPreferenceProbe = value => {
+  const preferences = requireRecord(value, "Installer profile preferences");
+  const selected = {};
+  for (const key of preferenceProbeKeys) {
+    if (!Object.hasOwn(preferences, key)) throw new Error(`Installer profile preferences are missing ${key}.`);
+    selected[key] = preferences[key];
+  }
+  return selected;
+};
+
+export const prepareRetainedInstallerProfileState = value => {
+  const state = requireRecord(value, "Installer profile state");
+  if (state.schemaVersion !== 1) throw new Error("Installer profile state must use schema version 1.");
+  const preferences = requireRecord(state.preferences, "Installer profile state preferences");
+  return {
+    ...structuredClone(state),
+    preferences: {
+      ...structuredClone(preferences),
+      ...installerRetainedProfileExpectation.preferences,
+    },
+  };
+};
+
+const assertJsonEqual = (actual, expected, label) => {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`${label} did not match the deterministic installer profile fixture.`);
+};
+
+export const assertInstallerProfileSmoke = (smoke, expectation, label) => {
+  const smokeRecord = requireRecord(smoke, `${label} smoke result`);
+  const profile = requireRecord(smokeRecord.profile, `${label} profile evidence`);
+  if (profile.mode !== "isolated-user-data") {
+    throw new Error(`${label} did not report the isolated user-data profile boundary.`);
+  }
+  if (profile.isFirstRun !== expectation.isFirstRun) {
+    throw new Error(`${label} first-run state did not match the deterministic installer profile fixture.`);
+  }
+  const preferences = selectInstallerPreferenceProbe(profile.preferences);
+  assertJsonEqual(preferences, expectation.preferences, `${label} preferences`);
+  assertJsonEqual(profile.windowState, expectation.windowState, `${label} window state`);
+  return {
+    mode: profile.mode,
+    isFirstRun: profile.isFirstRun,
+    preferences,
+    windowState: structuredClone(profile.windowState),
+  };
+};
+
+export const installerEvidenceLimitations = () => ({
+  cleanMachine: false,
+  defaultWindowsProfile: false,
+  interactiveFirstLaunch: false,
+  authenticodeSignatureChecked: false,
+});
+
 export const parseNumericVersion = value => {
   const match = new RegExp(`^${versionPattern}$`).exec(value);
   if (!match) throw new Error(`Expected a numeric major.minor.patch version, received ${value || "an empty value"}.`);

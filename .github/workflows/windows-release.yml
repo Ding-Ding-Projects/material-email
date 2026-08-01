@@ -215,8 +215,35 @@ jobs:
           if (-not $proof.ok -or -not $proof.installedExecutableRemoved -or -not $proof.retainedUserData) {
             throw "Installer lifecycle report did not satisfy the release contract."
           }
+          if (
+            -not $proof.candidateCleanProfileWasAbsent -or
+            -not $proof.cleanIsolatedProfileLaunchVerified -or
+            -not $proof.defaultSettingsVerifiedInIsolatedProfile -or
+            -not $proof.retainedSettingsVerifiedInIsolatedProfile -or
+            -not $proof.retainedWindowStateVerifiedInIsolatedProfile -or
+            -not $proof.retainedSettingsAfterUninstall -or
+            -not $proof.retainedWindowStateAfterUninstall
+          ) {
+            throw "Installer isolated-profile settings/window lifecycle evidence did not satisfy the release contract."
+          }
+          if (
+            $proof.verificationEnvironment.cleanMachine -or
+            $proof.verificationEnvironment.defaultWindowsProfile -or
+            $proof.verificationEnvironment.interactiveFirstLaunch -or
+            $proof.verificationEnvironment.authenticodeSignatureChecked -or
+            $proof.authenticode.checked -or
+            $proof.authenticode.status -ne "not-verified"
+          ) {
+            throw "Installer lifecycle report made a clean-machine, default-profile, interactive-launch, or Authenticode claim that this harness cannot prove."
+          }
           if ($env:BASELINE_AVAILABLE -eq "true") {
-            if (-not $proof.upgradeVerified -or -not $proof.upgradeInstallDirectoryReused -or -not $proof.retainedAfterUpgrade) {
+            if (
+              -not $proof.upgradeVerified -or
+              -not $proof.upgradeInstallDirectoryReused -or
+              -not $proof.retainedAfterUpgrade -or
+              -not $proof.retainedSettingsAfterUpgrade -or
+              -not $proof.retainedWindowStateAfterUpgrade
+            ) {
               throw "Prior-release upgrade report did not satisfy the release contract."
             }
             if ($proof.baselineVersion -ne '${{ steps.baseline.outputs.version }}') {

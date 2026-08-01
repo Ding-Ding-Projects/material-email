@@ -3,10 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  assertInstallerProfileSmoke,
   assertStrictUpgrade,
   compareNumericVersions,
+  installerDefaultProfileExpectation,
+  installerEvidenceLimitations,
+  installerRetainedProfileExpectation,
   parseInstallerVerifierArguments,
   parseWindowsInstallerName,
+  prepareRetainedInstallerProfileState,
 } from "../scripts/installer-upgrade.mjs";
 import { inspectWindowsInstallerFile } from "../scripts/verify-package.mjs";
 
@@ -79,5 +84,79 @@ describe("installer upgrade contract", () => {
       size: 4096,
     });
     expect(inspected.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("patches only the deterministic retained settings fixture into an existing version-1 profile", () => {
+    const original = {
+      schemaVersion: 1,
+      accounts: [],
+      preferences: {
+        ...installerDefaultProfileExpectation.preferences,
+        selectedAccountId: "fixture-account",
+      },
+      history: [{ id: "preserved-history" }],
+    };
+
+    const prepared = prepareRetainedInstallerProfileState(original);
+
+    expect(prepared).toEqual({
+      ...original,
+      preferences: {
+        ...original.preferences,
+        ...installerRetainedProfileExpectation.preferences,
+      },
+    });
+    expect(original.preferences).toMatchObject(installerDefaultProfileExpectation.preferences);
+    expect(() => prepareRetainedInstallerProfileState({ schemaVersion: 2, preferences: {} })).toThrow(/schema version 1/i);
+    expect(() => prepareRetainedInstallerProfileState({ schemaVersion: 1 })).toThrow(/preferences must be an object/i);
+  });
+
+  it("accepts only exact isolated-profile default and retained smoke evidence", () => {
+    const smokeFor = (expectation: typeof installerDefaultProfileExpectation) => ({
+      profile: {
+        mode: "isolated-user-data",
+        isFirstRun: expectation.isFirstRun,
+        preferences: { ...expectation.preferences },
+        windowState: { ...expectation.windowState, bounds: { ...expectation.windowState.bounds } },
+      },
+    });
+
+    expect(assertInstallerProfileSmoke(
+      smokeFor(installerDefaultProfileExpectation),
+      installerDefaultProfileExpectation,
+      "clean fixture",
+    )).toEqual(smokeFor(installerDefaultProfileExpectation).profile);
+    expect(assertInstallerProfileSmoke(
+      smokeFor(installerRetainedProfileExpectation),
+      installerRetainedProfileExpectation,
+      "retained fixture",
+    )).toEqual(smokeFor(installerRetainedProfileExpectation).profile);
+
+    const defaultProfileClaim = smokeFor(installerDefaultProfileExpectation);
+    defaultProfileClaim.profile.mode = "windows-default-user-data";
+    expect(() => assertInstallerProfileSmoke(defaultProfileClaim, installerDefaultProfileExpectation, "claim guard")).toThrow(
+      /isolated user-data profile boundary/i,
+    );
+
+    const changedSettings = smokeFor(installerRetainedProfileExpectation);
+    changedSettings.profile.preferences.theme = "light";
+    expect(() => assertInstallerProfileSmoke(changedSettings, installerRetainedProfileExpectation, "settings guard")).toThrow(
+      /preferences did not match/i,
+    );
+
+    const changedWindow = smokeFor(installerRetainedProfileExpectation);
+    changedWindow.profile.windowState.bounds.width += 1;
+    expect(() => assertInstallerProfileSmoke(changedWindow, installerRetainedProfileExpectation, "window guard")).toThrow(
+      /window state did not match/i,
+    );
+  });
+
+  it("keeps stronger Windows delivery claims explicitly outside the local harness", () => {
+    expect(installerEvidenceLimitations()).toEqual({
+      cleanMachine: false,
+      defaultWindowsProfile: false,
+      interactiveFirstLaunch: false,
+      authenticodeSignatureChecked: false,
+    });
   });
 });
