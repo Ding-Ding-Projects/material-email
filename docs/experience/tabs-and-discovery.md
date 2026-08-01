@@ -8,11 +8,11 @@
 
 Material Email separates Mail, Settings, Changelog, History, Notifications, and Tools into browser-style tabs. A pinned region stays ahead of ordinary tabs. Tab order, closed tabs, pinned tabs, group order, collapsed state, and per-tab appearance are persisted locally. Tabs support pointer reordering and keyboard activation.
 
-The required search scopes are distinct: current strip, individual group, group names, and all application tabs. Search results identify the tab, group, and pinned state. Bulk close supports both containing and not-containing predicates, uses visible tab labels, previews affected tabs, excludes pinned tabs by default, and refuses empty or invalid queries.
+The required search scopes are distinct: current strip, individual group, group names, and all application tabs. Search results identify the tab, group, and pinned state. Bulk close supports both containing and not-containing predicates, uses visible tab labels, previews affected tabs, excludes pinned tabs by default, and refuses empty or invalid queries. Each workspace tab also has a validated, restart-persistent appearance override with pointer, context-menu, and direct keyboard access plus per-property and whole-tab reset.
 
 ## Configuration
 
-Groups are Workspace, Records, and System in the current fixed feature set. Each search owns its own plain/regex model. Pinned inclusion for bulk close is an explicit opt-in. Per-tab background, foreground, size, weight, and radius values can be persisted.
+Groups are Workspace, Records, and System in the current fixed feature set. Each search owns its own plain/regex model. Pinned inclusion for bulk close is an explicit opt-in. Per-tab background, foreground, size, weight, and radius overrides persist; absent properties inherit the tab strip. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> edits the focused tab, and closing returns focus to it.
 
 ## Failure modes
 
@@ -29,11 +29,10 @@ Tab search matches visible labels only, not hidden page content. Bulk actions mu
 
 ## Verification
 
-Source inspection confirms semantic tab roles, pinned rendering, persisted tab state, independent search keys, and preview-oriented bulk-close state. Narrow-width overflow, drag/keyboard reorder equivalence, all four searches, group management, unsaved-work protection, focus restoration, and 200% scaling need built-app testing.
+Source inspection confirms semantic tab roles, pinned rendering, persisted tab state, independent search keys, and preview-oriented bulk-close state. Focused unit and Electron tests cover validation, appearance persistence/reset, context-menu keyboard entry, and exact editor focus return. Narrow-width overflow, drag/keyboard reorder equivalence, all four searches, group management, unsaved-work protection outside this editor, and 200% scaling still need built-app testing.
 
 ## Suggested articles
 
 - [Search and regex builder](search-and-regex-builder.md)
 - [Appearance customization](appearance-customization.md)
 - [Material interface and accessibility](material-interface-and-accessibility.md)
-

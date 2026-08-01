@@ -36,6 +36,17 @@ import type {
 import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts";
 import { icon, type IconName } from "./lib/icons";
 import { DEFAULT_APPEARANCE } from "./lib/appearance";
+import {
+  TAB_STYLE_KEYS,
+  normalizeTabColor,
+  parseTabPreferences,
+  resetTabStyleProperty,
+  resolveTabStyle,
+  setTabStyleProperty,
+  type TabPreferences,
+  type TabStyleKey,
+} from "./lib/tab-appearance";
+import type { TabStyleOverrides } from "./lib/tab-appearance";
 import { classifyRendererDelivery, shouldKeepComposerOpen } from "./lib/delivery";
 import {
   CHANGELOG_DATE_INPUT_LIMIT,
@@ -65,21 +76,6 @@ interface TabDefinition {
   yue: string;
   icon: IconName;
   group: "workspace" | "records" | "system";
-}
-
-interface TabPreferences {
-  order: PageId[];
-  pinned: PageId[];
-  closed: PageId[];
-  styles: Partial<Record<PageId, TabStyle>>;
-}
-
-interface TabStyle {
-  background: string;
-  foreground: string;
-  fontSize: number;
-  fontWeight: number;
-  radius: number;
 }
 
 interface SearchModel {
@@ -194,7 +190,7 @@ interface RendererState {
   setupEmail: string;
   localRevisions: LocalRevision[];
   localRevisionsLoaded: boolean;
-  tabPreferences: TabPreferences;
+  tabPreferences: TabPreferences<PageId>;
   tabManagerOpen: boolean;
   contextMenu: ContextMenuState | null;
   appearanceEditor: AppearanceEditorState | null;
@@ -268,30 +264,15 @@ const DEFAULT_PREFERENCES: Preferences = {
   nativeNotificationsEnabled: false,
 };
 
-const defaultTabs = (): TabPreferences => ({
+const defaultTabs = (): TabPreferences<PageId> => ({
   order: [...ALL_TAB_IDS],
   pinned: ["mail"],
   closed: [],
   styles: {},
 });
 
-const readTabPreferences = (): TabPreferences => {
-  try {
-    const raw = localStorage.getItem(TAB_STORAGE_KEY);
-    if (!raw) return defaultTabs();
-    const parsed = JSON.parse(raw) as Partial<TabPreferences>;
-    const valid = (value: unknown): value is PageId => typeof value === "string" && ALL_TAB_IDS.includes(value as PageId);
-    const order = Array.isArray(parsed.order) ? parsed.order.filter(valid) : [];
-    for (const id of ALL_TAB_IDS) if (!order.includes(id)) order.push(id);
-    return {
-      order,
-      pinned: Array.isArray(parsed.pinned) ? parsed.pinned.filter(valid) : ["mail"],
-      closed: Array.isArray(parsed.closed) ? parsed.closed.filter(valid) : [],
-      styles: parsed.styles && typeof parsed.styles === "object" ? parsed.styles : {},
-    };
-  } catch {
-    return defaultTabs();
-  }
+const readTabPreferences = (): TabPreferences<PageId> => {
+  return parseTabPreferences(localStorage.getItem(TAB_STORAGE_KEY), ALL_TAB_IDS, defaultTabs());
 };
 
 const state: RendererState = {
@@ -384,6 +365,8 @@ let contactSearchTimer: number | null = null;
 let contactSearchSequence = 0;
 let pendingFocusKey: string | null = null;
 let confirmationNeedsInitialFocus = false;
+let tabContextNeedsInitialFocus = false;
+let appearanceEditorNeedsInitialFocus = false;
 
 const preferences = (): Preferences => state.bootstrap?.preferences ?? DEFAULT_PREFERENCES;
 
@@ -1174,13 +1157,21 @@ const render = (): void => {
   if (focused && !state.confirmation && !pendingFocusKey) {
     const next = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focused)}"]`);
     next?.focus({ preventScroll: true });
-    if (selection && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) {
+    const supportsTextSelection = next instanceof HTMLTextAreaElement
+      || (next instanceof HTMLInputElement && ["email", "password", "search", "tel", "text", "url"].includes(next.type));
+    if (selection && supportsTextSelection) {
       next.setSelectionRange(selection.start, selection.end);
     }
   }
   if (state.confirmation && confirmationNeedsInitialFocus) {
     confirmationNeedsInitialFocus = false;
     requestAnimationFrame(() => app.querySelector<HTMLElement>("[data-confirmation-initial]")?.focus());
+  } else if (tabContextNeedsInitialFocus) {
+    tabContextNeedsInitialFocus = false;
+    requestAnimationFrame(() => app.querySelector<HTMLElement>(".context-menu [role='menuitem']")?.focus());
+  } else if (appearanceEditorNeedsInitialFocus) {
+    appearanceEditorNeedsInitialFocus = false;
+    requestAnimationFrame(() => app.querySelector<HTMLElement>(".appearance-editor [data-tab-style]")?.focus());
   } else if (!state.confirmation && pendingFocusKey) {
     const key = pendingFocusKey;
     pendingFocusKey = null;
@@ -1288,19 +1279,20 @@ function renderTabStrip(): string {
 function tabStyleAttribute(id: PageId): string {
   const style = state.tabPreferences.styles[id];
   if (!style) return "";
-  const background = safeColor(style.background, "transparent");
-  const foreground = safeColor(style.foreground, "currentColor");
-  const fontSize = Math.min(22, Math.max(11, Number(style.fontSize) || 14));
-  const fontWeight = Math.min(800, Math.max(300, Number(style.fontWeight) || 500));
-  const radius = Math.min(28, Math.max(0, Number(style.radius) || 0));
-  return ` style="--tab-custom-bg:${escapeHtml(background)};--tab-custom-fg:${escapeHtml(foreground)};--tab-custom-size:${fontSize}px;--tab-custom-weight:${fontWeight};--tab-custom-radius:${radius}px"`;
+  const declarations: string[] = [];
+  if (style.background !== undefined) declarations.push(`--tab-custom-bg:${safeColor(style.background, "transparent")}`);
+  if (style.foreground !== undefined) declarations.push(`--tab-custom-fg:${safeColor(style.foreground, "currentColor")}`);
+  if (style.fontSize !== undefined) declarations.push(`--tab-custom-size:${style.fontSize}px`);
+  if (style.fontWeight !== undefined) declarations.push(`--tab-custom-weight:${style.fontWeight}`);
+  if (style.radius !== undefined) declarations.push(`--tab-custom-radius:${style.radius}px`);
+  return declarations.length ? ` style="${escapeHtml(declarations.join(";"))}"` : "";
 }
 
 function renderWorkspaceTab(id: PageId, pinned: boolean): string {
   const tab = tabDefinition(id);
   const selected = state.activeTab === id;
   return `<div class="workspace-tab${selected ? " is-active" : ""}${pinned ? " is-pinned" : ""}" draggable="true" data-drag-tab="${id}" data-tab-context="${id}"${tabStyleAttribute(id)}>
-    <button class="workspace-tab__main" type="button" role="tab" id="tab-${id}" aria-selected="${selected}" aria-controls="panel-${id}" tabindex="${selected ? "0" : "-1"}" data-action="activate-tab" data-tab-id="${id}">
+    <button class="workspace-tab__main" type="button" role="tab" id="tab-${id}" aria-selected="${selected}" aria-controls="panel-${id}" aria-keyshortcuts="Control+Shift+E" tabindex="${selected ? "0" : "-1"}" data-action="activate-tab" data-tab-id="${id}" data-focus-key="${tabFocusKey(id)}">
       ${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span>${pinned ? `<span class="visually-hidden">${escapeHtml(tx("Pinned", "已釘選"))}</span>` : ""}
     </button>
     ${pinned ? `<span class="tab-pin" aria-hidden="true">${icon("pin")}</span>` : `<button class="tab-close" type="button" data-action="close-tab" data-tab-id="${id}" aria-label="${escapeHtml(tx(`Close ${tab.en}`, `關閉${tab.yue}`))}">${icon("close")}</button>`}
@@ -2210,6 +2202,12 @@ function renderChangelogPage(): string {
 }
 
 function renderToolsPage(): string {
+  const release = state.bootstrap?.release;
+  const releaseCodeName = release?.codeName.trim() ?? "";
+  const releaseImage = release?.imageAsset.trim() ?? "";
+  const hasReleaseCodeName = Boolean(releaseCodeName && /^[a-z0-9][a-z0-9._-]*\.png$/iu.test(releaseImage));
+  const releaseDishId = release?.dishId.trim() || tx("Not recorded", "未有記錄");
+  const releaseCatalogCommit = release?.catalogCommit.trim().slice(0, 12) || tx("Not recorded", "未有記錄");
   return `<section class="standard-page" id="panel-tools" role="tabpanel" aria-labelledby="tab-tools">
     ${renderPageHeader("WORKBENCH", tx("Tools", "工具"), tx("Keyboard-first utilities and honest local diagnostics.", "鍵盤優先工具同如實本機診斷。"), "tools")}
     <div class="tool-grid">
@@ -2217,8 +2215,8 @@ function renderToolsPage(): string {
       <section class="tool-card"><header><span>${icon("search")}</span><div><h2>${escapeHtml(tx("Command palette", "指令面板"))}</h2><p>${escapeHtml(tx("Find a destination or action without reaching for the mouse.", "唔使掂滑鼠都可以搵到目的地或者操作。"))}</p></div></header><button class="button button--tonal" type="button" data-action="open-command-palette">${escapeHtml(tx("Open commands", "開啟指令"))}<kbd>Ctrl+K</kbd></button></section>
       <section class="tool-card"><header><span>${icon("tools")}</span><div><h2>${escapeHtml(tx("External editor", "外部編輯器"))}</h2><p>${escapeHtml(preferences().externalEditorPath ?? tx("Choose an editor in Settings first.", "先喺設定揀一個編輯器。"))}</p></div></header><button class="button button--tonal" type="button" data-action="open-editor" ${!preferences().externalEditorPath ? "disabled" : ""}>${escapeHtml(tx("Open project", "開啟專案"))}<kbd>Alt+E</kbd></button></section>
       <section class="tool-card"><header><span>${icon("download")}</span><div><h2>${escapeHtml(tx("Export local data", "匯出本機資料"))}</h2><p>${escapeHtml(tx("Choose the destination through the secure desktop save dialog.", "透過安全桌面儲存對話框選擇目的地。"))}</p></div></header><div class="button-row"><button class="button button--outlined" type="button" data-action="export-settings">${escapeHtml(tx("Settings", "設定"))}</button><button class="button button--outlined" type="button" data-action="export-history">${escapeHtml(tx("History", "歷史"))}</button></div></section>
-      <section class="tool-card shortcut-card"><header><span>${icon("menu")}</span><div><h2>${escapeHtml(tx("Keyboard map", "鍵盤地圖"))}</h2><p>${escapeHtml(tx("Core paths remain available at 200% scale and without a pointer.", "核心操作喺 200% 顯示比例同冇滑鼠之下仍然可用。"))}</p></div></header><dl><div><dt>${escapeHtml(tx("Compose", "撰寫"))}</dt><dd><kbd>Ctrl+N</kbd></dd></div><div><dt>${escapeHtml(tx("Commands", "指令"))}</dt><dd><kbd>Ctrl+K</kbd></dd></div><div><dt>${escapeHtml(tx("Regex builder", "正規表達式建立器"))}</dt><dd><kbd>Alt+R</kbd></dd></div><div><dt>${escapeHtml(tx("Synchronize", "同步"))}</dt><dd><kbd>Ctrl+Shift+S</kbd></dd></div><div><dt>${escapeHtml(tx("Switch tabs", "切換分頁"))}</dt><dd><kbd>Alt+1…6</kbd></dd></div></dl></section>
-      <section class="tool-card about-card"><header><span>${icon("info")}</span><div><h2>${escapeHtml(tx("About Material Email", "關於 Material 郵件"))}</h2><p>${escapeHtml(tx(`Version ${state.bootstrap?.release.version ?? state.bootstrap?.version ?? "unknown"} · Original Windows Electron renderer`, `版本 ${state.bootstrap?.release.version ?? state.bootstrap?.version ?? "未知"} · 原創 Windows Electron 介面`))}</p></div></header><div class="release-code-name release-code-name--large"><img src="${escapeHtml(releaseImageSource())}" alt="${escapeHtml(state.bootstrap?.release.codeName ?? "Dim sum build code name")}"/><div><small>${escapeHtml(tx("Build code name", "版本代號"))}</small><strong>${escapeHtml(state.bootstrap?.release.codeName ?? tx("Not recorded", "未有記錄"))}</strong><p>${escapeHtml(tx("The image is bundled locally; no food photography leaves your computer.", "圖片已經內置喺本機；任何點心相都唔會離開你部電腦。"))}</p></div></div><dl class="diagnostic-list"><div><dt>${escapeHtml(tx("Secure bridge", "安全連接"))}</dt><dd>${icon("check")} ${escapeHtml(tx("Available", "可用"))}</dd></div><div><dt>${escapeHtml(tx("Catalog dish ID", "目錄菜式 ID"))}</dt><dd><code>${escapeHtml(state.bootstrap?.release.dishId ?? tx("Not recorded", "未有記錄"))}</code></dd></div><div><dt>${escapeHtml(tx("Catalog commit", "目錄提交"))}</dt><dd><code>${escapeHtml(state.bootstrap?.release.catalogCommit.slice(0, 12) ?? tx("Not recorded", "未有記錄"))}</code></dd></div><div><dt>${escapeHtml(tx("Accounts", "帳戶"))}</dt><dd>${state.bootstrap?.accounts.length ?? 0}</dd></div><div><dt>${escapeHtml(tx("Pending operations", "待處理操作"))}</dt><dd>${state.bootstrap?.pendingOperationCount ?? 0}</dd></div></dl></section>
+      <section class="tool-card shortcut-card"><header><span>${icon("menu")}</span><div><h2>${escapeHtml(tx("Keyboard map", "鍵盤地圖"))}</h2><p>${escapeHtml(tx("Core paths remain available at 200% scale and without a pointer.", "核心操作喺 200% 顯示比例同冇滑鼠之下仍然可用。"))}</p></div></header><dl><div><dt>${escapeHtml(tx("Compose", "撰寫"))}</dt><dd><kbd>Ctrl+N</kbd></dd></div><div><dt>${escapeHtml(tx("Commands", "指令"))}</dt><dd><kbd>Ctrl+K</kbd></dd></div><div><dt>${escapeHtml(tx("Regex builder", "正規表達式建立器"))}</dt><dd><kbd>Alt+R</kbd></dd></div><div><dt>${escapeHtml(tx("Synchronize", "同步"))}</dt><dd><kbd>Ctrl+Shift+S</kbd></dd></div><div><dt>${escapeHtml(tx("Switch tabs", "切換分頁"))}</dt><dd><kbd>Alt+1…6</kbd></dd></div><div><dt>${escapeHtml(tx("Edit focused tab appearance", "編輯焦點分頁外觀"))}</dt><dd><kbd>Ctrl+Shift+E</kbd></dd></div></dl></section>
+      <section class="tool-card about-card"><header><span>${icon("info")}</span><div><h2>${escapeHtml(tx("About Material Email", "關於 Material 郵件"))}</h2><p>${escapeHtml(tx(`Version ${release?.version ?? state.bootstrap?.version ?? "unknown"} · Original Windows Electron renderer`, `版本 ${release?.version ?? state.bootstrap?.version ?? "未知"} · 原創 Windows Electron 介面`))}</p></div></header><div class="release-code-name release-code-name--large">${hasReleaseCodeName ? `<img src="./assets/dim-sum/${escapeHtml(releaseImage)}" alt="${escapeHtml(releaseCodeName)}"/>` : `<span class="release-code-name__empty" aria-hidden="true">${icon("info")}</span>`}<div><small>${escapeHtml(tx("Build code name", "版本代號"))}</small><strong>${escapeHtml(hasReleaseCodeName ? releaseCodeName : tx("No code name assigned", "未有分配版本代號"))}</strong><p>${escapeHtml(hasReleaseCodeName ? tx("The image is bundled locally; no food photography leaves your computer.", "圖片已經內置喺本機；任何點心相都唔會離開你部電腦。") : tx("The verified local catalog was exhausted, so this build shipped without a dim-sum code name or substitute image.", "已驗證本機目錄已經用盡，所以呢個版本冇點心代號，亦冇用替代圖片頂檔。"))}</p></div></div><dl class="diagnostic-list"><div><dt>${escapeHtml(tx("Secure bridge", "安全連接"))}</dt><dd>${icon("check")} ${escapeHtml(tx("Available", "可用"))}</dd></div><div><dt>${escapeHtml(tx("Catalog dish ID", "目錄菜式 ID"))}</dt><dd><code>${escapeHtml(releaseDishId)}</code></dd></div><div><dt>${escapeHtml(tx("Catalog commit", "目錄提交"))}</dt><dd><code>${escapeHtml(releaseCatalogCommit)}</code></dd></div><div><dt>${escapeHtml(tx("Accounts", "帳戶"))}</dt><dd>${state.bootstrap?.accounts.length ?? 0}</dd></div><div><dt>${escapeHtml(tx("Pending operations", "待處理操作"))}</dt><dd>${state.bootstrap?.pendingOperationCount ?? 0}</dd></div></dl></section>
     </div>
   </section>`;
 }
@@ -2316,27 +2314,42 @@ function renderTabContextMenu(): string {
   </div>`;
 }
 
-function defaultTabStyle(): TabStyle {
-  return { background: "#EADDFF", foreground: "#21005D", fontSize: 14, fontWeight: 600, radius: 18 };
+const isTabStyleKey = (value: string | undefined): value is TabStyleKey =>
+  value !== undefined && TAB_STYLE_KEYS.includes(value as TabStyleKey);
+
+function renderTabStyleReset(
+  tabId: PageId,
+  key: TabStyleKey,
+  label: string,
+  overrides: TabStyleOverrides,
+): string {
+  const inherited = overrides[key] === undefined;
+  return `<button class="appearance-property__reset" type="button" data-action="reset-tab-style-property" data-tab-id="${tabId}" data-tab-style-key="${key}" data-focus-key="tab-style-${tabId}-${key}-reset" ${inherited ? "disabled" : ""} aria-label="${escapeHtml(tx(`Use inherited ${label.toLocaleLowerCase()} for this tab`, `呢個分頁使用繼承嘅${label}`))}">${icon("refresh")}<span>${escapeHtml(inherited ? tx("Inherited", "已繼承") : tx("Use inherited", "使用繼承值"))}</span></button>`;
 }
 
 function renderTabAppearanceEditor(): string {
   const editor = state.appearanceEditor;
   if (!editor) return "";
   const tab = tabDefinition(editor.tabId);
-  const style = state.tabPreferences.styles[editor.tabId] ?? defaultTabStyle();
-  return `<section class="appearance-editor" role="dialog" aria-modal="false" aria-labelledby="appearance-editor-title" style="left:${Math.max(12, editor.x)}px;top:${Math.max(60, editor.y)}px">
+  const overrides = state.tabPreferences.styles[editor.tabId] ?? {};
+  const style = resolveTabStyle(overrides);
+  const backgroundLabel = tx("Background", "背景");
+  const foregroundLabel = tx("Text color", "文字顏色");
+  const fontSizeLabel = tx("Font size", "字體大小");
+  const fontWeightLabel = tx("Font weight", "字體粗幼");
+  const radiusLabel = tx("Corner radius", "圓角半徑");
+  return `<section class="appearance-editor" data-testid="tab-appearance-editor" role="dialog" aria-modal="false" aria-labelledby="appearance-editor-title" aria-describedby="appearance-editor-note" style="left:${Math.max(12, editor.x)}px;top:${Math.max(60, editor.y)}px">
     <header class="popover-header"><div><p class="eyebrow">${escapeHtml(tx("ANCHORED TO TAB", "固定喺分頁旁邊"))}</p><h2 id="appearance-editor-title">${escapeHtml(tx(`Edit ${tab.en} appearance`, `編輯${tab.yue}外觀`))}</h2></div><button class="icon-button" type="button" data-action="close-tab-appearance" aria-label="${escapeHtml(tx("Close appearance editor", "關閉外觀編輯器"))}">${icon("close")}</button></header>
     <div class="appearance-editor__preview" style="background:${escapeHtml(safeColor(style.background, "#EADDFF"))};color:${escapeHtml(safeColor(style.foreground, "#21005D"))};font-size:${Math.min(22, Math.max(11, style.fontSize))}px;font-weight:${Math.min(800, Math.max(300, style.fontWeight))};border-radius:${Math.min(28, Math.max(0, style.radius))}px">${icon(tab.icon)}<span>${escapeHtml(tx(tab.en, tab.yue))}</span></div>
-    <div class="form-grid">
-      <label class="field field--color"><span>${escapeHtml(tx("Background", "背景"))}</span><span class="color-input"><input type="color" value="${escapeHtml(/^#[0-9a-f]{6}$/i.test(style.background) ? style.background : "#EADDFF")}" data-tab-style="background"/><input type="text" value="${escapeHtml(style.background)}" data-tab-style="background"/></span></label>
-      <label class="field field--color"><span>${escapeHtml(tx("Text color", "文字顏色"))}</span><span class="color-input"><input type="color" value="${escapeHtml(/^#[0-9a-f]{6}$/i.test(style.foreground) ? style.foreground : "#21005D")}" data-tab-style="foreground"/><input type="text" value="${escapeHtml(style.foreground)}" data-tab-style="foreground"/></span></label>
-      <label class="field"><span>${escapeHtml(tx("Font size", "字體大小"))}</span><input type="number" min="11" max="22" value="${style.fontSize}" data-tab-style="fontSize"/></label>
-      <label class="field"><span>${escapeHtml(tx("Font weight", "字體粗幼"))}</span><input type="number" min="300" max="800" step="50" value="${style.fontWeight}" data-tab-style="fontWeight"/></label>
-      <label class="field field--range"><span>${escapeHtml(tx("Corner radius", "圓角半徑"))}</span><input type="range" min="0" max="28" value="${style.radius}" data-tab-style="radius"/></label>
+    <div class="form-grid appearance-editor__properties">
+      <div class="appearance-property"><label class="field field--color"><span>${escapeHtml(backgroundLabel)}</span><span class="color-input"><input type="color" value="${escapeHtml(style.background.slice(0, 7))}" data-tab-style="background" data-focus-key="tab-style-${tab.id}-background-picker" aria-label="${escapeHtml(tx("Choose tab background", "選擇分頁背景"))}"/><input type="text" value="${escapeHtml(style.background)}" data-tab-style="background" data-focus-key="tab-style-${tab.id}-background-value" maxlength="9" spellcheck="false" aria-label="${escapeHtml(tx("Tab background HEX value", "分頁背景 HEX 數值"))}"/></span></label>${renderTabStyleReset(tab.id, "background", backgroundLabel, overrides)}</div>
+      <div class="appearance-property"><label class="field field--color"><span>${escapeHtml(foregroundLabel)}</span><span class="color-input"><input type="color" value="${escapeHtml(style.foreground.slice(0, 7))}" data-tab-style="foreground" data-focus-key="tab-style-${tab.id}-foreground-picker" aria-label="${escapeHtml(tx("Choose tab text color", "選擇分頁文字顏色"))}"/><input type="text" value="${escapeHtml(style.foreground)}" data-tab-style="foreground" data-focus-key="tab-style-${tab.id}-foreground-value" maxlength="9" spellcheck="false" aria-label="${escapeHtml(tx("Tab text HEX value", "分頁文字 HEX 數值"))}"/></span></label>${renderTabStyleReset(tab.id, "foreground", foregroundLabel, overrides)}</div>
+      <div class="appearance-property"><label class="field"><span>${escapeHtml(fontSizeLabel)}</span><input type="number" min="11" max="22" value="${style.fontSize}" data-tab-style="fontSize" data-focus-key="tab-style-${tab.id}-fontSize-value"/></label>${renderTabStyleReset(tab.id, "fontSize", fontSizeLabel, overrides)}</div>
+      <div class="appearance-property"><label class="field"><span>${escapeHtml(fontWeightLabel)}</span><input type="number" min="300" max="800" step="50" value="${style.fontWeight}" data-tab-style="fontWeight" data-focus-key="tab-style-${tab.id}-fontWeight-value"/></label>${renderTabStyleReset(tab.id, "fontWeight", fontWeightLabel, overrides)}</div>
+      <div class="appearance-property"><label class="field field--range"><span>${escapeHtml(radiusLabel)}</span><input type="range" min="0" max="28" value="${style.radius}" data-tab-style="radius" data-focus-key="tab-style-${tab.id}-radius-value"/></label>${renderTabStyleReset(tab.id, "radius", radiusLabel, overrides)}</div>
     </div>
-    <p class="engine-note">${escapeHtml(tx("This focused editor persists per-tab color, type size, weight, and shape. Global font and density remain in Settings.", "呢個專用編輯器會為每個分頁保存顏色、字體大小、粗幼同形狀。全域字款同密度喺設定入面。"))}</p>
-    <footer class="popover-actions"><button class="button button--text" type="button" data-action="reset-tab-appearance" data-tab-id="${tab.id}">${icon("refresh")}<span>${escapeHtml(tx("Reset tab", "重設分頁"))}</span></button><span class="action-spacer"></span><button class="button button--filled" type="button" data-action="close-tab-appearance">${escapeHtml(tx("Done", "完成"))}</button></footer>
+    <p class="engine-note" id="appearance-editor-note">${escapeHtml(tx("This focused editor persists bounded HEX colors, type size, weight, and shape for this workspace tab. Use inherited resets one property; Reset tab removes every override. Global font and density remain in Settings.", "呢個專用編輯器會為目前工作空間分頁保存有界限嘅 HEX 顏色、字體大小、粗幼同形狀。使用繼承值會重設一項；重設分頁會移除全部覆寫。全域字款同密度喺設定入面。"))}</p>
+    <footer class="popover-actions"><button class="button button--text" type="button" data-action="reset-tab-appearance" data-tab-id="${tab.id}" data-focus-key="tab-style-${tab.id}-reset-all" ${Object.keys(overrides).length ? "" : "disabled"}>${icon("refresh")}<span>${escapeHtml(tx("Reset tab", "重設分頁"))}</span></button><span class="action-spacer"></span><button class="button button--filled" type="button" data-action="close-tab-appearance">${escapeHtml(tx("Done", "完成"))}</button></footer>
   </section>`;
 }
 
@@ -3874,9 +3887,20 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "toggle-tab-pin": if (pageId) { state.tabPreferences.pinned = state.tabPreferences.pinned.includes(pageId) ? state.tabPreferences.pinned.filter(id => id !== pageId) : [...state.tabPreferences.pinned, pageId]; state.contextMenu = null; persistTabs(); render(); } break;
     case "move-tab-left": if (pageId) moveTabBy(pageId, -1); break;
     case "move-tab-right": if (pageId) moveTabBy(pageId, 1); break;
-    case "open-tab-appearance": if (pageId) { const rect = button.getBoundingClientRect(); state.contextMenu = null; state.appearanceEditor = { tabId: pageId, x: Math.min(window.innerWidth - 390, rect.left), y: Math.min(window.innerHeight - 520, rect.bottom + 8) }; render(); } break;
-    case "close-tab-appearance": state.appearanceEditor = null; render(); break;
-    case "reset-tab-appearance": if (pageId) { delete state.tabPreferences.styles[pageId]; persistTabs(); render(); } break;
+    case "open-tab-appearance": if (pageId) openTabAppearanceEditor(pageId); break;
+    case "close-tab-appearance": closeTabAppearanceEditor(); break;
+    case "reset-tab-style-property": {
+      const key = button.dataset.tabStyleKey;
+      if (!pageId || !isTabStyleKey(key)) break;
+      const next = resetTabStyleProperty(state.tabPreferences.styles[pageId], key);
+      if (next) state.tabPreferences.styles[pageId] = next;
+      else delete state.tabPreferences.styles[pageId];
+      persistTabs();
+      announce(tx(`${key} now inherits the workspace tab style.`, `${key} 而家繼承工作空間分頁樣式。`));
+      render();
+      break;
+    }
+    case "reset-tab-appearance": if (pageId) { delete state.tabPreferences.styles[pageId]; persistTabs(); appearanceEditorNeedsInitialFocus = true; announce(tx("All tab appearance overrides were removed.", "所有分頁外觀覆寫都已移除。")); render(); } break;
     case "select-group-result": if (button.dataset.group === "workspace" || button.dataset.group === "records" || button.dataset.group === "system") { state.selectedTabGroup = button.dataset.group; render(); } break;
     case "choose-attachments": await chooseComposeAttachments(); break;
     case "remove-compose-attachment": captureComposer(); if (state.compose) { state.compose.draft.attachments.splice(Number(button.dataset.attachmentIndex), 1); render(); } break;
@@ -3906,17 +3930,19 @@ toastRegion.addEventListener("click", event => {
   if (button?.dataset.dismissToast) dismissToast(button.dataset.dismissToast);
 });
 
-const updateTabStyleControl = (control: HTMLInputElement): void => {
+const updateTabStyleControl = (control: HTMLInputElement): boolean => {
   const editor = state.appearanceEditor;
-  const key = control.dataset.tabStyle as keyof TabStyle | undefined;
-  if (!editor || !key) return;
-  const style = { ...(state.tabPreferences.styles[editor.tabId] ?? defaultTabStyle()) };
-  if (key === "background" || key === "foreground") style[key] = control.value.slice(0, 64);
-  else if (key === "fontSize") style[key] = Math.min(22, Math.max(11, Number(control.value)));
-  else if (key === "fontWeight") style[key] = Math.min(800, Math.max(300, Number(control.value)));
-  else style[key] = Math.min(28, Math.max(0, Number(control.value)));
+  const key = control.dataset.tabStyle;
+  if (!editor || !isTabStyleKey(key)) return false;
+  if ((key === "background" || key === "foreground") && normalizeTabColor(control.value) === undefined) {
+    control.setAttribute("aria-invalid", "true");
+    pushToast("warning", "Tab color was not saved", "Enter a local HEX color as #RRGGBB or #RRGGBBAA.", "分頁顏色未儲存", "請輸入本機 HEX 顏色，格式係 #RRGGBB 或 #RRGGBBAA。 ");
+    return false;
+  }
+  const style = setTabStyleProperty(state.tabPreferences.styles[editor.tabId], key, control.value);
   state.tabPreferences.styles[editor.tabId] = style;
   persistTabs();
+  return true;
 };
 
 const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement): Promise<void> => {
@@ -3981,7 +4007,7 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
   }
   if (control.dataset.bulkOption === "inverse" && control instanceof HTMLInputElement) { state.bulkInverse = control.checked; render(); return; }
   if (control.dataset.bulkOption === "pinned" && control instanceof HTMLInputElement) { state.bulkIncludePinned = control.checked; render(); return; }
-  if (control instanceof HTMLInputElement && control.dataset.tabStyle) { updateTabStyleControl(control); render(); }
+  if (control instanceof HTMLInputElement && control.dataset.tabStyle && updateTabStyleControl(control)) render();
 };
 
 app.addEventListener("change", event => {
@@ -4034,7 +4060,7 @@ app.addEventListener("input", event => {
     }
     return;
   }
-  if (control.dataset.tabStyle && control instanceof HTMLInputElement) { updateTabStyleControl(control); render(); }
+  if (control.dataset.tabStyle && control instanceof HTMLInputElement && (control.type === "color" || control.type === "range") && updateTabStyleControl(control)) render();
 });
 
 app.addEventListener("submit", event => {
@@ -4066,12 +4092,12 @@ app.addEventListener("contextmenu", event => {
   const id = tab.dataset.tabContext as PageId;
   if (!ALL_TAB_IDS.includes(id)) return;
   if (event.shiftKey) {
-    const rect = tab.getBoundingClientRect();
-    state.appearanceEditor = { tabId: id, x: Math.min(window.innerWidth - 390, rect.left), y: Math.min(window.innerHeight - 520, rect.bottom + 8) };
-    state.contextMenu = null;
+    openTabAppearanceEditor(id, tab);
+    return;
   } else {
     state.contextMenu = { tabId: id, x: event.clientX, y: event.clientY };
     state.appearanceEditor = null;
+    tabContextNeedsInitialFocus = true;
   }
   render();
 });
@@ -4109,6 +4135,8 @@ app.addEventListener("drop", event => {
 const openTabContextFromKeyboard = (tab: HTMLElement, id: PageId): void => {
   const rect = tab.getBoundingClientRect();
   state.contextMenu = { tabId: id, x: rect.left, y: rect.bottom + 4 };
+  state.appearanceEditor = null;
+  tabContextNeedsInitialFocus = true;
   render();
 };
 
@@ -4152,8 +4180,8 @@ document.addEventListener("keydown", event => {
   if (event.key === "Escape") {
     if (state.commandPaletteOpen) state.commandPaletteOpen = false;
     else if (state.pimEditor) { event.preventDefault(); requestPimEditorClose(); return; }
-    else if (state.appearanceEditor) state.appearanceEditor = null;
-    else if (state.contextMenu) state.contextMenu = null;
+    else if (state.appearanceEditor) { event.preventDefault(); closeTabAppearanceEditor(); return; }
+    else if (state.contextMenu) { event.preventDefault(); closeTabContextMenu(); return; }
     else if (state.tabManagerOpen) state.tabManagerOpen = false;
     else {
       const openBuilder = Object.values(state.searches).find(model => model.builderOpen);
@@ -4163,6 +4191,12 @@ document.addEventListener("keydown", event => {
     event.preventDefault(); render(); return;
   }
   const tabButton = target instanceof HTMLElement ? target.closest<HTMLElement>('[role="tab"][data-tab-id]') : null;
+  if (tabButton && event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === "e") {
+    event.preventDefault();
+    const id = tabButton.dataset.tabId as PageId;
+    if (ALL_TAB_IDS.includes(id)) openTabAppearanceEditor(id, tabButton.closest<HTMLElement>("[data-tab-context]"));
+    return;
+  }
   if (tabButton && (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Home" || event.key === "End")) {
     event.preventDefault();
     const visible = visibleTabIds(); const current = visible.indexOf(tabButton.dataset.tabId as PageId);
@@ -4171,6 +4205,20 @@ document.addEventListener("keydown", event => {
   }
   if (tabButton && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
     event.preventDefault(); const id = tabButton.dataset.tabId as PageId; if (ALL_TAB_IDS.includes(id)) openTabContextFromKeyboard(tabButton, id); return;
+  }
+  const menuItem = target instanceof HTMLElement ? target.closest<HTMLElement>(".context-menu [role='menuitem']") : null;
+  if (menuItem && (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End")) {
+    const items = [...app.querySelectorAll<HTMLElement>(".context-menu [role='menuitem']:not([disabled])")];
+    if (!items.length) return;
+    event.preventDefault();
+    const current = items.indexOf(menuItem);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items[nextIndex]?.focus();
+    return;
   }
   const contactsTab = target instanceof HTMLElement ? target.closest<HTMLElement>('[role="tab"][data-contacts-view]') : null;
   if (contactsTab && (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Home" || event.key === "End")) {
@@ -4219,5 +4267,37 @@ if (typeof api?.onExternalLinkReview === "function") {
     showConfirmation({ kind: "external-link", request });
   });
 }
+
+const tabFocusKey = (id: PageId): string => `workspace-tab-${id}`;
+
+const appearanceEditorPosition = (anchor: Element | null): Pick<AppearanceEditorState, "x" | "y"> => {
+  const rect = anchor?.getBoundingClientRect() ?? { left: 12, bottom: 60 };
+  return {
+    x: Math.max(12, Math.min(window.innerWidth - 442, rect.left)),
+    y: Math.max(60, Math.min(window.innerHeight - 520, rect.bottom + 8)),
+  };
+};
+
+const openTabAppearanceEditor = (id: PageId, anchor?: Element | null): void => {
+  const tab = anchor ?? app.querySelector<HTMLElement>(`[data-tab-context="${CSS.escape(id)}"]`);
+  state.contextMenu = null;
+  state.appearanceEditor = { tabId: id, ...appearanceEditorPosition(tab) };
+  appearanceEditorNeedsInitialFocus = true;
+  render();
+};
+
+const closeTabAppearanceEditor = (): void => {
+  const tabId = state.appearanceEditor?.tabId;
+  state.appearanceEditor = null;
+  if (tabId) pendingFocusKey = tabFocusKey(tabId);
+  render();
+};
+
+const closeTabContextMenu = (): void => {
+  const tabId = state.contextMenu?.tabId;
+  state.contextMenu = null;
+  if (tabId) pendingFocusKey = tabFocusKey(tabId);
+  render();
+};
 
 void initialize();

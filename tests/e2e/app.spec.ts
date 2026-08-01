@@ -335,6 +335,53 @@ test("resets live appearance controls without changing language", async () => {
   await expect(page.locator('[data-pref="language"]')).toHaveValue("bilingual");
 });
 
+test("edits one workspace tab with validated persistence, per-property reset, and keyboard focus return", async () => {
+  await ensureDemo();
+  let settingsTab = page.locator('[role="tab"][data-tab-id="settings"]');
+  await settingsTab.click();
+  await settingsTab.focus();
+  await page.keyboard.press("Shift+F10");
+
+  const menu = page.getByRole("menu", { name: /Settings tab menu/i });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await menu.getByRole("menuitem", { name: /Edit tab appearance/i }).click();
+
+  let editor = page.getByTestId("tab-appearance-editor");
+  await expect(editor).toBeVisible();
+  await expect(editor.locator('input[type="color"][data-tab-style="background"]')).toBeFocused();
+  const fontSize = editor.locator('input[data-tab-style="fontSize"]');
+  await fontSize.fill("19");
+  await fontSize.blur();
+  let tabContainer = settingsTab.locator("..");
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-size:19px/);
+
+  const backgroundValue = editor.locator('input[type="text"][data-tab-style="background"]');
+  await backgroundValue.fill("#336699");
+  await backgroundValue.blur();
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-bg:#336699/);
+  await editor.getByRole("button", { name: /Use inherited background for this tab/i }).click();
+  await expect(tabContainer).not.toHaveAttribute("style", /--tab-custom-bg/);
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-size:19px/);
+
+  await page.keyboard.press("Escape");
+  await expect(editor).toBeHidden();
+  await expect(settingsTab).toBeFocused();
+
+  await restart();
+  settingsTab = page.locator('[role="tab"][data-tab-id="settings"]');
+  tabContainer = settingsTab.locator("..");
+  await expect(tabContainer).toHaveAttribute("style", /--tab-custom-size:19px/);
+  await settingsTab.focus();
+  await page.keyboard.press("Control+Shift+E");
+  editor = page.getByTestId("tab-appearance-editor");
+  await expect(editor).toBeVisible();
+  await editor.getByRole("button", { name: /^Reset tab/i }).click();
+  await expect(tabContainer).not.toHaveAttribute("style", /--tab-custom-/);
+  await page.keyboard.press("Escape");
+  await expect(settingsTab).toBeFocused();
+});
+
 test("keeps native Windows notifications opt-in and persists the setting", async () => {
   await ensureDemo();
   await openWorkspaceTab(/^Settings/i, "settings-page");
