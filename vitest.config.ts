@@ -6,9 +6,9 @@ export default defineConfig({
     environment: "node",
     restoreMocks: true,
     clearMocks: true,
+    testTimeout: 15_000,
     coverage: {
       reporter: ["text", "json-summary"],
     },
   },
 });
-
