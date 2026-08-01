@@ -32,4 +32,19 @@ describe("OAuth security boundary", () => {
     expect(testAccount.indexOf('draft.authMode === "oauth2"')).toBeLessThan(testAccount.indexOf("this.#mail.testAccount"));
     expect(`${contracts}\n${preload}\n${main}`).not.toMatch(/(?:OAuth|oauth).*(?:accessToken|refreshToken|authorizationCode|codeVerifier)/u);
   });
+
+  it("keeps the mock token lifecycle out of production initialization, IPC, networking, files, and logs", async () => {
+    const [mockLifecycle, main, appService, preload] = await Promise.all([
+      read("src/main/mock-oauth-token-lifecycle.ts"),
+      read("src/main/index.ts"),
+      read("src/main/app-service.ts"),
+      read("src/preload/index.ts"),
+    ]);
+    expect(mockLifecycle).toContain("EphemeralAesGcmOAuthTokenStorage");
+    expect(mockLifecycle).toContain("ProductionEncryptedOAuthTokenStorageStub");
+    expect(mockLifecycle).toContain('storageClass = "production-stub"');
+    expect(mockLifecycle).toContain('createCipheriv("aes-256-gcm"');
+    expect(mockLifecycle).not.toMatch(/\b(?:console|fetch|writeFile|readFile|JsonStore|safeStorage|ipcMain|ipcRenderer|process\.env)\b/u);
+    expect(`${main}\n${appService}\n${preload}`).not.toContain("mock-oauth-token-lifecycle");
+  });
 });

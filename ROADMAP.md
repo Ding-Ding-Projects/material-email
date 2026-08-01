@@ -12,6 +12,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Windows-backed `safeStorage` encryption for persisted account secrets
 - [x] Manual IMAP/SMTP account schema and connection tests
 - [x] Ephemeral main-process OAuth authorization-code/PKCE state machine with exact loopback callback validation, timeout/cancel/error cleanup, status-only IPC, and no token exchange/persistence/logging
+- [x] Mock-only local OAuth exchange/expiry/refresh/revoke state machine with ephemeral AES-256-GCM ciphertext, demo factory, and a production storage stub that refuses until registration and a reviewed Windows adapter exist
 - [x] Bounded local certificate/hostname preflight with conventional TLS/STARTTLS port diagnostics, bilingual accessible errors, and a main-process no-connection guard
 - [x] IMAP folder/message listing, message retrieval, flags, and moves
 - [x] SMTP sending and local draft persistence
@@ -61,7 +62,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 
 ## Mail capabilities open
 
-- [ ] Register and verify live OAuth providers, then implement reviewed token exchange, encrypted token storage/refresh rotation, revocation, scope/consent handling, account connection, and public-provider interoperability
+- [ ] Register and verify live OAuth providers, then implement reviewed token exchange, Windows-backed durable encrypted token storage/refresh rotation, revocation, scope/consent handling, account connection, migration, and public-provider interoperability (the mock lifecycle is not completion evidence)
 - [ ] POP support
 - [x] User-facing retry ceilings and conflict resolution for queued mail operations
 - [x] Local cached Unified Inbox, Starred, and Unread views with account attribution, shared regex search, and stable composite selection
