@@ -83,6 +83,11 @@ import { deletionEvidenceDescription, diffLineDescription, filterLocalRevisions,
 import { filterPaletteCommands } from "./lib/command-search";
 import { selectStableMessageId } from "../shared/unified-folders";
 import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
+import {
+  diagnoseMailConnection,
+  type ConnectionDiagnostic,
+  type MailConnectionSettings,
+} from "../shared/connection-diagnostics";
 
 type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
 type ToastKind = NotificationRecord["kind"];
@@ -2181,6 +2186,100 @@ function renderReaderPane(): string {
   </article>`;
 }
 
+const connectionEndpointName = (endpoint: ConnectionDiagnostic["endpoint"]): { english: string; cantonese: string } => endpoint === "incoming"
+  ? { english: "Incoming IMAP", cantonese: "收取 IMAP" }
+  : { english: "Outgoing SMTP", cantonese: "寄出 SMTP" };
+
+const connectionDiagnosticCopy = (
+  diagnostic: ConnectionDiagnostic,
+  settings: MailConnectionSettings,
+): { englishTitle: string; cantoneseTitle: string; englishBody: string; cantoneseBody: string } => {
+  const endpoint = connectionEndpointName(diagnostic.endpoint);
+  const server = settings[diagnostic.endpoint];
+  const implicitPort = diagnostic.endpoint === "incoming" ? 993 : 465;
+  const starttlsPorts = diagnostic.endpoint === "incoming" ? "143" : "25, 587, or 2525";
+  const starttlsPortsYue = diagnostic.endpoint === "incoming" ? "143" : "25、587 或 2525";
+  const title = (english: string, cantonese: string) => ({
+    englishTitle: `${endpoint.english}: ${english}`,
+    cantoneseTitle: `${endpoint.cantonese}：${cantonese}`,
+  });
+  switch (diagnostic.code) {
+    case "hostname-empty": return {
+      ...title("host required", "需要主機名"),
+      englishBody: "Enter the exact mail-server host supplied by the provider.",
+      cantoneseBody: "請輸入供應商提供嘅確切郵件伺服器主機名。",
+    };
+    case "hostname-wildcard": return {
+      ...title("wildcard is not a server address", "萬用字元唔係伺服器地址"),
+      englishBody: "A value such as *.example.com is a certificate pattern, not a host to connect to. Enter the provider's exact host, such as imap.example.com. No server has been contacted.",
+      cantoneseBody: "例如 *.example.com 係證書比對格式，唔係可以連接嘅主機。請輸入供應商列出嘅確切主機，例如 imap.example.com。程式未有聯絡任何伺服器。",
+    };
+    case "hostname-format": return {
+      ...title("enter a host name only", "只可輸入主機名"),
+      englishBody: "Remove https://, paths, credentials, brackets, and :port. Put the port in its own field so TLS can check the entered host identity. No server has been contacted.",
+      cantoneseBody: "請移除 https://、路徑、憑證、方括號同 :連接埠；連接埠要放返喺獨立欄位，TLS 先可以按輸入嘅主機身份檢查。程式未有聯絡任何伺服器。",
+    };
+    case "certificate-ip-literal": return {
+      ...title("certificate may not cover this IP address", "證書未必涵蓋呢個 IP 地址"),
+      englishBody: "TLS can match an IP address only when the certificate lists that exact IP in subjectAltName. Use the provider's DNS mail host when available. This local preflight has not inspected a certificate.",
+      cantoneseBody: "只有證書 subjectAltName 明確列出同一個 IP 地址，TLS 先可以配對。可以嘅話請用供應商嘅 DNS 郵件主機。呢個本機預檢未有檢查任何證書。",
+    };
+    case "certificate-local-name": return {
+      ...title("certificate may not cover this local name", "證書未必涵蓋呢個本機名稱"),
+      englishBody: "Single-label and private host names often do not match a public certificate. Use the provider's fully qualified DNS mail host, or confirm the private certificate policy. This local preflight has not inspected a certificate.",
+      cantoneseBody: "單段或者私人主機名通常配對唔到公開證書。請用供應商完整嘅 DNS 郵件主機，或者確認私人證書政策。呢個本機預檢未有檢查任何證書。",
+    };
+    case "port-range": return {
+      ...title("port is outside the valid range", "連接埠超出有效範圍"),
+      englishBody: "Enter a whole-number port from 1 through 65535. No server has been contacted.",
+      cantoneseBody: "請輸入 1 至 65535 嘅整數連接埠。程式未有聯絡任何伺服器。",
+    };
+    case "implicit-tls-on-starttls-port": return {
+      ...title("TLS mode conflicts with this conventional port", "TLS 模式同呢個常用連接埠衝突"),
+      englishBody: `Port ${server.port} normally starts without implicit TLS and upgrades with STARTTLS. Choose STARTTLS, or use TLS on port ${implicitPort} if the provider documents it. No server has been contacted.`,
+      cantoneseBody: `連接埠 ${server.port} 通常唔會一開始就用隱式 TLS，而係再升級至 STARTTLS。請選擇 STARTTLS；如果供應商有列明，亦可以改用 TLS 配連接埠 ${implicitPort}。程式未有聯絡任何伺服器。`,
+    };
+    case "starttls-on-implicit-tls-port": return {
+      ...title("STARTTLS mode conflicts with this conventional port", "STARTTLS 模式同呢個常用連接埠衝突"),
+      englishBody: `Port ${implicitPort} expects TLS immediately. Choose TLS, or use STARTTLS on port ${starttlsPorts} if the provider documents it. No server has been contacted.`,
+      cantoneseBody: `連接埠 ${implicitPort} 預期即時使用 TLS。請選擇 TLS；如果供應商有列明，亦可以用 STARTTLS 配連接埠 ${starttlsPortsYue}。程式未有聯絡任何伺服器。`,
+    };
+    case "plain-on-implicit-tls-port": return {
+      ...title("plain transport cannot use this conventional TLS port", "純文字傳輸唔可以用呢個常用 TLS 連接埠"),
+      englishBody: `Port ${implicitPort} expects TLS immediately. Choose TLS, or enter the provider's documented plain port. Plain transport has no certificate identity check and exposes credentials and mail data.`,
+      cantoneseBody: `連接埠 ${implicitPort} 預期即時使用 TLS。請選擇 TLS，或者輸入供應商列明嘅純文字連接埠。純文字傳輸冇證書身份檢查，亦會暴露憑證同郵件資料。`,
+    };
+    case "nonstandard-secure-port": return {
+      ...title("confirm this custom secure port", "請確認呢個自訂安全連接埠"),
+      englishBody: `${server.security === "tls" ? "TLS" : "STARTTLS"} on port ${server.port} can be valid for a custom service. Confirm the provider's exact mode and port. This local preflight cannot verify server interoperability or inspect its certificate.`,
+      cantoneseBody: `${server.security === "tls" ? "TLS" : "STARTTLS"} 配連接埠 ${server.port} 可以係自訂服務嘅有效設定。請確認供應商列出嘅確切模式同連接埠。呢個本機預檢唔可以驗證伺服器互通性，亦未有檢查證書。`,
+    };
+    case "plain-transport": return {
+      ...title("plain transport has no certificate check", "純文字傳輸冇證書檢查"),
+      englishBody: "Credentials and mail data would travel without TLS. Use TLS or STARTTLS unless the provider explicitly requires plain transport.",
+      cantoneseBody: "憑證同郵件資料會喺冇 TLS 嘅情況下傳送。除非供應商明確要求純文字傳輸，否則請使用 TLS 或 STARTTLS。",
+    };
+  }
+};
+
+const renderConnectionDiagnosticItems = (
+  diagnostics: readonly ConnectionDiagnostic[],
+  settings: MailConnectionSettings,
+): string => diagnostics.length
+  ? `<ul class="connection-preflight__list">${diagnostics.map(diagnostic => {
+    const copy = connectionDiagnosticCopy(diagnostic, settings);
+    return `<li class="connection-diagnostic connection-diagnostic--${diagnostic.severity}" data-connection-diagnostic="${diagnostic.code}">${icon(diagnostic.severity === "error" ? "error" : "warning")}<span><strong>${escapeHtml(tx(copy.englishTitle, copy.cantoneseTitle))}</strong><span>${escapeHtml(tx(copy.englishBody, copy.cantoneseBody))}</span></span></li>`;
+  }).join("")}</ul>`
+  : `<p class="connection-preflight__ready">${icon("check")}<span>${escapeHtml(tx("No local hostname or conventional TLS/port conflict detected. A real connection test is still required.", "本機未發現主機名或者常用 TLS／連接埠衝突；仍然需要真正連線測試。"))}</span></p>`;
+
+const renderConnectionPreflight = (settings: MailConnectionSettings): string => {
+  const diagnostics = diagnoseMailConnection(settings).filter(diagnostic => diagnostic.code !== "hostname-empty");
+  return `<section class="connection-preflight" data-testid="connection-preflight" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="connection-preflight-title" aria-describedby="connection-preflight-description" tabindex="-1">
+    <header><span class="settings-card__icon">${icon("check")}</span><div><h3 id="connection-preflight-title">${escapeHtml(tx("Certificate and connection preflight", "證書同連線預檢"))}</h3><p id="connection-preflight-description">${escapeHtml(tx("Local checks only: the app has not opened a connection or inspected a server certificate. TLS will compare the certificate identity with the exact mail host entered here.", "只做本機檢查：應用程式未有開啟連線，亦未有檢查伺服器證書。TLS 會用證書身份配對呢度輸入嘅確切郵件主機。"))}</p></div></header>
+    <div id="connection-preflight-list" data-connection-preflight-list>${renderConnectionDiagnosticItems(diagnostics, settings)}</div>
+  </section>`;
+};
+
 function renderAccountSetup(): string {
   const discovery = state.selectedDiscovery;
   const incoming = discovery?.incoming ?? { host: "", port: 993, security: "tls" as const, username: state.setupEmail };
@@ -2211,18 +2310,18 @@ function renderAccountSetup(): string {
           <div class="server-card">
             <div class="server-card__title"><span>${icon("download")}</span><div><h3>${escapeHtml(tx("Incoming mail · IMAP", "收取郵件 · IMAP"))}</h3><p>${escapeHtml(tx("Messages and folders", "郵件同資料夾"))}</p></div></div>
             <div class="server-grid">
-              <label class="field field--wide"><span>${escapeHtml(tx("Host", "主機"))}</span><input type="text" name="incomingHost" value="${escapeHtml(incoming.host)}" required maxlength="255" autocomplete="off" placeholder="imap.example.com" /></label>
-              <label class="field"><span>${escapeHtml(tx("Port", "連接埠"))}</span><input type="number" name="incomingPort" value="${incoming.port}" required min="1" max="65535" inputmode="numeric" /></label>
-              <label class="field"><span>${escapeHtml(tx("Security", "安全性"))}</span><select name="incomingSecurity">${renderSecurityOptions(incoming.security)}</select></label>
+              <label class="field field--wide"><span>${escapeHtml(tx("Host", "主機"))}</span><input type="text" name="incomingHost" value="${escapeHtml(incoming.host)}" required maxlength="255" autocomplete="off" placeholder="imap.example.com" aria-describedby="connection-preflight-description connection-preflight-list" /></label>
+              <label class="field"><span>${escapeHtml(tx("Port", "連接埠"))}</span><input type="number" name="incomingPort" value="${incoming.port}" required min="1" max="65535" inputmode="numeric" aria-describedby="connection-preflight-description connection-preflight-list" /></label>
+              <label class="field"><span>${escapeHtml(tx("Security", "安全性"))}</span><select name="incomingSecurity" aria-describedby="connection-preflight-description connection-preflight-list">${renderSecurityOptions(incoming.security)}</select></label>
               <label class="field field--wide"><span>${escapeHtml(tx("Username", "使用者名稱"))}</span><input type="text" name="incomingUsername" value="${escapeHtml(incoming.username)}" required maxlength="320" autocomplete="username" /></label>
             </div>
           </div>
           <div class="server-card">
             <div class="server-card__title"><span>${icon("send")}</span><div><h3>${escapeHtml(tx("Outgoing mail · SMTP", "寄出郵件 · SMTP"))}</h3><p>${escapeHtml(tx("Delivery and authentication", "傳送同驗證"))}</p></div></div>
             <div class="server-grid">
-              <label class="field field--wide"><span>${escapeHtml(tx("Host", "主機"))}</span><input type="text" name="outgoingHost" value="${escapeHtml(outgoing.host)}" required maxlength="255" autocomplete="off" placeholder="smtp.example.com" /></label>
-              <label class="field"><span>${escapeHtml(tx("Port", "連接埠"))}</span><input type="number" name="outgoingPort" value="${outgoing.port}" required min="1" max="65535" inputmode="numeric" /></label>
-              <label class="field"><span>${escapeHtml(tx("Security", "安全性"))}</span><select name="outgoingSecurity">${renderSecurityOptions(outgoing.security)}</select></label>
+              <label class="field field--wide"><span>${escapeHtml(tx("Host", "主機"))}</span><input type="text" name="outgoingHost" value="${escapeHtml(outgoing.host)}" required maxlength="255" autocomplete="off" placeholder="smtp.example.com" aria-describedby="connection-preflight-description connection-preflight-list" /></label>
+              <label class="field"><span>${escapeHtml(tx("Port", "連接埠"))}</span><input type="number" name="outgoingPort" value="${outgoing.port}" required min="1" max="65535" inputmode="numeric" aria-describedby="connection-preflight-description connection-preflight-list" /></label>
+              <label class="field"><span>${escapeHtml(tx("Security", "安全性"))}</span><select name="outgoingSecurity" aria-describedby="connection-preflight-description connection-preflight-list">${renderSecurityOptions(outgoing.security)}</select></label>
               <label class="field field--wide"><span>${escapeHtml(tx("Username", "使用者名稱"))}</span><input type="text" name="outgoingUsername" value="${escapeHtml(outgoing.username)}" required maxlength="320" autocomplete="username" /></label>
             </div>
           </div>
@@ -2230,6 +2329,7 @@ function renderAccountSetup(): string {
             <label class="field"><span>${escapeHtml(tx("Authentication", "驗證方式"))}</span><select name="authMode"><option value="password" ${!discovery || discovery.authModes.includes("password") ? "" : "disabled"}>${escapeHtml(tx("Password", "密碼"))}</option><option value="oauth2" ${discovery?.authModes.includes("oauth2") ? "" : "disabled"}>OAuth 2 access token</option></select></label>
             <label class="field"><span>${escapeHtml(tx("Password or OAuth access token", "密碼或者 OAuth 存取權杖"))}</span><input type="password" name="secret" required maxlength="16384" autocomplete="current-password" /></label>
           </div>
+          ${renderConnectionPreflight({ incoming, outgoing })}
           <p class="security-disclosure">${icon("info")}<span>${escapeHtml(tx("Required TLS never falls back to plain text. Testing contacts the named mail servers; adding saves the credential only after both checks succeed.", "必須使用 TLS 時絕對唔會降級到純文字。測試會聯絡指定郵件伺服器；兩邊檢查成功之後先會儲存憑證。"))}</span></p>
           <footer class="setup-actions">
             ${state.setupContext === "settings" ? `<button class="button button--text" type="button" data-action="close-account-setup">${escapeHtml(tx("Cancel", "取消"))}</button>` : ""}
@@ -2974,6 +3074,81 @@ const accountDraftFromForm = (form: HTMLFormElement): AccountDraft => {
   };
 };
 
+const CONNECTION_PREFLIGHT_FIELD_NAMES = new Set([
+  "incomingHost",
+  "incomingPort",
+  "incomingSecurity",
+  "outgoingHost",
+  "outgoingPort",
+  "outgoingSecurity",
+]);
+
+const connectionSettingsFromForm = (form: HTMLFormElement): MailConnectionSettings => {
+  const data = new FormData(form);
+  const security = (value: FormDataEntryValue | null): AccountDraft["incoming"]["security"] => {
+    const candidate = String(value ?? "");
+    return candidate === "tls" || candidate === "starttls" || candidate === "plain" ? candidate : "plain";
+  };
+  return {
+    incoming: {
+      host: String(data.get("incomingHost") ?? "").trim(),
+      port: Number(data.get("incomingPort")),
+      security: security(data.get("incomingSecurity")),
+      username: String(data.get("incomingUsername") ?? "").trim(),
+    },
+    outgoing: {
+      host: String(data.get("outgoingHost") ?? "").trim(),
+      port: Number(data.get("outgoingPort")),
+      security: security(data.get("outgoingSecurity")),
+      username: String(data.get("outgoingUsername") ?? "").trim(),
+    },
+  };
+};
+
+const diagnosticControlNames = (diagnostic: ConnectionDiagnostic): string[] => {
+  const prefix = diagnostic.endpoint;
+  if (diagnostic.field === "host") return [`${prefix}Host`];
+  if (diagnostic.field === "port") return [`${prefix}Port`];
+  if (diagnostic.code === "implicit-tls-on-starttls-port" || diagnostic.code === "starttls-on-implicit-tls-port" || diagnostic.code === "plain-on-implicit-tls-port") {
+    return [`${prefix}Port`, `${prefix}Security`];
+  }
+  return [`${prefix}Security`];
+};
+
+const updateConnectionPreflight = (
+  form: HTMLFormElement,
+  announceErrors = false,
+  settings = connectionSettingsFromForm(form),
+): ConnectionDiagnostic[] => {
+  const region = form.querySelector<HTMLElement>('[data-testid="connection-preflight"]');
+  const list = form.querySelector<HTMLElement>("[data-connection-preflight-list]");
+  const diagnostics = diagnoseMailConnection(settings);
+  const visibleDiagnostics = announceErrors ? diagnostics : diagnostics.filter(diagnostic => diagnostic.code !== "hostname-empty");
+  if (!region || !list) return diagnostics;
+
+  list.innerHTML = renderConnectionDiagnosticItems(visibleDiagnostics, settings);
+  applyBilingualSemantics(list);
+  region.setAttribute("role", announceErrors && visibleDiagnostics.some(diagnostic => diagnostic.severity === "error") ? "alert" : "status");
+  region.setAttribute("aria-live", announceErrors && visibleDiagnostics.some(diagnostic => diagnostic.severity === "error") ? "assertive" : "polite");
+
+  for (const name of CONNECTION_PREFLIGHT_FIELD_NAMES) {
+    const control = form.elements.namedItem(name);
+    if (control instanceof HTMLElement) control.removeAttribute("aria-invalid");
+  }
+  const invalidNames = new Set(
+    visibleDiagnostics.filter(diagnostic => diagnostic.severity === "error").flatMap(diagnosticControlNames),
+  );
+  for (const name of invalidNames) {
+    const control = form.elements.namedItem(name);
+    if (control instanceof HTMLElement) control.setAttribute("aria-invalid", "true");
+  }
+  if (announceErrors && invalidNames.size) {
+    const firstInvalid = [...form.elements].find(control => control instanceof HTMLElement && invalidNames.has(control.getAttribute("name") ?? ""));
+    if (firstInvalid instanceof HTMLElement) firstInvalid.focus();
+  }
+  return diagnostics;
+};
+
 const handleAccountSubmit = async (form: HTMLFormElement, mode: "test" | "add"): Promise<void> => {
   if (!form.reportValidity()) return;
   let draft: AccountDraft;
@@ -2981,6 +3156,17 @@ const handleAccountSubmit = async (form: HTMLFormElement, mode: "test" | "add"):
     draft = accountDraftFromForm(form);
   } catch (error) {
     pushToast("error", "Check account settings", errorMessage(error), "檢查帳戶設定", errorMessage(error));
+    return;
+  }
+  const diagnostics = updateConnectionPreflight(form, true, draft);
+  if (diagnostics.some(diagnostic => diagnostic.severity === "error")) {
+    pushToast(
+      "error",
+      "Check certificate and connection settings",
+      "Correct the highlighted host, port, or security mode. The connection test was not started and no server was contacted.",
+      "檢查證書同連線設定",
+      "請修正已標示嘅主機、連接埠或者安全模式。連線測試未有開始，程式亦未有聯絡任何伺服器。",
+    );
     return;
   }
   await withBusy(mode === "test" ? "account-test" : "account-add", async () => {
@@ -4607,6 +4793,8 @@ const updateTabStyleControl = (control: HTMLInputElement): boolean => {
 
 const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement): Promise<void> => {
   if (control.closest('[data-testid="pim-editor"]') && control.name) updatePimEditorDirty();
+  const accountSetupForm = control.closest<HTMLFormElement>('[data-form="account-setup"]');
+  if (accountSetupForm && CONNECTION_PREFLIGHT_FIELD_NAMES.has(control.name)) updateConnectionPreflight(accountSetupForm);
   const changeAction = control.dataset.actionChange;
   if (changeAction === "switch-account" && control.value) { await loadAccount(control.value, false); return; }
   if (changeAction === "move-message" && control.value) {
@@ -4688,6 +4876,8 @@ app.addEventListener("change", event => {
 app.addEventListener("input", event => {
   const control = event.target;
   if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement)) return;
+  const accountSetupForm = control.closest<HTMLFormElement>('[data-form="account-setup"]');
+  if (accountSetupForm && CONNECTION_PREFLIGHT_FIELD_NAMES.has(control.name)) updateConnectionPreflight(accountSetupForm);
   if (control.closest('[data-testid="pim-editor"]') && control.name) {
     state.pimEditorLastFocusKey = control.dataset.focusKey ?? state.pimEditorLastFocusKey;
     state.pimEditorLastFocusName = control.name;

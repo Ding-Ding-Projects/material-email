@@ -83,6 +83,7 @@ import {
 import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
 import { collectCachedUnifiedMessages } from "../shared/unified-folders.js";
 import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-mail-index.js";
+import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -332,6 +333,7 @@ export class AppService {
 
   async addAccount(input: AccountDraft): Promise<AccountSummary> {
     const draft = accountDraftSchema.parse(input);
+    assertConnectionPreflight(draft);
     const existing = await this.#store.read();
     if (existing.accounts.some(account => account.email.toLowerCase() === draft.email.toLowerCase())) {
       throw new Error(`An account for ${draft.email} already exists on this computer.`);
@@ -360,6 +362,7 @@ export class AppService {
 
   async testAccount(input: AccountDraft): Promise<{ incoming: true; outgoing: true }> {
     const draft = accountDraftSchema.parse(input);
+    assertConnectionPreflight(draft);
     const runtime: RuntimeAccount = {
       id: "test",
       displayName: draft.displayName,
