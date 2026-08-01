@@ -110,7 +110,7 @@ describe("bounded local PIM provider foundation", () => {
 
   it("rejects orphaned folds and malformed property names instead of dropping them", () => {
     const wrap = (body: string): string => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${body}\r\nEND:VCALENDAR\r\n`;
-    expect(() => inspectPimInterchange("icalendar", wrap(" BEGIN:VEVENT"))).toThrow(/folded/iu);
+    expect(() => inspectPimInterchange("icalendar", wrap("BEGIN:VEVENT\r\nUID:folded\r\n\r\n folded value\r\nEND:VEVENT"))).toThrow(/folded/iu);
     expect(() => inspectPimInterchange("icalendar", wrap("BEGIN:VEVENT\r\nUID:ok\r\nBAD NAME:value\r\nEND:VEVENT"))).toThrow(/property|parameter/iu);
   });
 
