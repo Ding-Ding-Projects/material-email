@@ -17,6 +17,7 @@ import type {
   NotificationRecord,
   Preferences,
   LocalRevision,
+  LocalRevisionDiff,
   ReleaseIdentity,
   CalendarEvent,
   CalendarEventPatch,
@@ -930,6 +931,14 @@ export class AppService {
 
   async listLocalRevisions(): Promise<LocalRevision[]> {
     return this.#historyRepository.list();
+  }
+
+  async getLocalRevisionDiff(hash: string): Promise<LocalRevisionDiff> {
+    return this.#historyRepository.diff(hash);
+  }
+
+  async labelLocalRevision(hash: string, label: string): Promise<LocalRevision> {
+    return this.#historyRepository.label(hash, label);
   }
 
   async restoreLocalRevision(hash: string): Promise<BootstrapState> {

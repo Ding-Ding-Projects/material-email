@@ -56,6 +56,12 @@ describe("non-PIM IPC validation", () => {
     expect(() => parseIpcArgs("account:remove", ipcPayloadSchemas.accountId, ["account-1", "smuggled"])).toThrow(
       "Invalid account:remove IPC payload",
     );
+    expect(ipcPayloadSchemas.revisionLabel.parse(["a".repeat(40), "Before cleanup · 清理之前"])).toEqual([
+      "a".repeat(40),
+      "Before cleanup · 清理之前",
+    ]);
+    expect(() => ipcPayloadSchemas.revisionLabel.parse(["a".repeat(40), "line one\nline two"])).toThrow();
+    expect(() => ipcPayloadSchemas.revisionLabel.parse(["a".repeat(40), "x".repeat(121)])).toThrow();
   });
 
   it("accepts only fixed-length opaque external-link request IDs", () => {

@@ -244,6 +244,19 @@ export interface LocalRevision {
   hash: string;
   createdAt: string;
   subject: string;
+  label: string;
+}
+
+export interface LocalRevisionDiffLine {
+  kind: "added" | "removed" | "context" | "hunk" | "metadata";
+  text: string;
+}
+
+export interface LocalRevisionDiff {
+  revision: LocalRevision;
+  parentHash?: string;
+  lines: LocalRevisionDiffLine[];
+  truncated: boolean;
 }
 
 export interface ReleaseIdentity {
@@ -318,6 +331,8 @@ export interface MaterialEmailApi {
   clearNotifications(): Promise<void>;
   restoreHistory(id: string): Promise<HistoryRecord>;
   listLocalRevisions(): Promise<LocalRevision[]>;
+  getLocalRevisionDiff(hash: string): Promise<LocalRevisionDiff>;
+  labelLocalRevision(hash: string, label: string): Promise<LocalRevision>;
   restoreLocalRevision(hash: string): Promise<BootstrapState>;
   listContacts(): Promise<Contact[]>;
   searchContacts(query: string): Promise<Contact[]>;

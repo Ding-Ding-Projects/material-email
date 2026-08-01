@@ -53,6 +53,8 @@ describe("Electron security boundary", () => {
       "notifications:native",
       "history:restore",
       "history:list-local",
+      "history:diff-local",
+      "history:label-local",
       "history:restore-local",
       "data:export",
       "editor:detect",

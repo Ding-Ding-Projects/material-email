@@ -124,6 +124,8 @@ const registerIpc = (trustedRendererUrl: string): void => {
   });
   handleValidated("history:restore", ipcPayloadSchemas.historyId, ([id]) => service.restoreHistory(id));
   handleValidated("history:list-local", ipcPayloadSchemas.none, () => service.listLocalRevisions());
+  handleValidated("history:diff-local", ipcPayloadSchemas.revisionHash, ([hash]) => service.getLocalRevisionDiff(hash));
+  handleValidated("history:label-local", ipcPayloadSchemas.revisionLabel, ([hash, label]) => service.labelLocalRevision(hash, label));
   handleValidated("history:restore-local", ipcPayloadSchemas.revisionHash, ([hash]) => service.restoreLocalRevision(hash));
   handleTrusted("pim:contacts:list", () => service.listContacts());
   handleTrusted("pim:contacts:search", (query: string) => service.searchContacts(query));

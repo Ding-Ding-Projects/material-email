@@ -18,6 +18,7 @@ import type {
   FolderSummary,
   HistoryRecord,
   LocalRevision,
+  LocalRevisionDiff,
   LocalDraftSummary,
   OutboxSummary,
   PendingOperationSummary,
@@ -65,6 +66,7 @@ import {
   validatePattern,
   type MatchMode,
 } from "./lib/regex";
+import { diffLineDescription, filterLocalRevisions } from "./lib/local-history";
 
 type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
 type ToastKind = NotificationRecord["kind"];
@@ -190,6 +192,10 @@ interface RendererState {
   setupEmail: string;
   localRevisions: LocalRevision[];
   localRevisionsLoaded: boolean;
+  localRevisionsError: string;
+  selectedLocalRevisionHash: string | null;
+  localRevisionDiff: LocalRevisionDiff | null;
+  localRevisionDiffError: string;
   tabPreferences: TabPreferences<PageId>;
   tabManagerOpen: boolean;
   contextMenu: ContextMenuState | null;
@@ -298,6 +304,10 @@ const state: RendererState = {
   setupEmail: "",
   localRevisions: [],
   localRevisionsLoaded: false,
+  localRevisionsError: "",
+  selectedLocalRevisionHash: null,
+  localRevisionDiff: null,
+  localRevisionDiffError: "",
   tabPreferences: readTabPreferences(),
   tabManagerOpen: false,
   contextMenu: null,
@@ -363,6 +373,7 @@ let pimSaveSequence = 0;
 let pimLoadPromise: Promise<void> | null = null;
 let contactSearchTimer: number | null = null;
 let contactSearchSequence = 0;
+let localRevisionDiffSequence = 0;
 let pendingFocusKey: string | null = null;
 let confirmationNeedsInitialFocus = false;
 let tabContextNeedsInitialFocus = false;
@@ -2112,6 +2123,48 @@ function historyMatches(item: HistoryRecord): boolean {
   return !model.pattern || createMatcher(model)(`${item.label}\n${item.kind}\n${item.entityType}\n${item.entityId}`);
 }
 
+function localRevisionMatches(revision: LocalRevision): boolean {
+  const model = searchFor("history-versions");
+  return filterLocalRevisions([revision], model.pattern, createMatcher(model)).length === 1;
+}
+
+function renderLocalRevisionDiff(revision: LocalRevision): string {
+  const hash = revision.hash;
+  const busy = isBusy(`local-revision-diff-${hash}`);
+  const diff = state.localRevisionDiff?.revision.hash === hash ? state.localRevisionDiff : null;
+  const inputId = `local-revision-label-${hash}`;
+  const lineMarkup = diff?.lines.map(line => {
+    const description = diffLineDescription(line.kind);
+    const marker = line.kind === "added" ? "+" : line.kind === "removed" ? "−" : line.kind === "hunk" ? "@@" : "";
+    return `<li class="revision-diff-line revision-diff-line--${line.kind}"><span class="visually-hidden">${escapeHtml(tx(description.en, description.yue))}: </span><code>${marker ? `<span aria-hidden="true">${marker} </span>` : ""}${escapeHtml(line.text || " ")}</code></li>`;
+  }).join("") ?? "";
+  return `<section class="local-revision-detail" id="local-revision-detail-${hash}" data-testid="local-revision-detail" role="region" aria-label="${escapeHtml(tx(`Changes for ${revision.label}`, `${revision.label} 嘅更改`))}">
+    <div class="revision-label-editor">
+      <label class="field" for="${inputId}"><span>${escapeHtml(tx("Revision label", "修訂標籤"))}</span><input id="${inputId}" data-local-revision-label="${hash}" data-focus-key="local-revision-label-${hash}" value="${escapeHtml(revision.label)}" maxlength="120" required autocomplete="off" /></label>
+      <button class="button button--tonal" type="button" data-action="save-local-revision-label" data-revision-hash="${hash}" ${isBusy(`local-revision-label-${hash}`) ? "disabled" : ""}>${icon("check")}<span>${escapeHtml(tx("Save label", "儲存標籤"))}</span></button>
+    </div>
+    ${busy ? `<div class="indeterminate-progress" role="progressbar" aria-label="${escapeHtml(tx("Loading revision changes", "載入修訂更改"))}"></div>` : ""}
+    ${state.localRevisionDiffError && !busy ? `<p class="field-error" role="alert">${escapeHtml(state.localRevisionDiffError)}</p>` : ""}
+    ${diff && !busy ? `<div class="revision-diff-heading"><p>${escapeHtml(diff.parentHash ? tx(`Compared with ${diff.parentHash.slice(0, 10)}`, `同 ${diff.parentHash.slice(0, 10)} 比較`) : tx("First snapshot; compared with an empty workspace", "第一個快照；同空白工作空間比較"))}</p><span class="count-pill">${diff.lines.length} ${escapeHtml(tx("preview lines", "行預覽"))}</span></div>
+      ${lineMarkup ? `<ol class="revision-diff-list" aria-label="${escapeHtml(tx("Bounded JSON change preview", "有限 JSON 更改預覽"))}">${lineMarkup}</ol>` : `<p class="supporting-copy">${escapeHtml(tx("No textual state changes were found in this snapshot.", "呢個快照搵唔到文字狀態更改。"))}</p>`}
+      ${diff.truncated ? `<p class="supporting-copy revision-diff-warning">${escapeHtml(tx("Preview truncated at the local safety limit; restore still uses the complete validated snapshot.", "預覽去到本機安全上限已截短；還原仍然使用完整並已驗證嘅快照。"))}</p>` : ""}` : ""}
+  </section>`;
+}
+
+function renderLocalVersions(): string {
+  const model = searchFor("history-versions");
+  const revisions = state.localRevisions.filter(localRevisionMatches);
+  return `<section class="local-version-card" data-testid="local-versions" aria-labelledby="local-versions-title"><header><div><p class="eyebrow">${escapeHtml(tx("GIT-BACKED SNAPSHOTS", "GIT 支援快照"))}</p><h2 id="local-versions-title">${escapeHtml(tx("Whole-workspace versions", "整個工作空間版本"))}</h2></div><span class="count-pill">${revisions.length} / ${state.localRevisions.length}</span></header>
+    <div class="local-version-search">${renderSearchField("history-versions", tx("Search revision labels, hashes, or dates", "搜尋修訂標籤、雜湊或者日期"))}</div>
+    ${state.localRevisionsError ? `<p class="field-error" role="alert">${escapeHtml(state.localRevisionsError)}</p>` : ""}
+    ${!state.localRevisionsLoaded && !state.localRevisionsError ? `<div class="indeterminate-progress" role="progressbar" aria-label="${escapeHtml(tx("Loading workspace versions", "載入工作空間版本"))}"></div>` : ""}
+    <div class="revision-row-list">${revisions.map(revision => {
+      const open = state.selectedLocalRevisionHash === revision.hash;
+      return `<article class="local-revision-row" data-testid="local-revision-row"><span class="local-revision-row__icon">${icon("history")}</span><div class="local-revision-row__copy"><strong>${escapeHtml(revision.label)}</strong><p><code>${escapeHtml(revision.hash.slice(0, 10))}</code> · ${escapeHtml(formatDate(revision.createdAt))}${revision.label !== revision.subject ? ` · ${escapeHtml(revision.subject)}` : ""}</p></div><div class="button-row"><button class="button button--text" type="button" data-action="toggle-local-revision-diff" data-revision-hash="${escapeHtml(revision.hash)}" data-focus-key="local-revision-diff-${escapeHtml(revision.hash)}" aria-expanded="${open}" aria-controls="local-revision-detail-${escapeHtml(revision.hash)}">${escapeHtml(open ? tx("Hide changes", "收起更改") : tx("View changes", "查看更改"))}</button><button class="button button--text" type="button" data-action="request-restore-local" data-revision-hash="${escapeHtml(revision.hash)}" data-revision-label="${escapeHtml(revision.label)}" ${isBusy("restore-local") ? "disabled" : ""}>${escapeHtml(tx("Restore", "還原"))}</button></div>${open ? renderLocalRevisionDiff(revision) : ""}</article>`;
+    }).join("") || (state.localRevisionsLoaded && model.pattern ? `<p class="empty-inline">${escapeHtml(tx("No workspace versions match this search.", "冇工作空間版本符合呢個搜尋。"))}</p>` : state.localRevisionsLoaded ? `<p class="empty-inline">${escapeHtml(tx("No workspace versions have been recorded yet.", "仲未記錄任何工作空間版本。"))}</p>` : "")}</div>
+  </section>`;
+}
+
 function renderHistoryPage(): string {
   const all = state.bootstrap?.history ?? [];
   const records = all.filter(historyMatches);
@@ -2125,7 +2178,7 @@ function renderHistoryPage(): string {
       <fieldset class="action-filter"><legend>${escapeHtml(tx("Filter by action", "按操作篩選"))}</legend>${[...actionCounts.entries()].map(([kind, count]) => `<label class="filter-chip"><input type="checkbox" data-history-action="${kind}" ${state.filters.historyActions.has(kind) ? "checked" : ""}/><span>${escapeHtml(kind.replaceAll("-", " "))} <b>${count}</b></span></label>`).join("") || `<span>${escapeHtml(tx("No recorded actions yet", "仲未有已記錄操作"))}</span>`}</fieldset>
       <div class="filter-actions"><span>${records.length} ${escapeHtml(tx("matching revisions", "個符合修訂"))}</span><button class="button button--outlined" type="button" data-action="export-history" ${records.length === 0 ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Export view", "匯出目前檢視"))}</span></button></div>
     </div>
-    ${state.localRevisions.length ? `<section class="local-version-card"><header><div><p class="eyebrow">${escapeHtml(tx("GIT-BACKED SNAPSHOTS", "GIT 支援快照"))}</p><h2>${escapeHtml(tx("Whole-workspace versions", "整個工作空間版本"))}</h2></div><span class="count-pill">${state.localRevisions.length}</span></header><div class="revision-row-list">${state.localRevisions.slice(0, 8).map(revision => `<article><span>${icon("history")}</span><div><strong>${escapeHtml(revision.subject)}</strong><p><code>${escapeHtml(revision.hash.slice(0, 10))}</code> · ${escapeHtml(formatDate(revision.createdAt))}</p></div><button class="button button--text" type="button" data-action="request-restore-local" data-revision-hash="${escapeHtml(revision.hash)}" data-revision-label="${escapeHtml(revision.subject)}">${escapeHtml(tx("Restore", "還原"))}</button></article>`).join("")}</div></section>` : ""}
+    ${renderLocalVersions()}
     <div class="record-list history-list">${records.length ? records.map(item => `<article class="history-card"><span class="history-card__icon">${icon(item.kind === "restored" || item.kind === "undone" ? "refresh" : item.kind === "deleted" ? "trash" : item.kind === "settings-changed" ? "settings" : "history")}</span><div><div class="record-meta"><span class="kind-badge">${escapeHtml(item.kind.replaceAll("-", " "))}</span><span>${escapeHtml(item.entityType)}</span><time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(formatDate(item.createdAt))}</time></div><h2>${escapeHtml(item.label)}</h2><p><code>${escapeHtml(item.entityId)}</code></p></div>${item.entityType === "settings" ? `<button class="button button--text" type="button" data-action="restore-history" data-history-id="${escapeHtml(item.id)}">${icon("refresh")}<span>${escapeHtml(tx("Restore settings", "還原設定"))}</span></button>` : `<span class="view-only-label">${escapeHtml(tx("View only", "只供查看"))}</span>`}</article>`).join("") : renderRecordEmpty("history")}</div>
   </section>`;
 }
@@ -2691,15 +2744,66 @@ const activateTab = (id: PageId): void => {
 
 const loadLocalRevisions = async (): Promise<void> => {
   state.busy.add("local-revisions");
+  state.localRevisionsError = "";
   try {
     state.localRevisions = await api.listLocalRevisions();
     state.localRevisionsLoaded = true;
   } catch (error) {
-    pushToast("warning", "Workspace versions unavailable", errorMessage(error), "工作空間版本暫時不可用", errorMessage(error));
+    state.localRevisionsError = errorMessage(error);
+    pushToast("warning", "Workspace versions unavailable", state.localRevisionsError, "工作空間版本暫時不可用", state.localRevisionsError);
   } finally {
     state.busy.delete("local-revisions");
     render();
   }
+};
+
+const toggleLocalRevisionDiff = async (hash: string): Promise<void> => {
+  if (state.selectedLocalRevisionHash === hash) {
+    localRevisionDiffSequence += 1;
+    state.selectedLocalRevisionHash = null;
+    state.localRevisionDiff = null;
+    state.localRevisionDiffError = "";
+    render();
+    focusByKey(`local-revision-diff-${hash}`);
+    return;
+  }
+  const request = ++localRevisionDiffSequence;
+  state.selectedLocalRevisionHash = hash;
+  state.localRevisionDiff = null;
+  state.localRevisionDiffError = "";
+  const busyKey = `local-revision-diff-${hash}`;
+  state.busy.add(busyKey);
+  render();
+  try {
+    const diff = await api.getLocalRevisionDiff(hash);
+    if (request !== localRevisionDiffSequence || state.selectedLocalRevisionHash !== hash) return;
+    state.localRevisionDiff = diff;
+    state.localRevisions = state.localRevisions.map(revision => revision.hash === hash ? diff.revision : revision);
+  } catch (error) {
+    if (request !== localRevisionDiffSequence || state.selectedLocalRevisionHash !== hash) return;
+    state.localRevisionDiffError = errorMessage(error);
+    pushToast("error", "Revision changes unavailable", state.localRevisionDiffError, "修訂更改暫時不可用", state.localRevisionDiffError);
+  } finally {
+    state.busy.delete(busyKey);
+    if (request === localRevisionDiffSequence) render();
+  }
+};
+
+const saveLocalRevisionLabel = async (button: HTMLElement, hash: string): Promise<void> => {
+  const input = button.closest(".local-revision-detail")?.querySelector<HTMLInputElement>("[data-local-revision-label]");
+  const label = input?.value.trim() ?? "";
+  if (!label || label.length > 120) {
+    pushToast("warning", "Revision label needs attention", "Enter 1 to 120 characters.", "修訂標籤要處理", "請輸入 1 至 120 個字元。 ");
+    input?.focus();
+    return;
+  }
+  await withBusy(`local-revision-label-${hash}`, async () => {
+    const revision = await api.labelLocalRevision(hash, label);
+    state.localRevisions = state.localRevisions.map(item => item.hash === hash ? revision : item);
+    if (state.localRevisionDiff?.revision.hash === hash) state.localRevisionDiff = { ...state.localRevisionDiff, revision };
+    pendingFocusKey = `local-revision-label-${hash}`;
+    pushToast("success", "Revision label saved", "The snapshot commit stayed immutable; only its local label changed.", "修訂標籤已儲存", "快照提交保持不變；只係本機標籤改咗。 ");
+  });
 };
 
 const moveTabBy = (id: PageId, offset: -1 | 1): void => {
@@ -3481,8 +3585,13 @@ const handleConfirmation = async (): Promise<void> => {
     applyPreferences();
     state.localRevisionsLoaded = false;
     state.localRevisions = [];
+    state.localRevisionsError = "";
+    state.selectedLocalRevisionHash = null;
+    state.localRevisionDiff = null;
+    state.localRevisionDiffError = "";
     const next = restored.accounts.find(account => account.id === restored.preferences.selectedAccountId) ?? restored.accounts[0];
     if (next) await loadAccount(next.id, false);
+    await loadLocalRevisions();
     pushToast("success", "Workspace version restored", "The prior current state remains available as another local revision.", "工作空間版本已還原", "之前嘅目前狀態仍然保留做另一個本機修訂。 ");
   });
 };
@@ -3490,6 +3599,7 @@ const handleConfirmation = async (): Promise<void> => {
 const sampleForSearch = (key: string): string => {
   if (key === "mail") return state.messages.slice(0, 20).map(message => `${addressLine(message.from)} — ${message.subject}\n${message.preview}`).join("\n\n");
   if (key === "history") return (state.bootstrap?.history ?? []).slice(0, 20).map(item => `${item.kind}: ${item.label}`).join("\n");
+  if (key === "history-versions") return state.localRevisions.slice(0, 20).map(item => `${item.label}\n${item.hash}\n${item.createdAt}`).join("\n\n");
   if (key === "notifications") return (state.bootstrap?.notifications ?? []).slice(0, 20).map(item => `${item.title}: ${item.body}`).join("\n");
   if (key === "changelog") return changelogEntries().map(entry => `${entry.version} ${entry.title}\n${entry.changes.map(change => change.detail).join("\n")}`).join("\n");
   if (key === "contacts") return state.contacts.slice(0, 30).map(contact => `${contact.displayName}\n${contact.emails.map(email => email.value).join(" ")}\n${contact.organization ?? ""}`).join("\n\n");
@@ -3896,6 +4006,8 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (id) await withBusy("restore-history", async () => { await api.restoreHistory(id); await refreshMetadata(); pushToast("success", "Settings revision restored", "The restore was appended as a new revision.", "設定修訂已還原", "還原已新增做一個新修訂。 "); });
       break;
     }
+    case "toggle-local-revision-diff": if (button.dataset.revisionHash) await toggleLocalRevisionDiff(button.dataset.revisionHash); break;
+    case "save-local-revision-label": if (button.dataset.revisionHash) await saveLocalRevisionLabel(button, button.dataset.revisionHash); break;
     case "request-restore-local": if (button.dataset.revisionHash) showConfirmation({ kind: "restore-local", hash: button.dataset.revisionHash, label: button.dataset.revisionLabel ?? button.dataset.revisionHash }); break;
     case "dismiss-dim-sum": state.dimSumVisible = false; render(); break;
     case "request-bulk-close": {

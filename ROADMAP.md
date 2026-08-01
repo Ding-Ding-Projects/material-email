@@ -72,7 +72,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 ## Data and platform open
 
 - [ ] Replace or complement JSON with a migration-tested indexed store such as SQLite
-- [ ] Complete Git-backed history diff, retention, pruning, labeling, and every-record restore UI
+- [x] Add searchable Git-backed revision diff previews, local labels, and reviewed whole-state restore UI
+- [ ] Complete Git-backed history retention, pruning, and every-record restore UI
 - [x] Add searchable semantic history action counts, date ranges, and export foundation
 - [x] Add a persisted global appearance reset for the live theme controls
 - [x] Complete a validated per-workspace-tab appearance slice with anchored context/keyboard access, restart persistence, per-property reset, and focus return
