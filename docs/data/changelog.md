@@ -8,11 +8,11 @@ The release audit on 2026-08-01 found **eleven published versions** from `v0.8.1
 
 The Changelog tab is intended to show every released version with exact version, release date, categorized changes, and the release's dim-sum code name only when a verified catalog asset exists. Search and date filters compose. Users can copy or export the currently filtered view.
 
-The current viewer composes its bounded plain-text or regex search with typed release-date bounds. It preserves the raw date fields for the current app session, reports incomplete, impossible, and reversed ranges inline, and uses one shared filtered Markdown selection for both copy and export. A release without a catalog decoration shows neither a borrowed code name nor a fallback photo. The audited release ledger is covered by renderer and release-contract tests.
+The current viewer composes its bounded plain-text or regex search with release-date bounds. A non-modal calendar popover stays anchored to the date controls and supports two-click range selection, previous/next month navigation, direct month and year jumps, and named ranges for the last 30 days, current month, current year, or all releases. The day grid uses one roving keyboard stop with Arrow, Home/End, Page Up/Down, and Ctrl+Page Up/Down navigation; Escape and Done return focus to the trigger. It preserves the raw date fields for the current app session, reports incomplete, impossible, and reversed ranges inline, and uses one shared filtered Markdown selection for the visible list, copy, and export. A release without a catalog decoration shows neither a borrowed code name nor a fallback photo.
 
 ## Configuration
 
-The date fields accept ISO `YYYY-MM-DD` and locale-ordered numeric dates, keep invalid or partial input visible, and persist only in session storage. Search uses its own adjacent regex builder. The richer anchored calendar with month/year jump, range selection, and named presets is not implemented yet.
+The date fields accept ISO `YYYY-MM-DD` and Windows-locale-ordered numeric dates, keep invalid or partial input visible, and persist only in session storage. Calendar and preset choices write the same date fields, so typing and picking never become competing filters. Search keeps its own adjacent regex builder and independent state.
 
 ## Failure modes
 
@@ -29,7 +29,7 @@ Release notes are factual records. Security fixes must remain specific enough to
 
 ## Verification
 
-Focused unit tests cover ISO and invalid calendar parsing, reversed ranges, session-compatible raw-input persistence, composed search/date filtering, filtered Markdown serialization, and the catalog-exhausted release contract. The renderer consumes the filtering helpers for the visible list, clipboard copy, and export. Site verification exercises both decorated and installer-only published metadata. No generated release-data source, complete calendar picker, or expanded in-app released-version corpus exists.
+Focused unit tests cover ISO and locale parsing, distinct partial/format/calendar errors, reversed ranges, session-compatible raw-input persistence, deterministic presets, month-grid navigation, composed search/date filtering, filtered Markdown serialization, and the catalog-exhausted release contract. A real-Electron scenario covers the anchored non-modal dialog, roving keyboard focus, direct year jump, previous/next month navigation, a cross-month range, focus return, and simultaneous text/date filtering. The renderer consumes the same filtering helpers for the visible list, clipboard copy, and export. Site verification exercises both decorated and installer-only published metadata. Generated release data and broader screen-reader/display-scale certification remain open.
 
 ## Suggested articles
 

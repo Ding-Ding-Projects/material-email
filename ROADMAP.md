@@ -54,7 +54,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Give command-palette search its own plain-text-first model, adjacent anchored regex builder, invalid-pattern execution guard, and focused real-Electron proof
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
 - [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 51 files / 268 tests on the current tree; focused local-iCalendar controls passed 1 / 1 real-Electron scenario; broader evidence remains listed in `HANDOFF.md`)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 51 files / 270 tests on the current tree; focused local-iCalendar and changelog-calendar controls each passed 1 / 1 real-Electron scenario; broader evidence remains listed in `HANDOFF.md`)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling matrices (the primary workspace-tab Arrow/Home/End slice alone is verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
@@ -102,6 +102,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] Complete appearance editing for every element, including picker self-customization and import/export
 - [x] Add persisted tab pinning, fixed grouping, overflow, reviewed bulk close, and four independent discovery searches
 - [x] Expand the factual in-app changelog to every audited published version (eleven versions through `v0.45.1` on 2026-08-01)
+- [x] Add an anchored bilingual changelog calendar with typed locale dates, range selection, month/year navigation, named presets, keyboard focus, and composed search
 - [x] Add the off-by-default serialized TTS narrator foundation
 - [ ] Prove narrator coexistence with screen readers, quiet settings, and natural Hong Kong Cantonese voices
 - [x] Add the 1% startup dim-sum draw using a bundled verified local catalog

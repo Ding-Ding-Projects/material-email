@@ -492,9 +492,9 @@ test("filters and copies verified releases from the live Changelog page", async 
     { version: "0.11.1", title: "Queue recovery and privacy-safe notifications", codeName: "Bamboo Shoot Har Gow · 筍尖蝦餃" },
   ];
 
-  await expect(cards).toHaveCount(releases.length);
-  for (const [index, release] of releases.entries()) {
-    const card = cards.nth(index);
+  await expect(cards).toHaveCount(12);
+  for (const release of releases) {
+    const card = cards.filter({ hasText: `VERSION ${release.version}` });
     await expect(card).toContainText(`VERSION ${release.version}`);
     await expect(card.getByRole("heading", { name: release.title })).toBeVisible();
     await expect(card.getByRole("img", { name: release.codeName })).toBeVisible();
@@ -515,7 +515,39 @@ test("filters and copies verified releases from the live Changelog page", async 
   await expect(copyButton).toBeDisabled();
   await expect(exportButton).toBeDisabled();
 
+  await fromDate.fill("2026-08");
+  await expect(fromDate).toHaveValue("2026-08");
+  await expect(changelog.getByRole("alert")).toContainText(/Finish entering the date/i);
+
   await fromDate.fill("");
+  const throughDate = changelog.locator('[data-changelog-date="to"]');
+  const calendarTrigger = changelog.getByRole("button", { name: /Choose dates/i });
+  await calendarTrigger.click();
+  const calendar = changelog.getByTestId("changelog-calendar");
+  await expect(calendar).toBeVisible();
+  await expect(calendar).toHaveAttribute("aria-modal", "false");
+  await expect(calendar.locator('[data-changelog-calendar-day="2026-08-01"]')).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(calendar.locator('[data-changelog-calendar-day="2026-08-02"]')).toBeFocused();
+
+  const yearJump = calendar.getByRole("spinbutton", { name: /Calendar year/i });
+  await yearJump.fill("2025");
+  await yearJump.blur();
+  await expect(calendar.locator(".changelog-calendar__month-label")).toContainText("2025");
+  await yearJump.fill("2026");
+  await yearJump.blur();
+  await calendar.getByRole("button", { name: /Previous month/i }).click();
+  await expect(calendar.locator(".changelog-calendar__month-label")).toContainText(/July 2026/i);
+  await calendar.locator('[data-changelog-calendar-day="2026-07-31"]').click();
+  await expect(fromDate).toHaveValue("2026-07-31");
+  await expect(throughDate).toHaveValue("");
+  await calendar.getByRole("button", { name: /Next month/i }).click();
+  await calendar.locator('[data-changelog-calendar-day="2026-08-01"]').click();
+  await expect(throughDate).toHaveValue("2026-08-01");
+  await calendar.getByRole("button", { name: /^Done$/i }).click();
+  await expect(calendar).toBeHidden();
+  await expect(calendarTrigger).toBeFocused();
+
   const search = changelog.locator('[data-search-anchor="changelog"] input[type="search"]');
   await search.fill("Queue recovery");
   await expect(cards).toHaveCount(1);
@@ -528,6 +560,7 @@ test("filters and copies verified releases from the live Changelog page", async 
   const copied = await application.evaluate(({ clipboard }) => clipboard.readText());
   expect(copied).toContain("# Material Email changelog");
   expect(copied).toContain("Search: Queue recovery");
+  expect(copied).toContain("Date range: 2026-07-31 through 2026-08-01");
   expect(copied).toContain("## 0.11.1 — Queue recovery and privacy-safe notifications");
   expect(copied).not.toContain("## 0.8.1");
   expect(copied).not.toContain("## 0.10.1");

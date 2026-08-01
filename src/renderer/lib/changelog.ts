@@ -10,7 +10,7 @@ export interface ChangelogEntry {
 export interface ParsedDate {
   raw: string;
   isoDate: string | null;
-  error: "format" | "calendar" | null;
+  error: "partial" | "format" | "calendar" | null;
 }
 
 export interface DateRange {
@@ -23,6 +23,13 @@ export interface DateRange {
 export interface ChangelogDateInputs {
   from: string;
   to: string;
+}
+
+export type ChangelogDatePreset = "all" | "last-30-days" | "this-month" | "this-year";
+
+export interface ChangelogCalendarDay {
+  day: number;
+  isoDate: string;
 }
 
 interface SessionStorageLike {
@@ -46,6 +53,9 @@ const canonical = (year: number, month: number, day: number): string | null => {
 
 const boundedDateInput = (value: unknown): string =>
   typeof value === "string" ? value.slice(0, CHANGELOG_DATE_INPUT_LIMIT) : "";
+
+export const localIsoDate = (date = new Date()): string =>
+  `${String(date.getFullYear()).padStart(4, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
 export const readChangelogDateInputs = (
   storage: SessionStorageLike,
@@ -87,6 +97,10 @@ export const parseDateInput = (raw: string, locale = "en-CA"): ParsedDate => {
     return { raw, isoDate: value, error: value ? null : "calendar" };
   }
 
+  if (/^[\d\s./-]+$/u.test(text) && (text.match(/\d+/gu)?.length ?? 0) < 3) {
+    return { raw, isoDate: null, error: "partial" };
+  }
+
   const parts = text.match(/\d+/gu);
   if (!parts || parts.length !== 3) return { raw, isoDate: null, error: "format" };
 
@@ -118,6 +132,58 @@ export const validateDateRange = (fromRaw: string, toRaw: string, locale = "en-C
   const to = parseDateInput(toRaw, locale);
   const error = from.isoDate && to.isoDate && from.isoDate > to.isoDate ? "inverted" : null;
   return { from, to, valid: !from.error && !to.error && !error, error };
+};
+
+export const changelogDateRangeForPreset = (
+  preset: ChangelogDatePreset,
+  today = localIsoDate(),
+): ChangelogDateInputs => {
+  const parsedToday = parseDateInput(today);
+  if (!parsedToday.isoDate) return { from: "", to: "" };
+  if (preset === "all") return { from: "", to: "" };
+
+  const [year, month, day] = parsedToday.isoDate.split("-").map(Number) as [number, number, number];
+  if (preset === "this-month") {
+    return { from: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`, to: parsedToday.isoDate };
+  }
+  if (preset === "this-year") {
+    return { from: `${String(year).padStart(4, "0")}-01-01`, to: parsedToday.isoDate };
+  }
+
+  const start = new Date(Date.UTC(year, month - 1, day));
+  start.setUTCDate(start.getUTCDate() - 29);
+  return { from: start.toISOString().slice(0, 10), to: parsedToday.isoDate };
+};
+
+export const shiftChangelogMonth = (isoMonth: string, delta: number): string => {
+  const match = /^(\d{4})-(\d{2})$/u.exec(isoMonth);
+  if (!match || !Number.isInteger(delta)) return isoMonth;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (year < 1 || year > 9999 || month < 1 || month > 12) return isoMonth;
+  const shifted = Math.min(9999 * 12 - 1, Math.max(0, (year - 1) * 12 + month - 1 + delta));
+  return `${String(Math.floor(shifted / 12) + 1).padStart(4, "0")}-${String(shifted % 12 + 1).padStart(2, "0")}`;
+};
+
+export const changelogCalendarWeeks = (isoMonth: string): Array<Array<ChangelogCalendarDay | null>> => {
+  const match = /^(\d{4})-(\d{2})$/u.exec(isoMonth);
+  if (!match) return [];
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (year < 1 || year > 9999 || month < 1 || month > 12) return [];
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const cells: Array<ChangelogCalendarDay | null> = Array.from({ length: firstWeekday }, () => null);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push({
+      day,
+      isoDate: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    });
+  }
+  while (cells.length % 7) cells.push(null);
+  const weeks: Array<Array<ChangelogCalendarDay | null>> = [];
+  for (let index = 0; index < cells.length; index += 7) weeks.push(cells.slice(index, index + 7));
+  return weeks;
 };
 
 const searchableEntryText = (entry: ChangelogEntry): string =>

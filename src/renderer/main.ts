@@ -77,11 +77,16 @@ import type { TabStyleOverrides } from "./lib/tab-appearance";
 import { classifyRendererDelivery, shouldKeepComposerOpen } from "./lib/delivery";
 import {
   CHANGELOG_DATE_INPUT_LIMIT,
+  changelogCalendarWeeks,
+  changelogDateRangeForPreset,
   changelogMarkdown,
   filterChangelogEntries,
+  localIsoDate,
   persistChangelogDateInputs,
   readChangelogDateInputs,
+  shiftChangelogMonth,
   validateDateRange,
+  type ChangelogDatePreset,
   type ChangelogDateInputs,
   type ChangelogEntry,
 } from "./lib/changelog";
@@ -202,6 +207,13 @@ interface FiltersState {
   historyActions: Set<HistoryRecord["kind"]>;
 }
 
+interface ChangelogCalendarState {
+  open: boolean;
+  visibleMonth: string;
+  focusDate: string;
+  selecting: "start" | "end";
+}
+
 type ContactsView = "people" | "lists" | "activity";
 type PimEntityKind = PimTransaction["entityKind"];
 
@@ -265,6 +277,7 @@ interface RendererState {
   confirmation: ConfirmationState | null;
   filters: FiltersState;
   changelogDates: ChangelogDateInputs;
+  changelogCalendar: ChangelogCalendarState;
   bulkInverse: boolean;
   bulkIncludePinned: boolean;
   selectedTabGroup: TabDefinition["group"];
@@ -415,6 +428,12 @@ const state: RendererState = {
   confirmation: null,
   filters: { historyFrom: "", historyTo: "", historyActions: new Set() },
   changelogDates: readChangelogDateInputs(sessionStorage),
+  changelogCalendar: {
+    open: false,
+    visibleMonth: localIsoDate().slice(0, 7),
+    focusDate: localIsoDate(),
+    selecting: "start",
+  },
   bulkInverse: false,
   bulkIncludePinned: false,
   selectedTabGroup: "workspace",
@@ -3030,11 +3049,102 @@ function currentChangelogSelection(): {
   };
 }
 
-const changelogInputError = (error: "format" | "calendar" | null): string => {
+const changelogInputError = (error: "partial" | "format" | "calendar" | null): string => {
+  if (error === "partial") return tx("Finish entering the date; your text has been kept.", "請輸入完整日期；你打咗嘅文字仲喺度，冇走失。 ");
   if (error === "calendar") return tx("Enter a real calendar date.", "請輸入真實存在嘅日曆日期。 ");
   if (error === "format") return tx("Enter a complete date as YYYY-MM-DD or in your Windows date format.", "請用 YYYY-MM-DD 或者你嘅 Windows 日期格式輸入完整日期。 ");
   return "";
 };
+
+const changelogCalendarDateLabel = (isoDate: string): string => {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  return tx(
+    new Intl.DateTimeFormat("en-CA", { dateStyle: "full", timeZone: "UTC" }).format(date),
+    new Intl.DateTimeFormat("zh-HK", { dateStyle: "full", timeZone: "UTC" }).format(date),
+  );
+};
+
+const changelogCalendarFocusDate = (): string => {
+  const { visibleMonth, focusDate } = state.changelogCalendar;
+  return focusDate.startsWith(`${visibleMonth}-`) ? focusDate : `${visibleMonth}-01`;
+};
+
+function renderChangelogCalendar(range: ReturnType<typeof validateDateRange>): string {
+  const { visibleMonth, selecting } = state.changelogCalendar;
+  const [year, month] = visibleMonth.split("-").map(Number) as [number, number];
+  const today = localIsoDate();
+  const focusDate = changelogCalendarFocusDate();
+  const monthLabel = tx(
+    new Intl.DateTimeFormat("en-CA", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1))),
+    new Intl.DateTimeFormat("zh-HK", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1))),
+  );
+  const monthOptions = Array.from({ length: 12 }, (_, index) => {
+    const value = index + 1;
+    const label = tx(
+      new Intl.DateTimeFormat("en-CA", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2020, index, 1))),
+      new Intl.DateTimeFormat("zh-HK", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2020, index, 1))),
+    );
+    return `<option value="${value}" ${month === value ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+  const weekdayLabels = Array.from({ length: 7 }, (_, weekday) => {
+    const date = new Date(Date.UTC(2026, 7, 2 + weekday));
+    const full = tx(
+      new Intl.DateTimeFormat("en-CA", { weekday: "long", timeZone: "UTC" }).format(date),
+      new Intl.DateTimeFormat("zh-HK", { weekday: "long", timeZone: "UTC" }).format(date),
+    );
+    const short = tx(
+      new Intl.DateTimeFormat("en-CA", { weekday: "narrow", timeZone: "UTC" }).format(date),
+      new Intl.DateTimeFormat("zh-HK", { weekday: "narrow", timeZone: "UTC" }).format(date),
+    );
+    return `<span role="columnheader" aria-label="${escapeHtml(full)}">${escapeHtml(short)}</span>`;
+  }).join("");
+  const from = range.from.isoDate;
+  const to = range.to.isoDate;
+  const weeks = changelogCalendarWeeks(visibleMonth).map(week => `<div class="changelog-calendar__week" role="row">${week.map(day => {
+    if (!day) return `<span class="changelog-calendar__blank" role="gridcell" aria-hidden="true"></span>`;
+    const inRange = Boolean(from && day.isoDate >= from && (!to || day.isoDate <= to));
+    const isStart = day.isoDate === from;
+    const isEnd = day.isoDate === to;
+    const classes = [
+      "changelog-calendar__day",
+      inRange ? "is-in-range" : "",
+      isStart ? "is-range-start" : "",
+      isEnd ? "is-range-end" : "",
+      day.isoDate === today ? "is-today" : "",
+    ].filter(Boolean).join(" ");
+    return `<button class="${classes}" type="button" role="gridcell" data-action="select-changelog-date" data-changelog-calendar-day="${day.isoDate}" data-focus-key="changelog-calendar-day-${day.isoDate}" tabindex="${day.isoDate === focusDate ? "0" : "-1"}" aria-selected="${inRange}" ${day.isoDate === today ? `aria-current="date"` : ""} aria-label="${escapeHtml(changelogCalendarDateLabel(day.isoDate))}">${day.day}</button>`;
+  }).join("")}</div>`).join("");
+  const presets: Array<{ id: ChangelogDatePreset; label: string }> = [
+    { id: "last-30-days", label: tx("Last 30 days", "最近 30 日") },
+    { id: "this-month", label: tx("This month", "今個月") },
+    { id: "this-year", label: tx("This year", "今年") },
+    { id: "all", label: tx("All releases", "全部版本") },
+  ];
+  const status = selecting === "end" && from
+    ? tx(`Start ${from}. Choose an end date.`, `開始係 ${from}。請揀結束日期。`)
+    : from && to
+      ? tx(`Selected ${from} through ${to}. Choose a new start date to replace it.`, `已選 ${from} 至 ${to}。揀新開始日期就可以換過。`)
+      : tx("Choose the start date for the release range.", "請揀發佈日期範圍嘅開始日期。 ");
+  return `<aside class="changelog-calendar" id="changelog-calendar" role="dialog" aria-modal="false" aria-labelledby="changelog-calendar-title" aria-describedby="changelog-calendar-instructions" data-testid="changelog-calendar">
+    <header class="changelog-calendar__header"><div><p class="eyebrow">${escapeHtml(tx("DATE RANGE", "日期範圍"))}</p><h2 id="changelog-calendar-title">${escapeHtml(tx("Choose release dates", "選擇發佈日期"))}</h2></div><button class="icon-button" type="button" data-action="close-changelog-calendar" aria-label="${escapeHtml(tx("Close date picker", "關閉日期選擇器"))}">${icon("close")}</button></header>
+    <p class="changelog-calendar__instructions" id="changelog-calendar-instructions">${escapeHtml(tx("Pick a start and end date, use a preset, or keep typing in either field. Dates stay local to this app.", "揀開始同結束日期、用預設，或者繼續喺欄位打字。日期只會留喺呢個 App 本機。"))}</p>
+    <div class="preset-row" role="group" aria-label="${escapeHtml(tx("Date-range presets", "日期範圍預設"))}">${presets.map(preset => {
+      const value = changelogDateRangeForPreset(preset.id, today);
+      const active = state.changelogDates.from === value.from && state.changelogDates.to === value.to;
+      return `<button class="assist-chip${active ? " is-selected" : ""}" type="button" data-action="changelog-date-preset" data-changelog-date-preset="${preset.id}" data-focus-key="changelog-preset-${preset.id}" aria-pressed="${active}">${escapeHtml(preset.label)}</button>`;
+    }).join("")}</div>
+    <div class="changelog-calendar__navigation">
+      <button class="icon-button" type="button" data-action="shift-changelog-calendar" data-month-delta="-1" data-focus-key="changelog-calendar-previous" aria-label="${escapeHtml(tx("Previous month", "上個月"))}">${icon("back")}</button>
+      <label><span class="visually-hidden">${escapeHtml(tx("Month", "月份"))}</span><select data-changelog-calendar-month data-focus-key="changelog-calendar-month" aria-label="${escapeHtml(tx("Calendar month", "日曆月份"))}">${monthOptions}</select></label>
+      <label><span class="visually-hidden">${escapeHtml(tx("Year", "年份"))}</span><input type="number" min="1900" max="9999" value="${year}" data-changelog-calendar-year data-focus-key="changelog-calendar-year" aria-label="${escapeHtml(tx("Calendar year", "日曆年份"))}"/></label>
+      <button class="icon-button" type="button" data-action="shift-changelog-calendar" data-month-delta="1" data-focus-key="changelog-calendar-next" aria-label="${escapeHtml(tx("Next month", "下個月"))}">${icon("forward")}</button>
+    </div>
+    <div class="changelog-calendar__month-label" aria-live="polite">${escapeHtml(monthLabel)}</div>
+    <div class="changelog-calendar__grid" role="grid" aria-label="${escapeHtml(monthLabel)}"><div class="changelog-calendar__weekdays" role="row">${weekdayLabels}</div>${weeks}</div>
+    <p class="changelog-calendar__status" aria-live="polite">${escapeHtml(status)}</p>
+    <footer><button class="button button--text" type="button" data-action="clear-changelog-dates" data-focus-key="changelog-calendar-clear">${escapeHtml(tx("Clear dates", "清除日期"))}</button><span class="action-spacer"></span><button class="button button--filled" type="button" data-action="close-changelog-calendar">${escapeHtml(tx("Done", "完成"))}</button></footer>
+  </aside>`;
+}
 
 function renderChangelogPage(): string {
   const selection = currentChangelogSelection();
@@ -3053,9 +3163,10 @@ function renderChangelogPage(): string {
     <div class="filter-surface changelog-filter">
       <div class="page-search">${renderSearchField("changelog", tx("Search versions and changes", "搜尋版本同變更"))}</div>
       <div class="date-filter" role="group" aria-label="${escapeHtml(tx("Filter changelog by release date", "按發佈日期篩選更新記錄"))}">
-        <label class="field"><span>${escapeHtml(tx("Released from", "發佈日期由"))}</span><input type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="${CHANGELOG_DATE_INPUT_LIMIT}" placeholder="YYYY-MM-DD" value="${escapeHtml(state.changelogDates.from)}" data-changelog-date="from" data-focus-key="changelog-date-from" aria-invalid="${fromInvalid}" ${fromDescription ? `aria-describedby="${fromDescription}"` : ""}/>${fromError ? `<span class="field-error" id="changelog-date-from-error" role="alert">${escapeHtml(fromError)}</span>` : ""}</label>
+        <label class="field"><span>${escapeHtml(tx("Released from", "發佈日期由"))}</span><input type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="${CHANGELOG_DATE_INPUT_LIMIT}" placeholder="YYYY-MM-DD" value="${escapeHtml(state.changelogDates.from)}" data-changelog-date="from" data-focus-key="changelog-date-from" aria-invalid="${fromInvalid}" ${fromDescription ? `aria-describedby="${fromDescription}"` : ""}/><small>${escapeHtml(tx("ISO or your Windows date format", "ISO 或者你嘅 Windows 日期格式"))}</small>${fromError ? `<span class="field-error" id="changelog-date-from-error" role="alert">${escapeHtml(fromError)}</span>` : ""}</label>
         <span class="date-filter__separator" aria-hidden="true">—</span>
-        <label class="field"><span>${escapeHtml(tx("Released through", "發佈日期至"))}</span><input type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="${CHANGELOG_DATE_INPUT_LIMIT}" placeholder="YYYY-MM-DD" value="${escapeHtml(state.changelogDates.to)}" data-changelog-date="to" data-focus-key="changelog-date-to" aria-invalid="${toInvalid}" ${toDescription ? `aria-describedby="${toDescription}"` : ""}/>${toError ? `<span class="field-error" id="changelog-date-to-error" role="alert">${escapeHtml(toError)}</span>` : ""}</label>
+        <label class="field"><span>${escapeHtml(tx("Released through", "發佈日期至"))}</span><input type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="${CHANGELOG_DATE_INPUT_LIMIT}" placeholder="YYYY-MM-DD" value="${escapeHtml(state.changelogDates.to)}" data-changelog-date="to" data-focus-key="changelog-date-to" aria-invalid="${toInvalid}" ${toDescription ? `aria-describedby="${toDescription}"` : ""}/><small>${escapeHtml(tx("ISO or your Windows date format", "ISO 或者你嘅 Windows 日期格式"))}</small>${toError ? `<span class="field-error" id="changelog-date-to-error" role="alert">${escapeHtml(toError)}</span>` : ""}</label>
+        <div class="changelog-calendar-anchor"><button class="button button--outlined" type="button" data-action="toggle-changelog-calendar" data-focus-key="changelog-calendar-trigger" aria-haspopup="dialog" aria-expanded="${state.changelogCalendar.open}" aria-controls="changelog-calendar">${icon("calendar")}<span>${escapeHtml(tx("Choose dates", "選擇日期"))}</span></button>${state.changelogCalendar.open ? renderChangelogCalendar(range) : ""}</div>
       </div>
       ${rangeError ? `<div class="inline-banner inline-banner--error" id="changelog-date-range-error" role="alert">${icon("warning")}<span>${escapeHtml(rangeError)}</span></div>` : ""}
       <div class="filter-actions"><span aria-live="polite">${entries.length} ${escapeHtml(tx(entries.length === 1 ? "matching released version" : "matching released versions", "個符合嘅已發佈版本"))}</span><div class="button-row"><button class="button button--text" type="button" data-action="copy-changelog" ${selection.valid ? "" : "disabled"}>${icon("compose")}<span>${escapeHtml(tx("Copy filtered view", "複製已篩選檢視"))}</span></button><button class="button button--outlined" type="button" data-action="export-changelog" ${selection.valid ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export filtered notes", "匯出已篩選記錄"))}</span></button></div></div>
@@ -5160,6 +5271,48 @@ const runPaletteCommand = (commandId: string): void => {
   render();
 };
 
+const saveChangelogDates = (inputs: ChangelogDateInputs): void => {
+  state.changelogDates = inputs;
+  persistChangelogDateInputs(sessionStorage, state.changelogDates);
+};
+
+const setChangelogCalendarMonth = (visibleMonth: string): void => {
+  state.changelogCalendar.visibleMonth = visibleMonth;
+  const days = changelogCalendarWeeks(visibleMonth).flat().filter((day): day is NonNullable<typeof day> => Boolean(day));
+  const currentDay = Number(state.changelogCalendar.focusDate.slice(8, 10)) || 1;
+  const focusDay = days[Math.min(currentDay, days.length) - 1] ?? days[0];
+  if (focusDay) state.changelogCalendar.focusDate = focusDay.isoDate;
+};
+
+const openChangelogCalendar = (): void => {
+  const range = validateDateRange(state.changelogDates.from, state.changelogDates.to, changelogDateLocale());
+  const initial = range.from.isoDate ?? range.to.isoDate ?? changelogEntries()[0]?.date ?? localIsoDate();
+  state.changelogCalendar = {
+    open: true,
+    visibleMonth: initial.slice(0, 7),
+    focusDate: initial,
+    selecting: range.from.isoDate && !range.to.isoDate ? "end" : "start",
+  };
+  pendingFocusKey = `changelog-calendar-day-${initial}`;
+  render();
+};
+
+const closeChangelogCalendar = (): void => {
+  state.changelogCalendar.open = false;
+  pendingFocusKey = "changelog-calendar-trigger";
+  render();
+};
+
+const moveChangelogCalendarFocus = (days: number): void => {
+  const current = new Date(`${changelogCalendarFocusDate()}T00:00:00Z`);
+  current.setUTCDate(current.getUTCDate() + days);
+  const next = current.toISOString().slice(0, 10);
+  state.changelogCalendar.focusDate = next;
+  state.changelogCalendar.visibleMonth = next.slice(0, 7);
+  pendingFocusKey = `changelog-calendar-day-${next}`;
+  render();
+};
+
 const handleAction = async (button: HTMLElement): Promise<void> => {
   const action = button.dataset.action;
   if (!action) return;
@@ -5567,6 +5720,52 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       }
       render(); break;
     }
+    case "toggle-changelog-calendar":
+      if (state.changelogCalendar.open) closeChangelogCalendar(); else openChangelogCalendar();
+      break;
+    case "close-changelog-calendar": closeChangelogCalendar(); break;
+    case "shift-changelog-calendar": {
+      const delta = Number(button.dataset.monthDelta);
+      if (delta === -1 || delta === 1) {
+        setChangelogCalendarMonth(shiftChangelogMonth(state.changelogCalendar.visibleMonth, delta));
+        render();
+      }
+      break;
+    }
+    case "changelog-date-preset": {
+      const preset = button.dataset.changelogDatePreset;
+      if (preset === "all" || preset === "last-30-days" || preset === "this-month" || preset === "this-year") {
+        const inputs = changelogDateRangeForPreset(preset);
+        saveChangelogDates(inputs);
+        const focusDate = inputs.to || inputs.from || localIsoDate();
+        state.changelogCalendar.visibleMonth = focusDate.slice(0, 7);
+        state.changelogCalendar.focusDate = focusDate;
+        state.changelogCalendar.selecting = "start";
+        render();
+      }
+      break;
+    }
+    case "select-changelog-date": {
+      const isoDate = button.dataset.changelogCalendarDay;
+      if (!isoDate) break;
+      if (state.changelogCalendar.selecting === "start") {
+        saveChangelogDates({ from: isoDate, to: "" });
+        state.changelogCalendar.selecting = "end";
+      } else {
+        const from = validateDateRange(state.changelogDates.from, "", changelogDateLocale()).from.isoDate;
+        saveChangelogDates(!from || isoDate >= from ? { from: from ?? isoDate, to: isoDate } : { from: isoDate, to: from });
+        state.changelogCalendar.selecting = "start";
+      }
+      state.changelogCalendar.focusDate = isoDate;
+      state.changelogCalendar.visibleMonth = isoDate.slice(0, 7);
+      render();
+      break;
+    }
+    case "clear-changelog-dates":
+      saveChangelogDates({ from: "", to: "" });
+      state.changelogCalendar.selecting = "start";
+      render();
+      break;
     case "export-history": await exportHistory(); break;
     case "copy-changelog": await copyChangelog(); break;
     case "export-changelog": await exportChangelog(); break;
@@ -5624,6 +5823,11 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
 app.addEventListener("click", event => {
   const button = (event.target as Element).closest<HTMLElement>("[data-action]");
   if (button) { event.preventDefault(); void handleAction(button); return; }
+  if (state.changelogCalendar.open && !(event.target as Element).closest(".changelog-calendar-anchor")) {
+    state.changelogCalendar.open = false;
+    render();
+    return;
+  }
   if (state.contextMenu && !(event.target as Element).closest(".context-menu")) { state.contextMenu = null; render(); }
 });
 
@@ -5766,6 +5970,18 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
     if (control.dataset.historyDate === "from") state.filters.historyFrom = control.value;
     else state.filters.historyTo = control.value;
     render(); return;
+  }
+  if (control.dataset.changelogCalendarMonth !== undefined || control.dataset.changelogCalendarYear !== undefined) {
+    const picker = control.closest<HTMLElement>(".changelog-calendar");
+    const monthControl = picker?.querySelector<HTMLSelectElement>("[data-changelog-calendar-month]");
+    const yearControl = picker?.querySelector<HTMLInputElement>("[data-changelog-calendar-year]");
+    const month = Number(monthControl?.value);
+    const year = Number(yearControl?.value);
+    if (Number.isInteger(month) && month >= 1 && month <= 12 && Number.isInteger(year) && year >= 1900 && year <= 9999) {
+      setChangelogCalendarMonth(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`);
+      render();
+    }
+    return;
   }
   if (control.dataset.historyAction) {
     if (!(control instanceof HTMLInputElement)) return;
@@ -5939,6 +6155,27 @@ document.addEventListener("keydown", event => {
     }
     return;
   }
+  const calendarDay = target instanceof HTMLElement ? target.closest<HTMLElement>("[data-changelog-calendar-day]") : null;
+  if (state.changelogCalendar.open && calendarDay) {
+    const isoDate = calendarDay.dataset.changelogCalendarDay;
+    if (isoDate && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+      event.preventDefault();
+      if (event.key === "ArrowLeft") moveChangelogCalendarFocus(-1);
+      else if (event.key === "ArrowRight") moveChangelogCalendarFocus(1);
+      else if (event.key === "ArrowUp") moveChangelogCalendarFocus(-7);
+      else if (event.key === "ArrowDown") moveChangelogCalendarFocus(7);
+      else if (event.key === "Home" || event.key === "End") {
+        const weekday = new Date(`${isoDate}T00:00:00Z`).getUTCDay();
+        moveChangelogCalendarFocus(event.key === "Home" ? -weekday : 6 - weekday);
+      } else {
+        const delta = event.key === "PageUp" ? (event.ctrlKey ? -12 : -1) : event.ctrlKey ? 12 : 1;
+        setChangelogCalendarMonth(shiftChangelogMonth(state.changelogCalendar.visibleMonth, delta));
+        pendingFocusKey = `changelog-calendar-day-${state.changelogCalendar.focusDate}`;
+        render();
+      }
+      return;
+    }
+  }
   if (event.ctrlKey && event.key.toLowerCase() === "k") {
     event.preventDefault(); state.commandPaletteOpen = true; resetCommandPaletteSearch(); render(); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-focus-key="search-commands"]')?.focus()); return;
   }
@@ -5958,6 +6195,7 @@ document.addEventListener("keydown", event => {
       pendingFocusKey = "search-commands";
     }
     else if (state.commandPaletteOpen) state.commandPaletteOpen = false;
+    else if (state.changelogCalendar.open) { event.preventDefault(); closeChangelogCalendar(); return; }
     else if (state.pimEditor) { event.preventDefault(); requestPimEditorClose(); return; }
     else if (state.appearanceEditor) { event.preventDefault(); closeTabAppearanceEditor(); return; }
     else if (state.contextMenu) { event.preventDefault(); closeTabContextMenu(); return; }
