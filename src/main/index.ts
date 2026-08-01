@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { app, BrowserWindow, ipcMain, Notification, session, shell, type IpcMainInvokeEvent } from "electron";
 import type { z } from "zod";
 import { AppService } from "./app-service.js";
+import { nativeNotificationCopy } from "./native-notification-copy.js";
 import type {
   CalendarEventPatch,
   ContactPatch,
@@ -108,13 +109,8 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("notifications:native", ipcPayloadSchemas.nativeNotification, async ([kind]) => {
     if (!(await service.getPreferences()).nativeNotificationsEnabled || !Notification.isSupported()) return false;
     const title = "Material Email";
-    const english = kind === "error" ? "An email task needs your attention." : kind === "warning" ? "An email task needs review." : kind === "success" ? "An email task finished." : "Material Email has an update.";
-    const cantonese = kind === "error" ? "有封郵件工作要你留意。" : kind === "warning" ? "有封郵件工作要你覆核。" : kind === "success" ? "郵件工作完成喇。" : "Material Email 有新消息。";
     const prefs = await service.getPreferences();
-    const language = prefs.language;
-    const englishStyled = prefs.funnyEnglish >= 4 ? `${english} The inbox has raised a tiny eyebrow.` : english;
-    const cantoneseStyled = prefs.funnyCantonese >= 4 ? `${cantonese} 個收件匣輕輕挑咗下眉。` : cantonese;
-    const body = language === "yue" ? cantoneseStyled : language === "bilingual" ? `${englishStyled} · ${cantoneseStyled}` : englishStyled;
+    const body = nativeNotificationCopy(kind, prefs);
     new Notification({ title, body, silent: true }).show();
     return true;
   });
