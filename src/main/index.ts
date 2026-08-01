@@ -77,6 +77,7 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("mail:sync", ipcPayloadSchemas.accountId, ([accountId]) => service.syncAccount(accountId));
   handleValidated("mail:folders", ipcPayloadSchemas.accountId, ([accountId]) => service.listFolders(accountId));
   handleValidated("mail:messages", ipcPayloadSchemas.accountFolder, ([accountId, folderPath]) => service.listMessages(accountId, folderPath));
+  handleValidated("mail:unified-messages", ipcPayloadSchemas.unifiedFolder, ([folder]) => service.listUnifiedMessages(folder));
   handleValidated("mail:message", ipcPayloadSchemas.accountFolderMessage, ([accountId, folderPath, uid]) =>
     service.getMessage(accountId, folderPath, uid),
   );

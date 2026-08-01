@@ -24,6 +24,7 @@ const api: MaterialEmailApi = {
   syncAccount: accountId => ipcRenderer.invoke("mail:sync", accountId),
   listFolders: accountId => ipcRenderer.invoke("mail:folders", accountId),
   listMessages: (accountId, folderPath) => ipcRenderer.invoke("mail:messages", accountId, folderPath),
+  listUnifiedMessages: folder => ipcRenderer.invoke("mail:unified-messages", folder),
   getMessage: (accountId, folderPath, uid) => ipcRenderer.invoke("mail:message", accountId, folderPath, uid),
   setRemoteContentAllowed: (accountId, folderPath, uid, allowed) => ipcRenderer.invoke("mail:remote-content", accountId, folderPath, uid, allowed),
   saveAttachment: (accountId, folderPath, uid, index, review) => review

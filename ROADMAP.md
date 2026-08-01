@@ -62,7 +62,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] Interactive OAuth authorization flow and token lifecycle
 - [ ] POP support
 - [x] User-facing retry ceilings and conflict resolution for queued mail operations
-- [ ] Unified folders and cross-account views
+- [x] Local cached Unified Inbox, Starred, and Unread views with account attribution, shared regex search, and stable composite selection
+- [ ] Server-complete all-account synchronization, conversation threading, and scalable mail indexing
 - [ ] Conversation threading and complete search indexing
 - [x] Attachment risk classification and review-before-save warnings
 - [x] Local attachment quarantine with reviewed batch routing and accessible bilingual release/delete decisions

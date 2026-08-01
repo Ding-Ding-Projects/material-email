@@ -8,6 +8,8 @@
 
 Synchronization connects to IMAP, replays pending operations for the account, lists folders, then refreshes the Inbox and selected folder. Folder roles are inferred from IMAP special-use flags. Message summaries include addresses, subject, date, preview, unread/starred state, attachment presence, and size.
 
+The renderer also exposes local Unified Inbox, Starred, and Unread views. They aggregate only summaries already stored in those per-account caches, show the source account on every row, and reuse the mail search/regex builder. They do not trigger an all-account network pass, create conversation threads, or build a body index; see [Local unified folders](unified-folders.md).
+
 Read/star changes and moves attempt the server first. A false mutation result is a failure, not a successful no-op. If the operation cannot complete, an ordered pending operation is retained for the next sync; replay stops on the first error so later operations do not overtake it. Failed sends enter a local outbox and are retried after pending flag/move operations.
 
 Server moves require the IMAP MOVE capability. If it is absent, the operation fails closed before ImapFlow can fall back to a copy/delete sequence. A successful MOVE consumes the server-returned destination UID and UIDVALIDITY and never reuses the source UID as destination identity. The destination cache is updated only when that folder has an authoritative mapped cache; an unmapped or offline destination waits for its next refresh rather than receiving an invented local identity.
@@ -34,7 +36,7 @@ Keep account connections short-lived, close them on every path, and never log pr
 
 ## Verification
 
-The current local gate covers false IMAP mutation results, MOVE capability fail-closed behavior, destination UID/UIDVALIDITY mapping, source-UID non-reuse, expected-generation refusal under the mailbox lock, stale-detail suppression, safe queued-operation replay, deferred refresh of unmapped/offline destinations, and four deterministic renderer request races. No live offline/online replay, provider MOVE-variant, broad UIDVALIDITY reset, simultaneous-client conflict, high-volume mailbox, or network-interruption matrix has completed.
+The current local gate covers false IMAP mutation results, MOVE capability fail-closed behavior, destination UID/UIDVALIDITY mapping, source-UID non-reuse, expected-generation refusal under the mailbox lock, stale-detail suppression, safe queued-operation replay, deferred refresh of unmapped/offline destinations, local unified-folder aggregation/selection, and deterministic renderer request races. No live offline/online replay, provider MOVE-variant, broad UIDVALIDITY reset, simultaneous-client conflict, high-volume mailbox, all-account refresh, or network-interruption matrix has completed.
 
 ## Suggested articles
 

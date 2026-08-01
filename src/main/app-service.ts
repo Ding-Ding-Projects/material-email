@@ -47,6 +47,7 @@ import type {
   AttachmentBatchSaveOutcome,
   AttachmentSaveOutcome,
   QuarantinedAttachment,
+  UnifiedFolderKind,
 } from "../shared/contracts.js";
 import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT, LOCAL_HISTORY_RETENTION_DAYS_DEFAULT } from "../shared/contracts.js";
 import {
@@ -78,6 +79,7 @@ import {
   type StoredAccount,
 } from "./persisted-state.js";
 import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
+import { collectCachedUnifiedMessages } from "../shared/unified-folders.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -475,6 +477,15 @@ export class AppService {
       draft.messages[key] = messages;
     });
     return messages;
+  }
+
+  async listUnifiedMessages(folder: UnifiedFolderKind): Promise<MessageSummary[]> {
+    const state = await this.#store.read();
+    return collectCachedUnifiedMessages(folder, {
+      accountIds: state.accounts.map(account => account.id),
+      folders: state.folders,
+      messages: state.messages,
+    });
   }
 
   async getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail> {

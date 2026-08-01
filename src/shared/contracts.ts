@@ -103,6 +103,8 @@ export interface FolderSummary {
   uidValidity?: string;
 }
 
+export type UnifiedFolderKind = "inbox" | "starred" | "unread";
+
 export interface Address {
   name: string;
   address: string;
@@ -408,6 +410,7 @@ export interface MaterialEmailApi {
   syncAccount(accountId: string): Promise<SyncResult>;
   listFolders(accountId: string): Promise<FolderSummary[]>;
   listMessages(accountId: string, folderPath: string): Promise<MessageSummary[]>;
+  listUnifiedMessages(folder: UnifiedFolderKind): Promise<MessageSummary[]>;
   getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail>;
   setRemoteContentAllowed(accountId: string, folderPath: string, uid: number, allowed: boolean): Promise<MessageDetail>;
   saveAttachment(accountId: string, folderPath: string, uid: number, index: number, review?: AttachmentSaveReview): Promise<AttachmentSaveOutcome>;

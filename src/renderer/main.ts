@@ -37,6 +37,7 @@ import type {
   TaskPatch,
   TransactionFilter,
   ExternalLinkReviewRequest,
+  UnifiedFolderKind,
 } from "../shared/contracts";
 import {
   AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
@@ -77,6 +78,7 @@ import {
 } from "./lib/regex";
 import { deletionEvidenceDescription, diffLineDescription, filterLocalRevisions, retentionPreviewDescription } from "./lib/local-history";
 import { filterPaletteCommands } from "./lib/command-search";
+import { selectStableMessageId } from "../shared/unified-folders";
 
 type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
 type ToastKind = NotificationRecord["kind"];
@@ -191,6 +193,7 @@ interface RendererState {
   activeTab: PageId;
   accountId: string | null;
   folderPath: string | null;
+  unifiedFolder: UnifiedFolderKind | null;
   folders: FolderSummary[];
   messages: MessageSummary[];
   detail: MessageDetail | null;
@@ -307,6 +310,7 @@ const state: RendererState = {
   activeTab: "mail",
   accountId: null,
   folderPath: null,
+  unifiedFolder: null,
   folders: [],
   messages: [],
   detail: null,
@@ -622,6 +626,14 @@ const renderToasts = (): void => {
 const activeAccount = (): AccountSummary | null => state.bootstrap?.accounts.find(account => account.id === state.accountId) ?? null;
 const activeMessage = (): MessageSummary | null => state.messages.find(message => message.id === state.selectedMessageId) ?? null;
 const folderByRole = (role: FolderSummary["role"]): FolderSummary | null => state.folders.find(folder => folder.role === role) ?? null;
+const unifiedFolderLabel = (folder: UnifiedFolderKind): string => folder === "inbox"
+  ? tx("Unified Inbox", "統一收件匣")
+  : folder === "starred"
+    ? tx("Starred", "已加星號")
+    : tx("Unread", "未讀");
+const messageBelongsToCurrentView = (message: MessageSummary): boolean => state.unifiedFolder
+  ? state.messages.some(candidate => candidate.id === message.id)
+  : state.accountId === message.accountId && state.folderPath === message.folderPath;
 const isBusy = (key?: string): boolean => key ? state.busy.has(key) : state.busy.size > 0;
 
 const withBusy = async (key: string, operation: () => Promise<void>): Promise<void> => {
@@ -748,10 +760,9 @@ const loadMessage = async (message: MessageSummary, navigationSequence = mailNav
   const requestSequence = ++messageRequestSequence;
   const ownsRequest = (): boolean => requestSequence === messageRequestSequence
     && navigationSequence === mailNavigationSequence
-    && state.accountId === message.accountId
-    && state.folderPath === message.folderPath
+    && messageBelongsToCurrentView(message)
     && state.selectedMessageId === message.id;
-  if (navigationSequence !== mailNavigationSequence || state.accountId !== message.accountId || state.folderPath !== message.folderPath) return;
+  if (navigationSequence !== mailNavigationSequence || !messageBelongsToCurrentView(message)) return;
   state.selectedMessageId = message.id;
   state.detail = null;
   state.busy.add("message");
@@ -796,6 +807,44 @@ interface MailNavigationOwner {
 
 const beginMailNavigation = (): number => ++mailNavigationSequence;
 
+const loadUnifiedFolder = async (folder: UnifiedFolderKind, owner?: MailNavigationOwner): Promise<void> => {
+  const accountId = owner?.accountId ?? state.accountId;
+  if (!accountId) return;
+  const navigationSequence = owner?.navigationSequence ?? beginMailNavigation();
+  if (navigationSequence !== mailNavigationSequence || state.accountId !== accountId) return;
+  const requestSequence = ++folderRequestSequence;
+  const previousMessageId = state.selectedMessageId;
+  const previousIndex = Math.max(0, state.messages.findIndex(message => message.id === previousMessageId));
+  const previousDetail = state.detail;
+  const ownsRequest = (): boolean => requestSequence === folderRequestSequence
+    && navigationSequence === mailNavigationSequence
+    && state.accountId === accountId
+    && state.unifiedFolder === folder;
+  state.unifiedFolder = folder;
+  state.folderPath = null;
+  state.messages = [];
+  state.selectedMessageId = null;
+  state.detail = null;
+  state.busy.add("folder");
+  render();
+  try {
+    const messages = await api.listUnifiedMessages(folder);
+    if (!ownsRequest()) return;
+    state.messages = messages;
+    state.selectedMessageId = selectStableMessageId(messages, previousMessageId, previousIndex);
+    const selected = activeMessage();
+    if (selected && previousDetail?.id === selected.id) state.detail = previousDetail;
+    else if (selected) await loadMessage(selected, navigationSequence);
+  } catch (error) {
+    if (ownsRequest()) pushToast("error", "Could not load unified folder", errorMessage(error), "載入唔到統一資料夾", errorMessage(error));
+  } finally {
+    if (requestSequence === folderRequestSequence) {
+      state.busy.delete("folder");
+      render();
+    }
+  }
+};
+
 const loadFolder = async (folderPath: string, persist = true, owner?: MailNavigationOwner): Promise<void> => {
   const accountId = owner?.accountId ?? state.accountId;
   if (!accountId) return;
@@ -805,7 +854,9 @@ const loadFolder = async (folderPath: string, persist = true, owner?: MailNaviga
   const ownsRequest = (): boolean => requestSequence === folderRequestSequence
     && navigationSequence === mailNavigationSequence
     && state.accountId === accountId
+    && state.unifiedFolder === null
     && state.folderPath === folderPath;
+  state.unifiedFolder = null;
   state.folderPath = folderPath;
   state.selectedMessageId = null;
   state.detail = null;
@@ -841,6 +892,7 @@ const loadAccount = async (accountId: string, synchronizeWhenEmpty = false): Pro
     && navigationSequence === mailNavigationSequence
     && state.accountId === accountId;
   state.accountId = accountId;
+  state.unifiedFolder = null;
   state.folders = [];
   state.messages = [];
   state.folderPath = null;
@@ -908,6 +960,7 @@ const syncCurrentAccount = async (): Promise<void> => {
   const account = activeAccount();
   if (!account || isBusy("sync")) return;
   const accountId = account.id;
+  const unifiedFolder = state.unifiedFolder;
   const requestSequence = ++syncRequestSequence;
   const navigationSequence = beginMailNavigation();
   const ownsRequest = (): boolean => requestSequence === syncRequestSequence
@@ -923,10 +976,13 @@ const syncCurrentAccount = async (): Promise<void> => {
     }
     if (!ownsRequest()) return;
     state.folders = result.folders;
-    const selected = state.folders.find(folder => folder.path === state.folderPath)
-      ?? state.folders.find(folder => folder.role === "inbox")
-      ?? state.folders[0];
-    if (selected) await loadFolder(selected.path, false, { navigationSequence, accountId });
+    if (unifiedFolder) await loadUnifiedFolder(unifiedFolder, { navigationSequence, accountId });
+    else {
+      const selected = state.folders.find(folder => folder.path === state.folderPath)
+        ?? state.folders.find(folder => folder.role === "inbox")
+        ?? state.folders[0];
+      if (selected) await loadFolder(selected.path, false, { navigationSequence, accountId });
+    }
     if (!ownsRequest()) return;
     if (!(await refreshMetadata(ownsRequest))) return;
     await refreshDraftAndOutbox();
@@ -950,6 +1006,10 @@ const toggleSelectedFlag = async (field: "unread" | "starred"): Promise<void> =>
     message[field] = next;
     if (state.detail) state.detail[field] = next;
     await refreshMetadata();
+    const unifiedFolder = state.unifiedFolder;
+    if ((field === "starred" && unifiedFolder === "starred") || (field === "unread" && unifiedFolder === "unread")) {
+      await loadUnifiedFolder(unifiedFolder);
+    }
     pushToast("success", "Message updated", field === "starred" ? (next ? "Star added." : "Star removed.") : (next ? "Marked unread." : "Marked read."), "郵件已更新", field === "starred" ? (next ? "粒星加咗。" : "粒星拎走咗。") : (next ? "標做未讀。" : "標做已讀。"));
   });
 };
@@ -957,6 +1017,10 @@ const toggleSelectedFlag = async (field: "unread" | "starred"): Promise<void> =>
 const moveSelectedMessage = async (destination: FolderSummary): Promise<void> => {
   const message = activeMessage();
   if (!message || destination.path === message.folderPath) return;
+  if (state.unifiedFolder) {
+    pushToast("warning", "Open the account folder before moving", "Unified folders do not guess destination folders across accounts.", "移動之前先開帳戶資料夾", "統一資料夾唔會跨帳戶估目的地。");
+    return;
+  }
   await withBusy("move", async () => {
     await api.moveMessage(message.accountId, message.folderPath, message.uid, destination.path);
     state.messages = state.messages.filter(item => item.id !== message.id);
@@ -1469,11 +1533,22 @@ function renderOutboxPage(): string {
   </section>`;
 }
 
+function messageAccountAttribution(message: MessageSummary): string {
+  const account = state.bootstrap?.accounts.find(candidate => candidate.id === message.accountId);
+  return account ? `${account.displayName} · ${account.email}` : message.accountId;
+}
+
 function filteredMessages(): MessageSummary[] {
   const model = searchFor("mail");
   if (!model.pattern) return state.messages;
   const matches = createMatcher(model);
-  return state.messages.filter(message => matches([message.subject, message.preview, addressLine(message.from), addressLine(message.to)].join("\n")));
+  return state.messages.filter(message => matches([
+    message.subject,
+    message.preview,
+    addressLine(message.from),
+    addressLine(message.to),
+    messageAccountAttribution(message),
+  ].join("\n")));
 }
 
 function renderMailPage(): string {
@@ -1808,7 +1883,18 @@ function renderTaskEditor(uid: string | null): string {
 
 function renderFolderPane(current: FolderSummary | undefined): string {
   return `<aside class="folder-pane" aria-label="${escapeHtml(tx("Mail folders", "郵件資料夾"))}">
-    <div class="pane-heading"><div><span class="overline">${escapeHtml(tx("ACCOUNT", "帳戶"))}</span><h2>${escapeHtml(activeAccount()?.displayName ?? "")}</h2></div><button class="icon-button" type="button" data-action="open-account-setup" aria-label="${escapeHtml(tx("Add account", "新增帳戶"))}" data-tooltip="${escapeHtml(tx("Add account", "新增帳戶"))}">${icon("account")}</button></div>
+    <div class="pane-heading"><div><span class="overline">${escapeHtml(tx("ON THIS COMPUTER", "喺呢部電腦"))}</span><h2>${escapeHtml(tx("Unified folders", "統一資料夾"))}</h2></div><button class="icon-button" type="button" data-action="open-account-setup" aria-label="${escapeHtml(tx("Add account", "新增帳戶"))}" data-tooltip="${escapeHtml(tx("Add account", "新增帳戶"))}">${icon("account")}</button></div>
+    <nav class="unified-folder-list" data-testid="unified-folder-list" aria-label="${escapeHtml(tx("Unified folders", "統一資料夾"))}">
+      ${(["inbox", "starred", "unread"] as const).map(folder => {
+        const selected = state.unifiedFolder === folder;
+        return `<button class="folder-row${selected ? " is-selected" : ""}" type="button" data-action="select-unified-folder" data-unified-folder="${folder}" aria-current="${selected ? "page" : "false"}">
+          <span class="folder-row__icon">${icon(folder === "inbox" ? "inbox" : folder === "starred" ? "star" : "unread")}</span>
+          <span class="folder-row__name">${escapeHtml(unifiedFolderLabel(folder))}</span>
+          ${selected ? `<span class="folder-row__total">${state.messages.length}</span>` : ""}
+        </button>`;
+      }).join("")}
+    </nav>
+    <div class="pane-section-label"><span class="overline">${escapeHtml(tx("ACCOUNT FOLDERS", "帳戶資料夾"))}</span><strong>${escapeHtml(activeAccount()?.displayName ?? "")}</strong></div>
     <nav class="folder-list" data-testid="folder-list" aria-label="${escapeHtml(tx("Folders", "資料夾"))}">
       ${state.folders.length ? state.folders.map(folder => {
         const selected = folder.path === current?.path;
@@ -1825,11 +1911,14 @@ function renderFolderPane(current: FolderSummary | undefined): string {
 
 function renderMessagePane(current: FolderSummary | undefined, messages: MessageSummary[], searchValid: boolean): string {
   const totalUnread = messages.filter(message => message.unread).length;
+  const unified = state.unifiedFolder;
+  const title = unified ? unifiedFolderLabel(unified) : current?.name ?? tx("Messages", "郵件");
   return `<section class="message-pane" aria-label="${escapeHtml(tx("Message list", "郵件清單"))}">
-    <header class="pane-heading message-pane__heading"><div><span class="overline">${escapeHtml(tx("FOLDER", "資料夾"))}</span><h2>${escapeHtml(current?.name ?? tx("Messages", "郵件"))}</h2></div><span class="count-pill">${messages.length}${totalUnread ? ` · ${totalUnread} ${escapeHtml(tx("unread", "未讀"))}` : ""}</span></header>
+    <header class="pane-heading message-pane__heading"><div><span class="overline">${escapeHtml(unified ? tx("LOCAL UNIFIED VIEW", "本機統一檢視") : tx("FOLDER", "資料夾"))}</span><h2>${escapeHtml(title)}</h2></div><span class="count-pill">${messages.length}${totalUnread ? ` · ${totalUnread} ${escapeHtml(tx("unread", "未讀"))}` : ""}</span></header>
+    ${unified ? `<p class="local-truth-note unified-folder-note" data-testid="unified-folder-truth">${icon("info")}<span>${escapeHtml(tx("Built only from summaries already cached on this computer. Synchronize each account to refresh its cache; server-wide coverage, threading, and a new search index are not implied.", "只會使用呢部電腦已有嘅郵件摘要快取。逐個帳戶同步先會更新各自快取；唔代表全伺服器覆蓋、threading 或者新搜尋索引。"))}</span></p>` : ""}
     ${isBusy("folder") ? `<div class="linear-progress" role="progressbar" aria-label="${escapeHtml(tx("Loading messages", "載入郵件"))}"></div>` : ""}
     <div class="message-list" data-testid="message-list" role="listbox" aria-label="${escapeHtml(tx("Messages", "郵件"))}" tabindex="0">
-      ${!searchValid ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(tx("Correct the regular expression to search messages.", "修正正規表達式先可以搜尋郵件。"))}</p></div>` : messages.length ? messages.map(renderMessageRow).join("") : `<div class="pane-empty"><span>${icon(searchFor("mail").pattern ? "search" : "inbox")}</span><h3>${escapeHtml(searchFor("mail").pattern ? tx("No matching messages", "冇符合嘅郵件") : tx("This folder is clear", "呢個資料夾好乾淨"))}</h3><p>${escapeHtml(searchFor("mail").pattern ? tx("Try different words or adjust the regex builder.", "試吓其他字，或者調整正規表達式建立器。") : tx("Synchronize to check the server for anything new.", "同步一下，睇吓伺服器有冇新嘢。"))}</p></div>`}
+      ${!searchValid ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(tx("Correct the regular expression to search messages.", "修正正規表達式先可以搜尋郵件。"))}</p></div>` : messages.length ? messages.map(renderMessageRow).join("") : `<div class="pane-empty"><span>${icon(searchFor("mail").pattern ? "search" : "inbox")}</span><h3>${escapeHtml(searchFor("mail").pattern ? tx("No matching messages", "冇符合嘅郵件") : unified ? tx("No cached messages in this view", "呢個檢視冇已快取郵件") : tx("This folder is clear", "呢個資料夾好乾淨"))}</h3><p>${escapeHtml(searchFor("mail").pattern ? tx("Try different words or adjust the regex builder.", "試吓其他字，或者調整正規表達式建立器。") : unified ? tx("Synchronize individual accounts, then refresh this local view.", "逐個帳戶同步，再重新整理呢個本機檢視。") : tx("Synchronize to check the server for anything new.", "同步一下，睇吓伺服器有冇新嘢。"))}</p></div>`}
     </div>
   </section>`;
 }
@@ -1841,7 +1930,7 @@ function renderMessageRow(message: MessageSummary): string {
   return `<div class="message-row${message.unread ? " is-unread" : ""}${selected ? " is-selected" : ""}" role="option" aria-selected="${selected}" data-message-id="${escapeHtml(message.id)}">
     <button class="message-row__main" type="button" data-action="select-message" data-message-id="${escapeHtml(message.id)}">
       <span class="avatar" aria-hidden="true">${escapeHtml(avatar)}</span>
-      <span class="message-row__copy"><span class="message-row__top"><strong>${escapeHtml(sender)}</strong><time datetime="${escapeHtml(message.date)}">${escapeHtml(formatDate(message.date))}</time></span><span class="message-row__subject">${escapeHtml(message.subject)}</span><span class="message-row__preview">${escapeHtml(message.preview)}</span></span>
+      <span class="message-row__copy"><span class="message-row__top"><strong>${escapeHtml(sender)}</strong><time datetime="${escapeHtml(message.date)}">${escapeHtml(formatDate(message.date))}</time></span>${state.unifiedFolder ? `<span class="message-row__account">${escapeHtml(messageAccountAttribution(message))}</span>` : ""}<span class="message-row__subject">${escapeHtml(message.subject)}</span><span class="message-row__preview">${escapeHtml(message.preview)}</span></span>
       ${message.hasAttachments ? `<span class="attachment-indicator" aria-label="${escapeHtml(tx("Has attachments", "有附件"))}">${icon("attach")}</span>` : ""}
     </button>
     <button class="star-button${message.starred ? " is-starred" : ""}" type="button" data-action="toggle-row-star" data-message-id="${escapeHtml(message.id)}" aria-label="${escapeHtml(message.starred ? tx("Remove star", "移除星號") : tx("Add star", "加入星號"))}">${icon("star")}</button>
@@ -1977,8 +2066,9 @@ function renderReaderPane(): string {
   if (isBusy("message") && !state.detail) return `<article class="reader-pane reader-pane--empty" aria-busy="true"><div class="circular-progress" role="progressbar" aria-label="${escapeHtml(tx("Opening message", "開啟郵件"))}"></div><p>${escapeHtml(tx("Opening message…", "正在開啟郵件……"))}</p></article>`;
   const detail = state.detail;
   if (!detail) return `<article class="reader-pane reader-pane--empty"><span class="hero-icon hero-icon--error">${icon("error")}</span><h2>${escapeHtml(tx("Message unavailable", "郵件暫時開唔到"))}</h2><button class="button button--outlined" type="button" data-action="retry-message">${icon("refresh")}<span>${escapeHtml(tx("Try again", "再試一次"))}</span></button></article>`;
-  const archive = folderByRole("archive");
-  const trash = folderByRole("trash");
+  const movesAvailable = state.unifiedFolder === null;
+  const archive = movesAvailable ? folderByRole("archive") : null;
+  const trash = movesAvailable ? folderByRole("trash") : null;
   return `<article class="reader-pane" aria-label="${escapeHtml(tx("Message reader", "郵件閱讀器"))}">
     <div class="reader-toolbar" role="toolbar" aria-label="${escapeHtml(tx("Message actions", "郵件操作"))}">
       <button class="button button--tonal" type="button" data-action="reply">${icon("reply")}<span>${escapeHtml(tx("Reply", "回覆"))}</span></button>
@@ -1986,10 +2076,11 @@ function renderReaderPane(): string {
       <span class="commandbar-spacer"></span>
       <button class="icon-button${detail.starred ? " is-starred" : ""}" type="button" data-action="toggle-selected-star" aria-label="${escapeHtml(detail.starred ? tx("Remove star", "移除星號") : tx("Add star", "加入星號"))}" data-tooltip="${escapeHtml(tx("Star", "星號"))}">${icon("star")}</button>
       <button class="icon-button" type="button" data-action="toggle-selected-unread" aria-label="${escapeHtml(detail.unread ? tx("Mark read", "標示為已讀") : tx("Mark unread", "標示為未讀"))}" data-tooltip="${escapeHtml(detail.unread ? tx("Mark read", "標示為已讀") : tx("Mark unread", "標示為未讀"))}">${icon("unread")}</button>
-      <div class="menu-field"><label class="visually-hidden" for="move-destination">${escapeHtml(tx("Move message", "移動郵件"))}</label><select id="move-destination" data-action-change="move-message" aria-label="${escapeHtml(tx("Move message to folder", "移動郵件到資料夾"))}"><option value="">${escapeHtml(tx("Move to…", "移動到……"))}</option>${state.folders.filter(folder => folder.path !== detail.folderPath).map(folder => `<option value="${escapeHtml(folder.path)}">${escapeHtml(folder.name)}</option>`).join("")}</select></div>
+      <div class="menu-field"><label class="visually-hidden" for="move-destination">${escapeHtml(tx("Move message", "移動郵件"))}</label><select id="move-destination" data-action-change="move-message" aria-label="${escapeHtml(tx("Move message to folder", "移動郵件到資料夾"))}" ${movesAvailable ? "" : "disabled"}><option value="">${escapeHtml(movesAvailable ? tx("Move to…", "移動到……") : tx("Open account folder to move", "開帳戶資料夾先移動"))}</option>${movesAvailable ? state.folders.filter(folder => folder.path !== detail.folderPath).map(folder => `<option value="${escapeHtml(folder.path)}">${escapeHtml(folder.name)}</option>`).join("") : ""}</select></div>
       ${archive ? `<button class="icon-button" type="button" data-action="archive-message" aria-label="${escapeHtml(tx("Archive", "封存"))}" data-tooltip="${escapeHtml(tx("Archive", "封存"))}">${icon("archive")}</button>` : ""}
       ${trash ? `<button class="icon-button danger-action" type="button" data-action="trash-message" aria-label="${escapeHtml(tx("Move to trash", "移到垃圾桶"))}" data-tooltip="${escapeHtml(tx("Trash", "垃圾桶"))}">${icon("trash")}</button>` : ""}
     </div>
+    ${state.unifiedFolder ? `<p class="local-truth-note reader-unified-note">${icon("info")}<span>${escapeHtml(tx("Reply, forward, star, and read-state actions keep the message's account identity. Open its account folder before moving it so this view never guesses a cross-account destination.", "回覆、轉寄、星號同已讀狀態都會保留郵件所屬帳戶。移動之前請開返該帳戶資料夾，避免呢個檢視跨帳戶亂估目的地。"))}</span></p>` : ""}
     <header class="message-header">
       <div class="avatar avatar--large" aria-hidden="true">${escapeHtml((displayAddress(detail.from[0] ?? { name: "", address: "?" }).charAt(0) || "?").toUpperCase())}</div>
       <div class="message-header__copy"><p class="eyebrow">${escapeHtml(tx("MESSAGE", "郵件"))}</p><h1>${escapeHtml(detail.subject)}</h1><p><strong>${escapeHtml(addressLine(detail.from) || tx("Unknown sender", "未知寄件人"))}</strong> <span>&lt;${escapeHtml(detail.from[0]?.address ?? "")}‌&gt;</span></p><p>${escapeHtml(tx("To", "寄給"))}: ${escapeHtml(addressLine(detail.to))}${detail.cc.length ? ` · ${escapeHtml(tx("Cc", "副本"))}: ${escapeHtml(addressLine(detail.cc))}` : ""}</p></div>
@@ -3807,6 +3898,7 @@ const handleConfirmation = async (): Promise<void> => {
       if (next) await loadAccount(next.id, false);
       else {
         state.accountId = null;
+        state.unifiedFolder = null;
         state.folders = [];
         state.messages = [];
         state.detail = null;
@@ -3951,6 +4043,7 @@ const toggleRowStar = async (id: string): Promise<void> => {
     message.starred = next;
     if (state.detail?.id === message.id) state.detail.starred = next;
     await refreshMetadata();
+    if (state.unifiedFolder === "starred") await loadUnifiedFolder("starred");
     pushToast("success", "Message updated", next ? "Star added." : "Star removed.", "郵件已更新", next ? "粒星加咗。" : "粒星拎走咗。 ");
   });
 };
@@ -4196,6 +4289,11 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       break;
     }
     case "sync": await syncCurrentAccount(); break;
+    case "select-unified-folder": {
+      const folder = button.dataset.unifiedFolder;
+      if (folder === "inbox" || folder === "starred" || folder === "unread") await loadUnifiedFolder(folder);
+      break;
+    }
     case "select-folder": if (button.dataset.folderPath) await loadFolder(button.dataset.folderPath); break;
     case "select-message": {
       const message = state.messages.find(item => item.id === button.dataset.messageId);

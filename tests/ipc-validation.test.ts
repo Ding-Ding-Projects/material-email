@@ -32,6 +32,13 @@ const riskyAttachmentReview = (): AttachmentSaveReview => ({
 });
 
 describe("non-PIM IPC validation", () => {
+  it("accepts only the three bounded unified-folder identifiers", () => {
+    expect(ipcPayloadSchemas.unifiedFolder.parse(["inbox"])).toEqual(["inbox"]);
+    expect(ipcPayloadSchemas.unifiedFolder.parse(["starred"])).toEqual(["starred"]);
+    expect(ipcPayloadSchemas.unifiedFolder.parse(["unread"])).toEqual(["unread"]);
+    expect(() => ipcPayloadSchemas.unifiedFolder.parse(["all-mail"])).toThrow();
+  });
+
   it("accepts a bounded account request and rejects unknown fields at every object layer", () => {
     expect(ipcPayloadSchemas.accountDraft.parse([accountDraft()])[0].email).toBe("demo@example.test");
     expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), unexpected: true }])).toThrow();

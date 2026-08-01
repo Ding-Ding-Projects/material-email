@@ -14,6 +14,7 @@ Material Email documentation is organized by feature area. Every article records
 - [Category index](mail/README.md)
 - [Accounts and connectivity](mail/accounts-and-connectivity.md)
 - [Synchronization and folders](mail/synchronization-and-folders.md)
+- [Local unified folders](mail/unified-folders.md)
 - [Reading and message safety](mail/reading-and-message-safety.md)
 - [Compose, drafts, and sending](mail/compose-drafts-and-sending.md)
 
