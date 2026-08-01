@@ -21,7 +21,7 @@ The provider module includes an isolated local interchange inspector and export 
 
 - Input is limited to 1 MiB, 20,000 physical lines, and 8,192 bytes per physical line.
 - vCard input must contain 1–2,000 balanced `VCARD` components, each declaring version 3.0 or 4.0.
-- iCalendar input must contain exactly one balanced version-2.0 `VCALENDAR` and 1–5,000 `VEVENT`/`VTODO` components.
+- iCalendar input must contain exactly one balanced version-2.0 `VCALENDAR` and 1–5,000 `VEVENT`/`VTODO` components. Every event/task must carry one non-empty unique `UID` (maximum 512 characters); orphaned folds and malformed property names are rejected rather than discarded.
 - `VTIMEZONE`, `VALARM`, `STANDARD`, and `DAYLIGHT` envelopes are structurally counted. `RRULE` values are counted and preserved as metadata; occurrences are never generated.
 - Scheduling `METHOD` payloads, iCalendar attachments, unsupported components, malformed nesting, NUL bytes, and oversized input are refused.
 - Valid export text is normalized to CRLF with a single final line ending after the same boundary checks pass.
@@ -46,7 +46,7 @@ The foundation imports no socket, DNS, HTTP, TLS, mail transport, credential-sto
 
 ## Verification
 
-- `npx vitest run tests/pim/provider-foundation.test.ts`: 1 file, 8 tests passed. Coverage includes state ordering, HTTPS and credential-bearing URL rejection, local ICS path/auth rules, deterministic capability facts, vCard/iCalendar bounds, recurrence metadata, scheduling/attachment refusal, malformed/oversized input, and a source dependency audit.
+- `npx vitest run tests/pim/provider-foundation.test.ts`: 1 file, 10 tests passed. Coverage includes state ordering, HTTPS and credential-bearing URL rejection, local ICS path/auth rules, deterministic capability facts, vCard/iCalendar bounds, recurrence metadata, scheduling/attachment refusal, UID uniqueness, malformed folds/property names, malformed/oversized input, and a source dependency audit.
 - `npm run typecheck`: passed.
 - `npm run build`: passed.
 - `npx playwright test tests/e2e/pim-provider-foundation.spec.ts --reporter=line`: 1 of 1 real-Electron scenario passed. It covers bilingual semantics, live-region roles, insecure-URL refusal, canonical HTTPS acceptance, unavailable capabilities, absent credential input, local ICS rules, and no horizontal overflow at 760 × 560.
