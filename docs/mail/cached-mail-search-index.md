@@ -10,7 +10,7 @@ Each valid query rebuilds at most 2,000 coherent cached documents. Fields includ
 
 The count beside the message-list heading identifies a complete result count or a localized “showing N of M” cap in English, Hong Kong Cantonese, and bilingual mode. It is a polite live status. Arrow Down from the mail search field moves keyboard focus into non-empty results. Invalid, no-match, and failed states keep the empty list out of the tab order and provide an explicit keyboard-reachable edit or retry action.
 
-The mail field persists only its validated `plain` or `regex` mode in renderer-local storage. Search text, regex samples, results, and failure details do not survive restart. A failed request leaves the query and cache unchanged, shows stable localized non-blocking copy without echoing raw IPC detail, and offers one explicit retry that issues one new bounded local request.
+The mail field persists only its validated `plain` or `regex` mode in renderer-local storage. Search text, regex samples, results, and failure details do not survive restart. A failed request leaves the query and cache unchanged, shows stable localized non-blocking copy without echoing raw IPC detail or the query text into a separate error surface, and offers one explicit retry that issues one new bounded local request. The query remains visible only in its user-owned search field so it can be edited deliberately.
 
 ## Failure modes and limits
 

@@ -62,6 +62,7 @@ import {
   POP3_MESSAGE_LIMIT_MAX,
   POP3_MESSAGE_LIMIT_MIN,
 } from "../shared/contracts";
+import { userVisibleErrorMessage } from "../shared/user-visible-error";
 import { icon, type IconName } from "./lib/icons";
 import { DEFAULT_APPEARANCE } from "./lib/appearance";
 import {
@@ -733,10 +734,7 @@ const formatBytes = (bytes: number): string => {
 const displayAddress = (address: { name: string; address: string }): string => address.name || address.address;
 const addressLine = (items: Array<{ name: string; address: string }>): string => items.map(displayAddress).join(", ");
 
-const errorMessage = (error: unknown): string => {
-  const raw = error instanceof Error ? error.message : String(error);
-  return raw.replace(/^Error invoking remote method '[^']+': Error:\s*/i, "").trim() || "An unknown error occurred.";
-};
+const errorMessage = (error: unknown): string => userVisibleErrorMessage(error);
 
 const announce = (message: string): void => {
   const accessibleMessage = preferences().language === "bilingual" ? selectBilingualText(message, "en") : message;

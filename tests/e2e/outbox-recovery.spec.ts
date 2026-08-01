@@ -52,7 +52,7 @@ test.beforeAll(async () => {
       draft: { id: "restart-draft-two", accountId: "demo", to: ["two@example.test"], cc: [], bcc: [], subject: "Restart proof two", text: "Second local queued fixture.", attachments: [] },
       createdAt: "2026-08-01T12:01:00.000Z",
       attempts: 1,
-      lastError: "Second offline fixture retained after restart",
+      lastError: String.raw`connect ECONNREFUSED C:\Users\private-user\mail\queued.eml https://smtp.example.test/send?token=private-token query=private-search ImapFlow`,
     },
   ];
   state.history.unshift(
@@ -98,5 +98,6 @@ test("keeps retry state after restart and exposes accessible bilingual recovery 
   await page.getByRole("tab", { name: /^Outbox/i }).click();
   const remaining = page.getByTestId("outbox-card").filter({ hasText: "Restart proof two" });
   await expect(remaining).toContainText("1 failed attempts");
-  await expect(remaining).toContainText("Second offline fixture retained after restart");
+  await expect(remaining).toContainText("The server refused the connection");
+  await expect(remaining).not.toContainText(/private-user|private-token|private-search|smtp\.example|ImapFlow/iu);
 });

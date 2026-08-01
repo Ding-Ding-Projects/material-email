@@ -99,6 +99,7 @@ import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-m
 import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
 import { inspectTlsCertificate } from "./tls-certificate-diagnostics.js";
 import { emptyMessageCryptoProfile, unsignedMessageCryptography } from "../shared/message-cryptography.js";
+import { userVisibleErrorMessage } from "../shared/user-visible-error.js";
 import {
   TAB_APPEARANCE_THEME_MAX_BYTES,
   parseTabAppearanceThemeText,
@@ -124,6 +125,14 @@ const folderKey = (accountId: string, folderPath: string): string => `${accountI
 
 const fileErrorCode = (error: unknown): string | undefined =>
   error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+
+const mailErrorMessage = (error: unknown): string => userVisibleErrorMessage(error, { context: "mail" });
+const publicMailError = (error: unknown): Error => new Error(mailErrorMessage(error), { cause: error });
+const hasLegacyMailErrorBody = (notification: NotificationRecord): boolean =>
+  notification.title === "Mail synchronization failed"
+  || notification.title === "Change queued for synchronization"
+  || notification.title === "Move queued for synchronization"
+  || notification.title === "Message queued in Outbox";
 
 const sameStringList = (left: string[] | undefined, right: string[] | undefined): boolean =>
   left === right || (left !== undefined && right !== undefined && left.length === right.length && left.every((value, index) => value === right[index]));
@@ -324,7 +333,9 @@ export class AppService {
     return {
       accounts: state.accounts.map(this.#publicAccount),
       preferences: state.preferences,
-      notifications: state.notifications,
+      notifications: state.notifications.map(notification => hasLegacyMailErrorBody(notification)
+        ? { ...notification, body: mailErrorMessage(notification.body) }
+        : notification),
       history: state.history,
       quarantinedAttachments: state.quarantinedAttachments,
       isFirstRun: state.accounts.length === 0,
@@ -395,7 +406,11 @@ export class AppService {
       messageCryptography: emptyMessageCryptoProfile(),
       encryptedSecret: safeStorage.encryptString(draft.secret).toString("base64"),
     };
-    await this.#mail.testAccount(this.#runtimeAccount(account));
+    try {
+      await this.#mail.testAccount(this.#runtimeAccount(account));
+    } catch (error) {
+      throw publicMailError(error);
+    }
     await this.#store.update(state => {
       state.accounts.push(account);
       state.preferences.selectedAccountId = account.id;
@@ -428,7 +443,11 @@ export class AppService {
       createdAt: new Date().toISOString(),
       secret: draft.secret,
     };
-    return this.#mail.testAccount(runtime);
+    try {
+      return await this.#mail.testAccount(runtime);
+    } catch (error) {
+      throw publicMailError(error);
+    }
   }
 
   async removeAccount(accountId: string): Promise<void> {
@@ -514,7 +533,7 @@ export class AppService {
       });
       return { folders, messages: batches.flatMap(([, rows]) => rows), syncedAt };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = mailErrorMessage(error);
       await this.#store.update(draft => {
         const item = draft.accounts.find(candidate => candidate.id === accountId);
         if (!item) return;
@@ -524,7 +543,7 @@ export class AppService {
           action: { kind: "retry", target: "sync", accountId },
         });
       });
-      throw error;
+      throw publicMailError(error);
     }
   }
 
@@ -803,7 +822,7 @@ export class AppService {
         await this.#mail.setFlags(this.#runtimeAccount(account), folderPath, uid, patch, uidValidity);
       } catch (error) {
         if (isMailboxGenerationMismatch(error)) throw error;
-        networkError = error instanceof Error ? error.message : String(error);
+        networkError = mailErrorMessage(error);
       }
     }
     await this.#store.update(draft => {
@@ -852,7 +871,7 @@ export class AppService {
         moveResult = await this.#mail.moveMessage(this.#runtimeAccount(account), folderPath, uid, destination, uidValidity);
       } catch (error) {
         if (isMailboxGenerationMismatch(error)) throw error;
-        networkError = error instanceof Error ? error.message : String(error);
+        networkError = mailErrorMessage(error);
       }
     }
     await this.#store.update(draft => {
@@ -926,7 +945,7 @@ export class AppService {
       try {
         result = await this.#mail.sendMessage(this.#runtimeAccount(account), draft);
       } catch (error) {
-        networkError = error instanceof Error ? error.message : String(error);
+        networkError = mailErrorMessage(error);
         result = { messageId: `outbox:${randomUUID()}`, accepted: [], rejected: [], queued: true };
       }
     }
@@ -1055,7 +1074,7 @@ export class AppService {
         ...(item.destination ? { destination: item.destination } : {}),
         createdAt: item.createdAt,
         attempts: item.attempts,
-        lastError: item.lastError,
+        lastError: mailErrorMessage(item.lastError),
         automaticAttemptLimit: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
         automaticRetryPaused: item.attempts >= AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
         isQueueHead: head?.kind === "pending" && head.id === item.id,
@@ -1085,7 +1104,7 @@ export class AppService {
         });
       } catch (error) {
         await this.#recordPendingFailure(operationId, error);
-        throw error;
+        throw publicMailError(error);
       }
     });
   }
@@ -1103,7 +1122,7 @@ export class AppService {
           "message",
           operation.id,
           `Discarded queued ${operation.kind} change for ${operation.folderPath} UID ${operation.uid}`,
-          operation,
+          { ...operation, lastError: mailErrorMessage(operation.lastError) },
         );
         this.#notify(
           state,
@@ -1122,7 +1141,7 @@ export class AppService {
     return state.outbox.filter(item => item.draft.accountId === accountId).map(item => ({
       id: item.id, accountId, recipientCount: item.draft.to.length + item.draft.cc.length + item.draft.bcc.length,
       subject: item.draft.subject, preview: item.draft.text.slice(0, 240), attachmentCount: item.draft.attachments.length,
-      createdAt: item.createdAt, attempts: item.attempts, lastError: item.lastError,
+      createdAt: item.createdAt, attempts: item.attempts, lastError: mailErrorMessage(item.lastError),
       automaticAttemptLimit: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
       automaticRetryPaused: item.attempts >= AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
       isQueueHead: head?.kind === "outbox" && head.id === item.id,
@@ -1667,7 +1686,7 @@ export class AppService {
   }
 
   async #recordPendingFailure(operationId: string, error: unknown): Promise<void> {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = mailErrorMessage(error);
     await this.#store.update(state => {
       const item = state.pendingOperations.find(candidate => candidate.id === operationId);
       if (!item) return;
@@ -1689,7 +1708,7 @@ export class AppService {
   }
 
   async #recordOutboxFailure(outboxId: string, error: unknown): Promise<void> {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = mailErrorMessage(error);
     await this.#store.update(state => {
       const item = state.outbox.find(candidate => candidate.id === outboxId);
       if (!item) return;
@@ -1716,7 +1735,7 @@ export class AppService {
       sent = await this.#mail.sendMessage(account, item.draft);
     } catch (error) {
       await this.#recordOutboxFailure(item.id, error);
-      throw error;
+      throw publicMailError(error);
     }
     const disposition = classifySendResult(sent);
     await this.#store.update(state => {
@@ -1970,7 +1989,7 @@ export class AppService {
 
   #publicAccount = (account: StoredAccount): AccountSummary => {
     const { encryptedSecret: _secret, ...safe } = account;
-    return safe;
+    return safe.syncError ? { ...safe, syncError: mailErrorMessage(safe.syncError) } : safe;
   };
 
   #runtimeAccount(account: StoredAccount): RuntimeAccount {

@@ -60,6 +60,23 @@ describe("HistoryRepository", () => {
     await expect(repository.label(latest.hash, "\n")).rejects.toThrow("1 to 120");
   });
 
+  it("redacts queued-mail transport detail from renderer-facing revision diffs", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "material-email-history-error-redaction-"));
+    const source = path.join(directory, "live-state.json");
+    const repository = new HistoryRepository(path.join(directory, "history"));
+
+    await writeFile(source, `${JSON.stringify({ outbox: [{ lastError: "waiting" }] }, null, 2)}\n`, "utf8");
+    await repository.snapshot(source);
+    await writeFile(source, `${JSON.stringify({ outbox: [{ lastError: String.raw`connect ECONNREFUSED C:\\Users\\private-user\\mail.eml https://smtp.example.test/send?token=private-token query=private-search ImapFlow` }] }, null, 2)}\n`, "utf8");
+    await repository.snapshot(source);
+
+    const latest = (await repository.list())[0]!;
+    const diff = await repository.diff(latest.hash);
+    const visible = diff.lines.map(line => line.text).join("\n");
+    expect(visible).toContain("The server refused the connection");
+    expect(visible).not.toMatch(/private-user|private-token|private-search|smtp\.example|ImapFlow/iu);
+  });
+
   it("rejects revision strings that could be interpreted as git options or paths", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "material-email-history-"));
     const repository = new HistoryRepository(path.join(directory, "history"));

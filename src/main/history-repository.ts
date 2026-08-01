@@ -13,6 +13,7 @@ import {
   type LocalRevisionDiff,
   type LocalRevisionDiffLine,
 } from "../shared/contracts.js";
+import { userVisibleErrorMessage } from "../shared/user-visible-error.js";
 
 const execFileAsync = promisify(execFile);
 const snapshotPath = "state/material-email-state-v1.json";
@@ -68,6 +69,11 @@ const diffLine = (rawLine: string): LocalRevisionDiffLine => {
   }
   if (/"encryptedSecret"\s*:/u.test(text)) {
     text = text.replace(/(:\s*)".*"(,?\s*)$/u, '$1"[encrypted value omitted]"$2');
+  } else if (/"(?:lastError|syncError)"\s*:/u.test(text)) {
+    text = text.replace(/(:\s*)("(?:\\.|[^"\\])*")(,?\s*)$/u, (_match, prefix: string, encoded: string, suffix: string) => {
+      const raw = JSON.parse(encoded) as string;
+      return `${prefix}${JSON.stringify(userVisibleErrorMessage(raw, { context: "mail" }))}${suffix}`;
+    });
   }
   return { kind, text };
 };

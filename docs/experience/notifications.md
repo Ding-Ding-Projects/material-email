@@ -16,6 +16,8 @@ Stored actions are a closed, schema-validated union rather than executable comma
 
 The Notifications page's supporting copy, severity badges, and renderer-created toast copy follow English, Hong Kong Cantonese, or semantic bilingual mode. Toast bodies retain the original event facts and select five levels of surrounding voice independently for English and Cantonese. Persisted service-record titles and bodies remain the factual text recorded when the event occurred; the renderer does not rewrite stored history when a preference changes.
 
+Transport exceptions are not notification facts. Before a synchronization or queued-mail failure is stored or displayed, the shared redaction boundary converts it to an actionable failure category and removes host paths, raw URLs/query parameters, private search text, stack locations, and provider-library detail. Existing mail/delivery notification bodies receive the same projection-time treatment when read after an upgrade. Language mode and the two humor levels still style the surrounding voice; they never reintroduce removed raw detail.
+
 ## Configuration
 
 Notification language and tone follow the global language and independent humor settings. Narration, if enabled, is separate and off by default. Native Windows summaries are separately opt-in and never include subject, sender, recipient, message, attachment, credential, or account-identifying details.
@@ -32,11 +34,11 @@ Native Windows notifications are off by default and can be enabled in Settings. 
 
 ## Security considerations
 
-Do not put secrets, access tokens, full message bodies, attachment contents, or unnecessary private sender/subject data in notification text. Action payloads accept only bounded identifiers and enumerated local destinations; legacy label/command pairs are discarded during migration. Native notifications must respect Windows privacy, focus-assist, and lock-screen settings.
+Do not put secrets, access tokens, full message bodies, attachment contents, raw endpoints, local host paths, search queries, or unnecessary private sender/subject data in notification text. Action payloads accept only bounded identifiers and enumerated local destinations; legacy label/command pairs are discarded during migration. Native notifications must respect Windows privacy, focus-assist, and lock-screen settings.
 
 ## Verification
 
-Focused unit coverage passes 4 files / 34 tests for category/action localization, legacy command removal, structured-action retention, persisted state defaults, read/dismiss restart persistence, append-only settings-restore undo, and the authenticated IPC allow-list. A dedicated 1 / 1 real-Electron scenario verifies accessible category, severity, read, dismiss, restore, and Open Settings controls; read/dismiss persistence across a full restart; English and Cantonese labels; and the polite non-modal toast region. The earlier language/humor matrix continues to cover all three language modes, both inverse bilingual level combinations, and a live bilingual toast. Focused forced-colors renderer and real-Electron coverage verifies action focus, full-opacity read state, dashed dismissal state, and pressed-control contrast under Chromium emulation. Live retry failure/success against real providers, native Windows High Contrast and screen-reader output, timing/stacking, deduplication, stale-action scale, and packaged lock-screen behavior remain open.
+Existing notification/action coverage remains, and the focused redaction slice passes 3 files / 19 unit/service/history tests plus 1 / 1 real-Electron restart scenario. The Electron fixture restores a legacy Outbox error containing a Windows path, tokenized URL, private query, and transport-library name; none renders, while the localized actionable connection category and recovery controls remain. Live retry failure/success against real providers, native Windows High Contrast and screen-reader output, timing/stacking, deduplication, stale-action scale, and packaged lock-screen behavior remain open.
 
 ## Suggested articles
 

@@ -147,16 +147,20 @@ describe("AppService queued-operation recovery", () => {
 
   it("persists a structured retry action together with independent read and dismiss state", async () => {
     const { service, accountId } = await createService();
-    serviceMocks.setFlags.mockRejectedValue(new Error("Fixture offline"));
+    const transportLeak = Object.assign(new Error(String.raw`connect ECONNREFUSED C:\Users\private-user\mail\queued.eml https://smtp.example.test/send?token=private-token query=private-search ImapFlow`), { code: "ECONNREFUSED" });
+    serviceMocks.setFlags.mockRejectedValue(transportLeak);
 
     await service.setMessageFlags(accountId, "Inbox", 41, { starred: true });
     const queued = (await service.bootstrap()).notifications.find(item => item.title === "Change queued for synchronization");
     expect(queued).toMatchObject({
       category: "mail",
+      body: "The server refused the connection. Check the server address, port, security mode, and network, then retry.",
       read: false,
       dismissed: false,
       action: { kind: "retry", target: "pending-operation", accountId },
     });
+    expect((await service.listPendingOperations(accountId))[0]?.lastError).toBe(queued!.body);
+    expect(JSON.stringify({ queued, operations: await service.listPendingOperations(accountId) })).not.toMatch(/private-user|private-token|private-search|smtp\.example|ImapFlow/iu);
 
     await service.markNotificationRead(queued!.id, true);
     await service.markNotificationDismissed(queued!.id, true);
@@ -208,10 +212,10 @@ describe("AppService queued-operation recovery", () => {
     await vi.waitFor(() => expect(serviceMocks.setFlags).toHaveBeenCalledOnce());
     await expect(service.retryPendingOperation(accountId, first!.id)).rejects.toThrow(/already running/i);
     inFlight.reject(new Error("Fixture retry failed"));
-    await expect(retry).rejects.toThrow("Fixture retry failed");
+    await expect(retry).rejects.toThrow(/mail server operation could not complete/iu);
 
     const after = await service.listPendingOperations(accountId);
-    expect(after[0]).toMatchObject({ id: first!.id, attempts: 1, isQueueHead: true, lastError: "Fixture retry failed" });
+    expect(after[0]).toMatchObject({ id: first!.id, attempts: 1, isQueueHead: true, lastError: "The mail server operation could not complete. Check the account server settings and network, then retry." });
     expect(after[1]).toMatchObject({ id: second!.id, attempts: 0, isQueueHead: false });
   });
 
@@ -266,7 +270,7 @@ describe("AppService queued-operation recovery", () => {
 
     serviceMocks.sendMessage.mockClear();
     await expect(service.retryOutbox(accountId, second!.id)).rejects.toThrow(/only the account queue head/i);
-    await expect(service.retryOutbox(accountId, first!.id)).rejects.toThrow("Fixture SMTP offline");
+    await expect(service.retryOutbox(accountId, first!.id)).rejects.toThrow(/mail server operation could not complete/iu);
     for (let index = 0; index < AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT; index += 1) await service.syncAccount(accountId);
     expect(serviceMocks.sendMessage).toHaveBeenCalledTimes(AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT);
 
@@ -279,13 +283,13 @@ describe("AppService queued-operation recovery", () => {
     expect(rows[0]).toMatchObject({
       id: first!.id,
       attempts: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
-      lastError: "Fixture SMTP offline",
+      lastError: "The mail server operation could not complete. Check the account server settings and network, then retry.",
       automaticRetryPaused: true,
       isQueueHead: true,
     });
     expect(rows[1]).toMatchObject({ id: second!.id, attempts: 0, isQueueHead: false });
 
-    await expect(restarted.retryOutbox(accountId, first!.id)).rejects.toThrow("Fixture SMTP offline");
+    await expect(restarted.retryOutbox(accountId, first!.id)).rejects.toThrow(/mail server operation could not complete/iu);
     rows = await restarted.listOutbox(accountId);
     expect(rows[0]).toMatchObject({ id: first!.id, attempts: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT + 1, automaticRetryPaused: true });
     expect(serviceMocks.sendMessage).toHaveBeenCalledTimes(AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT + 1);
