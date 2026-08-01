@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AccountDraft, AttachmentSaveReview, ComposeDraft } from "../src/shared/contracts";
 import { ipcPayloadSchemas, parseIpcArgs } from "../src/main/ipc-validation";
+import { TAB_APPEARANCE_THEME_FORMAT, TAB_APPEARANCE_THEME_VERSION } from "../src/shared/tab-appearance-theme";
 
 const accountDraft = (): AccountDraft => ({
   displayName: "Demo User",
@@ -98,6 +99,19 @@ describe("non-PIM IPC validation", () => {
     ]);
     expect(() => ipcPayloadSchemas.revisionLabel.parse(["a".repeat(40), "line one\nline two"])).toThrow();
     expect(() => ipcPayloadSchemas.revisionLabel.parse(["a".repeat(40), "x".repeat(121)])).toThrow();
+  });
+
+  it("accepts only a strict appearance-theme export envelope", () => {
+    const theme = {
+      format: TAB_APPEARANCE_THEME_FORMAT,
+      version: TAB_APPEARANCE_THEME_VERSION,
+      name: "IPC theme",
+      tabStyles: { settings: { accent: "#336699", radius: 12 } },
+      presets: [],
+    };
+    expect(ipcPayloadSchemas.tabAppearanceThemeExport.parse([theme])).toEqual([theme]);
+    expect(() => ipcPayloadSchemas.tabAppearanceThemeExport.parse([{ ...theme, credential: "nope" }])).toThrow();
+    expect(() => ipcPayloadSchemas.tabAppearanceThemeExport.parse([{ ...theme, tabStyles: { settings: { radius: 999 } } }])).toThrow();
   });
 
   it("accepts only known OAuth providers and no callback or token-shaped payload", () => {

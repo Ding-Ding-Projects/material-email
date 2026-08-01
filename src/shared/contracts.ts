@@ -28,6 +28,7 @@ import type {
   OAuthTokenVaultSnapshot,
 } from "./oauth.js";
 import type { MessageCryptoProfile, MessageCryptographyAssessment } from "./message-cryptography.js";
+import type { TabAppearanceThemeDocument } from "./tab-appearance-theme.js";
 
 export type {
   CalendarEvent,
@@ -723,6 +724,8 @@ export interface MaterialEmailApi {
   restoreTask(uid: string, sourceTransactionId?: string): Promise<Task>;
   listPimTransactions(filter?: TransactionFilter): Promise<PimTransaction[]>;
   exportData(kind: "history" | "settings" | "changelog", content: string, suggestedName: string): Promise<string | null>;
+  exportTabAppearanceTheme(theme: TabAppearanceThemeDocument): Promise<{ fileName: string } | null>;
+  importTabAppearanceTheme(): Promise<{ fileName: string; theme: TabAppearanceThemeDocument } | null>;
   detectEditors(): Promise<Array<{ id: string; name: string; path: string }>>;
   openExternalEditor(path?: string): Promise<void>;
   minimize(): Promise<void>;

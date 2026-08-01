@@ -114,6 +114,16 @@ import { filterPaletteCommands } from "./lib/command-search";
 import { selectStableMessageId } from "../shared/unified-folders";
 import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
 import {
+  BUILT_IN_TAB_APPEARANCE_PRESETS,
+  TAB_APPEARANCE_THEME_FORMAT,
+  TAB_APPEARANCE_THEME_VERSION,
+  createUserTabAppearancePreset,
+  parseTabAppearancePresetLibrary,
+  validateTabAppearanceThemeDocument,
+  type TabAppearancePresetLibrary,
+  type TabAppearanceThemeDocument,
+} from "../shared/tab-appearance-theme";
+import {
   diagnoseMailConnection,
   type ConnectionDiagnostic,
   type MailConnectionSettings,
@@ -190,6 +200,7 @@ interface AppearanceEditorState {
   tabId: PageId;
   x: number;
   y: number;
+  selectedPresetId: string;
 }
 
 type ConfirmationState =
@@ -207,6 +218,9 @@ type ConfirmationState =
   | { kind: "discard-pending-operation"; accountId: string; operationId: string; label: string }
   | { kind: "delete-pim"; entityKind: PimEntityKind; uid: string; label: string }
   | { kind: "bulk-close-tabs"; tabIds: PageId[]; inverse: boolean }
+  | { kind: "delete-appearance-preset"; presetId: string; label: string }
+  | { kind: "clear-appearance-presets"; count: number }
+  | { kind: "import-tab-appearance-theme"; fileName: string; theme: TabAppearanceThemeDocument }
   | { kind: "save-risky-attachments"; target: number | "all"; review: AttachmentSaveReview }
   | { kind: "release-quarantined-attachment"; item: QuarantinedAttachment }
   | { kind: "delete-quarantined-attachment"; item: QuarantinedAttachment }
@@ -281,6 +295,7 @@ interface RendererState {
   localHistoryDeletionEvidence: LocalHistoryDeletionEvidence | null;
   localHistoryDeletionError: string;
   tabPreferences: TabPreferences<PageId>;
+  appearancePresets: TabAppearancePresetLibrary;
   tabManagerOpen: boolean;
   contextMenu: ContextMenuState | null;
   appearanceEditor: AppearanceEditorState | null;
@@ -343,6 +358,7 @@ const TAB_DEFINITIONS: readonly TabDefinition[] = [
 
 const ALL_TAB_IDS = TAB_DEFINITIONS.map(tab => tab.id);
 const TAB_STORAGE_KEY = "material-email.renderer-tabs.v1";
+const TAB_APPEARANCE_PRESET_STORAGE_KEY = "material-email.tab-appearance-presets.v1";
 const HISTORY_DATE_SESSION_KEY = "material-email.history-date-range.v1";
 
 const DEFAULT_PREFERENCES: Preferences = {
@@ -394,6 +410,9 @@ const readTabPreferences = (): TabPreferences<PageId> => {
   return parseTabPreferences(localStorage.getItem(TAB_STORAGE_KEY), ALL_TAB_IDS, defaultTabs());
 };
 
+const readAppearancePresets = (): TabAppearancePresetLibrary =>
+  parseTabAppearancePresetLibrary(localStorage.getItem(TAB_APPEARANCE_PRESET_STORAGE_KEY));
+
 const initialHistoryDates = readChangelogDateInputs(sessionStorage, HISTORY_DATE_SESSION_KEY);
 
 const state: RendererState = {
@@ -436,6 +455,7 @@ const state: RendererState = {
   localHistoryDeletionEvidence: null,
   localHistoryDeletionError: "",
   tabPreferences: readTabPreferences(),
+  appearancePresets: readAppearancePresets(),
   tabManagerOpen: false,
   contextMenu: null,
   appearanceEditor: null,
@@ -628,6 +648,10 @@ const searchFor = (key: string): SearchModel => {
 
 const persistTabs = (): void => {
   localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(state.tabPreferences));
+};
+
+const persistAppearancePresets = (): void => {
+  localStorage.setItem(TAB_APPEARANCE_PRESET_STORAGE_KEY, JSON.stringify(state.appearancePresets));
 };
 
 const safeColor = (value: string, fallback: string): string => CSS.supports("color", value) ? value : fallback;
@@ -3511,6 +3535,42 @@ function renderTabContrastMetric(
   return `<div class="contrast-metric" data-testid="${testId}" data-contrast-status="${passes ? "pass" : "check"}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(ratioLabel)}</strong><small>${escapeHtml(tx(`${verdict} · target ${threshold}:1`, `${verdict} · 目標 ${threshold}:1`))}</small></div>`;
 }
 
+function renderTabAppearancePresetControls(tabId: PageId): string {
+  const editor = state.appearanceEditor;
+  if (!editor) return "";
+  const selected = editor.selectedPresetId;
+  const builtInOptions = BUILT_IN_TAB_APPEARANCE_PRESETS.map(preset => {
+    const value = `builtin:${preset.id}`;
+    return `<option value="${value}" ${selected === value ? "selected" : ""}>${escapeHtml(tx(preset.label.en, preset.label.yue))}</option>`;
+  }).join("");
+  const userOptions = state.appearancePresets.presets.map(preset => {
+    const value = `user:${preset.id}`;
+    return `<option value="${escapeHtml(value)}" ${selected === value ? "selected" : ""}>${escapeHtml(preset.name)}</option>`;
+  }).join("");
+  const selectedIsUser = selected.startsWith("user:") && state.appearancePresets.presets.some(preset => `user:${preset.id}` === selected);
+  const hasTransferContent = Object.keys(state.tabPreferences.styles).length > 0 || state.appearancePresets.presets.length > 0;
+  return `<section class="appearance-presets" data-testid="tab-appearance-presets" aria-labelledby="appearance-presets-title">
+    <header><div><h3 id="appearance-presets-title">${escapeHtml(tx("Named presets", "命名預設"))}</h3><p>${escapeHtml(tx("Built-in choices stay local; your saved presets persist on this computer.", "內置選擇只留喺本機；你儲存嘅預設會喺呢部電腦保存。"))}</p></div></header>
+    <div class="appearance-preset-picker">
+      <label class="field"><span>${escapeHtml(tx("Preset", "預設"))}</span><select data-appearance-preset data-focus-key="tab-style-${tabId}-preset">${builtInOptions}${userOptions ? `<optgroup label="${escapeHtml(tx("Saved on this computer", "儲存喺呢部電腦"))}">${userOptions}</optgroup>` : ""}</select></label>
+      <button class="button button--tonal" type="button" data-action="apply-tab-appearance-preset" data-tab-id="${tabId}">${icon("check")}<span>${escapeHtml(tx("Apply", "套用"))}</span></button>
+    </div>
+    <div class="appearance-preset-save">
+      <label class="field"><span>${escapeHtml(tx("New preset name", "新預設名稱"))}</span><input type="text" data-appearance-preset-name maxlength="48" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(tx("Example: Calm inbox", "例如：淡定收件匣"))}"/></label>
+      <button class="button button--outlined" type="button" data-action="save-tab-appearance-preset" data-tab-id="${tabId}">${icon("archive")}<span>${escapeHtml(tx("Save current tab", "儲存目前分頁"))}</span></button>
+    </div>
+    <div class="button-row appearance-preset-actions">
+      <button class="button button--text" type="button" data-action="request-delete-appearance-preset" ${selectedIsUser ? "" : "disabled"}>${icon("trash")}<span>${escapeHtml(tx("Delete selected", "刪除所選預設"))}</span></button>
+      <button class="button button--text" type="button" data-action="request-clear-appearance-presets" ${state.appearancePresets.presets.length ? "" : "disabled"}>${icon("refresh")}<span>${escapeHtml(tx("Reset saved presets", "重設已儲存預設"))}</span></button>
+    </div>
+    <div class="button-row appearance-theme-actions">
+      <button class="button button--outlined" type="button" data-action="export-tab-appearance-theme" data-focus-key="tab-style-${tabId}-export" ${hasTransferContent ? "" : "disabled"}>${icon("download")}<span>${escapeHtml(tx("Export theme", "匯出主題"))}</span></button>
+      <button class="button button--outlined" type="button" data-action="import-tab-appearance-theme" data-focus-key="tab-style-${tabId}-import">${icon("folder")}<span>${escapeHtml(tx("Import theme…", "匯入主題……"))}</span></button>
+    </div>
+    <p class="engine-note">${escapeHtml(tx("Theme files contain only validated tab colors, type size, weight, radius, and saved preset names. Import replaces current tab appearance overrides and saved presets only after review; accounts, messages, credentials, and paths are never exported.", "主題檔只包含已驗證嘅分頁顏色、字體大小、粗幼、圓角同已儲存預設名稱。匯入會先畀你審閱，之後先取代目前分頁外觀覆寫同已儲存預設；帳戶、郵件、憑證同路徑永遠唔會匯出。"))}</p>
+  </section>`;
+}
+
 function renderTabAppearanceEditor(): string {
   const editor = state.appearanceEditor;
   if (!editor) return "";
@@ -3533,6 +3593,7 @@ function renderTabAppearanceEditor(): string {
       ${renderTabContrastMetric("tab-accent-contrast", tx("Accent / background", "重點色／背景"), accentContrast, 3)}
       ${alphaEstimate ? `<p>${escapeHtml(tx("Transparent values are estimated over white; verify them against the live theme surface.", "透明值會以白色底估算；請再喺即時主題表面核對。"))}</p>` : ""}
     </section>
+    ${renderTabAppearancePresetControls(tab.id)}
     <div class="form-grid appearance-editor__properties">
       ${renderTabColorProperty(tab.id, "background", style.background, overrides)}
       ${renderTabColorProperty(tab.id, "foreground", style.foreground, overrides)}
@@ -3647,6 +3708,22 @@ function renderConfirmation(): string {
     title = tx("Clear notification history?", "清除通知記錄？");
     body = tx("All stored app notifications will be removed. Mail and local history are unchanged.", "所有已儲存應用程式通知會被移除。郵件同本機歷史唔會改變。 ");
     confirmLabel = tx("Clear notifications", "清除通知");
+  } else if (confirmation.kind === "delete-appearance-preset") {
+    title = tx(`Delete the saved preset “${confirmation.label}”?`, `刪除已儲存預設「${confirmation.label}」？`);
+    body = tx("The preset will be removed from this computer. Tabs that already use its values stay unchanged.", "呢個預設會由呢部電腦移除。已經用咗佢數值嘅分頁唔會改變。 ");
+    confirmLabel = tx("Delete saved preset", "刪除已儲存預設");
+  } else if (confirmation.kind === "clear-appearance-presets") {
+    title = tx(`Reset ${confirmation.count} saved appearance presets?`, `重設 ${confirmation.count} 個已儲存外觀預設？`);
+    body = tx("Every user-saved preset will be removed from this computer. Built-in presets and current tab styles stay available.", "所有使用者儲存預設都會由呢部電腦移除。內置預設同目前分頁樣式會繼續保留。 ");
+    confirmLabel = tx("Reset saved presets", "重設已儲存預設");
+  } else if (confirmation.kind === "import-tab-appearance-theme") {
+    const styleCount = Object.keys(confirmation.theme.tabStyles).length;
+    title = tx(`Import “${confirmation.theme.name}”?`, `匯入「${confirmation.theme.name}」？`);
+    body = tx(
+      `${confirmation.fileName} contains ${styleCount} tab style${styleCount === 1 ? "" : "s"} and ${confirmation.theme.presets.length} saved preset${confirmation.theme.presets.length === 1 ? "" : "s"}. Continuing replaces only current tab appearance overrides and saved presets; accounts, messages, credentials, global preferences, and tab layout stay unchanged.`,
+      `${confirmation.fileName} 包含 ${styleCount} 個分頁樣式同 ${confirmation.theme.presets.length} 個已儲存預設。繼續只會取代目前分頁外觀覆寫同已儲存預設；帳戶、郵件、憑證、全域偏好同分頁版面都唔會改變。`,
+    );
+    confirmLabel = tx("Import reviewed theme", "匯入已審閱主題");
   } else if (confirmation.kind === "bulk-close-tabs") {
     title = tx(`Close ${confirmation.tabIds.length} reviewed tabs?`, `關閉已審閱嘅 ${confirmation.tabIds.length} 個分頁？`);
     body = `${confirmation.tabIds.map(id => tx(tabDefinition(id).en, tabDefinition(id).yue)).join(" · ")}. ${tx("Pinned tabs were included only if you explicitly enabled that option.", "釘選分頁只會喺你明確啟用嗰個選項時包括。")}`;
@@ -5168,6 +5245,45 @@ const handleConfirmation = async (): Promise<void> => {
   state.confirmationReturnFocusKey = null;
   render();
   if (!confirmation) return;
+  if (confirmation.kind === "delete-appearance-preset") {
+    state.appearancePresets.presets = state.appearancePresets.presets.filter(preset => preset.id !== confirmation.presetId);
+    if (state.appearanceEditor?.selectedPresetId === `user:${confirmation.presetId}`) {
+      state.appearanceEditor.selectedPresetId = "builtin:material-violet";
+    }
+    persistAppearancePresets();
+    pendingFocusKey = returnFocusKey;
+    pushToast("success", "Saved preset deleted", `“${confirmation.label}” was removed; current tab styles were not changed.`, "已刪除儲存預設", `「${confirmation.label}」已移除；目前分頁樣式冇改變。`);
+    render();
+    return;
+  }
+  if (confirmation.kind === "clear-appearance-presets") {
+    state.appearancePresets = { version: TAB_APPEARANCE_THEME_VERSION, presets: [] };
+    if (state.appearanceEditor) state.appearanceEditor.selectedPresetId = "builtin:material-violet";
+    persistAppearancePresets();
+    pendingFocusKey = returnFocusKey;
+    pushToast("success", "Saved presets reset", `${confirmation.count} saved appearance preset${confirmation.count === 1 ? "" : "s"} were removed; current tab styles were not changed.`, "已重設儲存預設", `已移除 ${confirmation.count} 個已儲存外觀預設；目前分頁樣式冇改變。`);
+    render();
+    return;
+  }
+  if (confirmation.kind === "import-tab-appearance-theme") {
+    const validation = validateTabAppearanceThemeDocument(confirmation.theme);
+    if (!validation.ok) {
+      pendingFocusKey = returnFocusKey;
+      pushToast("error", "Theme import failed", validation.reason, "主題匯入失敗", validation.reason);
+      render();
+      return;
+    }
+    state.tabPreferences.styles = structuredClone(validation.theme.tabStyles);
+    state.appearancePresets = { version: TAB_APPEARANCE_THEME_VERSION, presets: structuredClone(validation.theme.presets) };
+    if (state.appearanceEditor) state.appearanceEditor.selectedPresetId = "builtin:material-violet";
+    persistTabs();
+    persistAppearancePresets();
+    pendingFocusKey = returnFocusKey;
+    pushToast("success", "Appearance theme imported", `${confirmation.fileName} replaced tab appearance overrides and saved presets after validation.`, "外觀主題已匯入", `${confirmation.fileName} 經驗證後已取代分頁外觀覆寫同已儲存預設。`);
+    announce(tx("The reviewed appearance theme was imported.", "已匯入經審閱嘅外觀主題。"));
+    render();
+    return;
+  }
   if (confirmation.kind === "clear-oauth-token-vault" || confirmation.kind === "revoke-oauth-token-vault") {
     await withBusy("oauth-vault", async () => {
       const result = confirmation.kind === "clear-oauth-token-vault"
@@ -5581,6 +5697,54 @@ const moveChangelogCalendarFocus = (days: number): void => {
   state.changelogCalendar.visibleMonth = next.slice(0, 7);
   pendingFocusKey = `changelog-calendar-day-${next}`;
   render();
+};
+
+const selectedAppearancePreset = () => {
+  const selected = state.appearanceEditor?.selectedPresetId;
+  if (!selected) return undefined;
+  if (selected.startsWith("builtin:")) {
+    const preset = BUILT_IN_TAB_APPEARANCE_PRESETS.find(candidate => `builtin:${candidate.id}` === selected);
+    return preset ? { name: tx(preset.label.en, preset.label.yue), style: preset.style } : undefined;
+  }
+  if (selected.startsWith("user:")) {
+    const preset = state.appearancePresets.presets.find(candidate => `user:${candidate.id}` === selected);
+    return preset ? { name: preset.name, style: preset.style } : undefined;
+  }
+  return undefined;
+};
+
+const currentAppearanceThemeDocument = (): TabAppearanceThemeDocument => {
+  const validation = validateTabAppearanceThemeDocument({
+    format: TAB_APPEARANCE_THEME_FORMAT,
+    version: TAB_APPEARANCE_THEME_VERSION,
+    name: tx("Workspace tab theme", "工作空間分頁主題"),
+    tabStyles: state.tabPreferences.styles,
+    presets: state.appearancePresets.presets,
+  });
+  if (!validation.ok) throw new Error(validation.reason);
+  return validation.theme;
+};
+
+const exportTabAppearanceTheme = async (): Promise<void> => {
+  await withBusy("appearance-theme-export", async () => {
+    const result = await api.exportTabAppearanceTheme(currentAppearanceThemeDocument());
+    if (!result) {
+      pushToast("info", "Theme export cancelled", "No appearance-theme file was written.", "已取消主題匯出", "冇寫入外觀主題檔。 ");
+      return;
+    }
+    pushToast("success", "Appearance theme exported", `${result.fileName} contains only validated tab appearance values and saved preset names.`, "外觀主題已匯出", `${result.fileName} 只包含已驗證分頁外觀數值同已儲存預設名稱。`);
+  });
+};
+
+const importTabAppearanceTheme = async (): Promise<void> => {
+  await withBusy("appearance-theme-import", async () => {
+    const result = await api.importTabAppearanceTheme();
+    if (!result) {
+      pushToast("info", "Theme import cancelled", "Current tab styles and saved presets were not changed.", "已取消主題匯入", "目前分頁樣式同已儲存預設冇改變。 ");
+      return;
+    }
+    showConfirmation({ kind: "import-tab-appearance-theme", fileName: result.fileName, theme: result.theme }, state.appearanceEditor ? `tab-style-${state.appearanceEditor.tabId}-import` : null);
+  });
 };
 
 const handleAction = async (button: HTMLElement): Promise<void> => {
@@ -6103,6 +6267,56 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "move-tab-right": if (pageId) moveTabBy(pageId, 1); break;
     case "open-tab-appearance": if (pageId) openTabAppearanceEditor(pageId); break;
     case "close-tab-appearance": closeTabAppearanceEditor(); break;
+    case "apply-tab-appearance-preset": {
+      if (!pageId || state.appearanceEditor?.tabId !== pageId) break;
+      const preset = selectedAppearancePreset();
+      if (!preset) break;
+      state.tabPreferences.styles[pageId] = { ...preset.style };
+      persistTabs();
+      appearanceEditorNeedsInitialFocus = false;
+      pendingFocusKey = `tab-style-${pageId}-preset`;
+      pushToast("success", "Appearance preset applied", `“${preset.name}” now styles only the ${tabDefinition(pageId).en} tab.`, "已套用外觀預設", `「${preset.name}」而家只會設定${tabDefinition(pageId).yue}分頁樣式。`);
+      announce(tx(`${preset.name} was applied to this tab.`, `${preset.name} 已套用到呢個分頁。`));
+      render();
+      break;
+    }
+    case "save-tab-appearance-preset": {
+      if (!pageId || state.appearanceEditor?.tabId !== pageId) break;
+      if (state.appearancePresets.presets.length >= 24) {
+        pushToast("warning", "Preset was not saved", "This computer already has the maximum of 24 saved appearance presets.", "預設未儲存", "呢部電腦已經有最多 24 個已儲存外觀預設。 ");
+        break;
+      }
+      const input = button.closest<HTMLElement>(".appearance-presets")?.querySelector<HTMLInputElement>("[data-appearance-preset-name]");
+      const overrides = state.tabPreferences.styles[pageId] ?? {};
+      const inheritedAccent = normalizeTabColor(preferences().accent) ?? "#6750A4";
+      const style = resolveTabStyle({ ...overrides, accent: overrides.accent ?? inheritedAccent });
+      const preset = createUserTabAppearancePreset(`user-${crypto.randomUUID()}`, input?.value, style);
+      if (!preset) {
+        input?.setAttribute("aria-invalid", "true");
+        pushToast("warning", "Preset was not saved", "Enter a name from 1 through 48 characters without control characters.", "預設未儲存", "請輸入 1 至 48 個字元嘅名稱，而且唔可以有控制字元。 ");
+        break;
+      }
+      state.appearancePresets.presets.push(preset);
+      state.appearanceEditor.selectedPresetId = `user:${preset.id}`;
+      persistAppearancePresets();
+      pendingFocusKey = `tab-style-${pageId}-preset`;
+      pushToast("success", "Appearance preset saved", `“${preset.name}” is stored locally with validated values and no account or message data.`, "外觀預設已儲存", `「${preset.name}」已用驗證數值儲存喺本機，冇帳戶或者郵件資料。`);
+      render();
+      break;
+    }
+    case "request-delete-appearance-preset": {
+      const presetId = state.appearanceEditor?.selectedPresetId.startsWith("user:") ? state.appearanceEditor.selectedPresetId.slice(5) : "";
+      const preset = state.appearancePresets.presets.find(candidate => candidate.id === presetId);
+      if (preset) showConfirmation({ kind: "delete-appearance-preset", presetId, label: preset.name });
+      break;
+    }
+    case "request-clear-appearance-presets": {
+      const count = state.appearancePresets.presets.length;
+      if (count) showConfirmation({ kind: "clear-appearance-presets", count });
+      break;
+    }
+    case "export-tab-appearance-theme": await exportTabAppearanceTheme(); break;
+    case "import-tab-appearance-theme": await importTabAppearanceTheme(); break;
     case "reset-tab-style-property": {
       const key = button.dataset.tabStyleKey;
       if (!pageId || !isTabStyleKey(key)) break;
@@ -6261,6 +6475,16 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
   }
   if (changeAction === "select-tab-group" && (control.value === "workspace" || control.value === "records" || control.value === "system")) {
     state.selectedTabGroup = control.value; render(); return;
+  }
+  if (control.dataset.appearancePreset !== undefined && state.appearanceEditor) {
+    const isBuiltIn = BUILT_IN_TAB_APPEARANCE_PRESETS.some(preset => `builtin:${preset.id}` === control.value);
+    const isUser = state.appearancePresets.presets.some(preset => `user:${preset.id}` === control.value);
+    if (isBuiltIn || isUser) {
+      state.appearanceEditor.selectedPresetId = control.value;
+      pendingFocusKey = `tab-style-${state.appearanceEditor.tabId}-preset`;
+      render();
+    }
+    return;
   }
   if (control.dataset.pref) {
     const patch = preferencePatchFromControl(control);
@@ -6828,7 +7052,7 @@ const appearanceEditorPosition = (anchor: Element | null): Pick<AppearanceEditor
 const openTabAppearanceEditor = (id: PageId, anchor?: Element | null): void => {
   const tab = anchor ?? app.querySelector<HTMLElement>(`[data-tab-context="${CSS.escape(id)}"]`);
   state.contextMenu = null;
-  state.appearanceEditor = { tabId: id, ...appearanceEditorPosition(tab) };
+  state.appearanceEditor = { tabId: id, selectedPresetId: "builtin:material-violet", ...appearanceEditorPosition(tab) };
   appearanceEditorNeedsInitialFocus = true;
   render();
 };

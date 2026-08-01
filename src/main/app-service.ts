@@ -97,6 +97,12 @@ import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-m
 import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
 import { inspectTlsCertificate } from "./tls-certificate-diagnostics.js";
 import { emptyMessageCryptoProfile, unsignedMessageCryptography } from "../shared/message-cryptography.js";
+import {
+  TAB_APPEARANCE_THEME_MAX_BYTES,
+  parseTabAppearanceThemeText,
+  serializeTabAppearanceTheme,
+  type TabAppearanceThemeDocument,
+} from "../shared/tab-appearance-theme.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1402,6 +1408,56 @@ export class AppService {
     const { writeFile } = await import("node:fs/promises");
     await writeFile(result.filePath, content, "utf8");
     return result.filePath;
+  }
+
+  async exportTabAppearanceTheme(theme: TabAppearanceThemeDocument): Promise<{ fileName: string } | null> {
+    const content = serializeTabAppearanceTheme(theme);
+    const result = await dialog.showSaveDialog({
+      defaultPath: "material-email-tab-appearance-theme.json",
+      title: "Export workspace tab appearance theme",
+      filters: [{ name: "Material Email appearance theme", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    const selected = /\.json$/iu.test(result.filePath) ? result.filePath : `${result.filePath}.json`;
+    if (/^(?:\\\\|\/\/)/u.test(selected)) throw new Error("Network and UNC appearance-theme destinations are outside the local export boundary.");
+    const filePath = path.resolve(selected);
+    const parent = await lstat(path.dirname(filePath));
+    if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error("The appearance-theme export folder must be a regular local directory, not a link.");
+    const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.next`);
+    try {
+      await writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+      await rename(temporaryPath, filePath);
+    } finally {
+      await rm(temporaryPath, { force: true });
+    }
+    return { fileName: path.basename(filePath) };
+  }
+
+  async importTabAppearanceTheme(): Promise<{ fileName: string; theme: TabAppearanceThemeDocument } | null> {
+    const result = await dialog.showOpenDialog({
+      title: "Import workspace tab appearance theme",
+      properties: ["openFile"],
+      filters: [{ name: "Material Email appearance theme", extensions: ["json"] }],
+    });
+    const selected = result.filePaths[0];
+    if (result.canceled || !selected) return null;
+    if (!/\.json$/iu.test(selected)) throw new Error("Appearance-theme imports must use a .json file selected through the desktop dialog.");
+    if (/^(?:\\\\|\/\/)/u.test(selected)) throw new Error("Network and UNC appearance-theme files are outside the local import boundary.");
+    const filePath = path.resolve(selected);
+    const info = await lstat(filePath);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error("The selected appearance theme must be a regular local file, not a link.");
+    if (info.size < 1 || info.size > TAB_APPEARANCE_THEME_MAX_BYTES) {
+      throw new Error(`Appearance-theme imports must contain from 1 through ${TAB_APPEARANCE_THEME_MAX_BYTES} bytes.`);
+    }
+    let source: string;
+    try {
+      source = new TextDecoder("utf-8", { fatal: true }).decode(await readFile(filePath));
+    } catch (error) {
+      throw new Error("The selected appearance theme is not valid UTF-8 text.", { cause: error });
+    }
+    const validation = parseTabAppearanceThemeText(source);
+    if (!validation.ok) throw new Error(`The selected appearance theme was rejected: ${validation.reason}`);
+    return { fileName: path.basename(filePath), theme: validation.theme };
   }
 
   async detectEditors(): Promise<Array<{ id: string; name: string; path: string }>> {

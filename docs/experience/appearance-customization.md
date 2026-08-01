@@ -2,7 +2,7 @@
 
 ## Status
 
-**Global preferences plus a verified per-workspace-tab color-depth slice; every-element editor incomplete.** Theme, density, accent, font family, scale, and weight are represented. Workspace tabs now have a focused persisted editor with three synchronized color representations and contrast feedback, but Word-depth editing for every rendered element is not claimed.
+**Global preferences plus a verified per-workspace-tab customization and transfer slice; every-element editor incomplete.** Theme, density, accent, font family, scale, and weight are represented. Workspace tabs have a focused persisted editor with synchronized color representations, contrast feedback, local named presets, and reviewed theme transfer, but Word-depth editing for every rendered element is not claimed.
 
 ## Behavior
 
@@ -14,15 +14,20 @@ Right-clicking a workspace tab exposes **Edit tab appearance…**. <kbd>Shift</k
 
 The editor's supporting copy follows English, Hong Kong Cantonese, or semantic bilingual mode and selects English and Cantonese tone independently at levels 1–5. Every variant still states that preview is immediate and scoped to the current tab; humor changes only the surrounding voice.
 
-The Appearance card also provides a persisted global reset for theme, density, accent, interface font, font scale, and font weight; language, humor, narrator, notification, account, folder, and dim-sum preferences are preserved. The broader completion target remains an anchored, non-modal editor available from every rendered element, with keyboard access, focus return, per-property reset, presets, and theme export/import.
+Three bilingual built-in presets—Material Violet, Quiet Slate, and High Contrast—apply a complete bounded style to only the current tab. Users can name and save the current resolved tab style as one of at most 24 local presets. Saved names and validated values persist in a dedicated local-storage document, survive restart, can be deleted individually, and can be reset together without changing tabs that already use those values. Applying a preset remains ordinary per-tab style persistence, so all existing property and whole-tab resets still work.
+
+**Export theme** writes a version-1 JSON document containing only recognized workspace-tab style overrides and saved preset names/values. **Import theme…** uses a native desktop file chooser, validates the document in the main process, reports the selected basename and counts in a blocking review, then replaces only tab appearance overrides and the saved-preset library. Tab layout, global preferences, accounts, messages, credentials, and filesystem paths are outside the format and remain unchanged. Canceling either dialog changes nothing.
+
+The Appearance card also provides a persisted global reset for theme, density, accent, interface font, font scale, and font weight; language, humor, narrator, notification, account, folder, and dim-sum preferences are preserved. The broader completion target remains an anchored, non-modal editor available from every rendered element with Word-depth typography, complete color translation, picker self-customization, keyboard access, and focus return.
 
 ## Configuration
 
-Global defaults are system theme, comfortable density, `#6750A4` accent, Segoe UI Variable, scale 1, and weight 400. The focused tab editor accepts local `#RRGGBB` or `#RRGGBBAA`, RGB channels from 0–255, hue from 0–360 degrees, and saturation/lightness from 0–100%. It also bounds font sizes to 11–22 px, weights to 300–800, and radii to 0–28 px. Its preview supplies values for inherited properties—including the live global accent—without converting those values into stored tab overrides. Unsupported broader properties remain an explicit open scope.
+Global defaults are system theme, comfortable density, `#6750A4` accent, Segoe UI Variable, scale 1, and weight 400. The focused tab editor accepts local `#RRGGBB` or `#RRGGBBAA`, RGB channels from 0–255, hue from 0–360 degrees, and saturation/lightness from 0–100%. It also bounds font sizes to 11–22 px, weights to 300–800, and radii to 0–28 px. Preset names are normalized Unicode text from 1–48 characters; identifiers, duplicates, control characters, unknown properties, and invalid style values are rejected or dropped at the local-storage boundary. Theme names are limited to 80 characters, files to 256 KiB of strict UTF-8 JSON, and imported documents to the 11 recognized tab IDs and 24 presets. Its preview supplies values for inherited properties—including the live global accent—without converting those values into stored tab overrides. Unsupported broader properties remain an explicit open scope.
 
 ## Failure modes
 
-- A malformed imported theme can create unreadable or oversized UI.
+- A malformed, oversized, non-UTF-8, linked, network/UNC, unknown-version, or unknown-field theme is rejected before renderer state changes.
+- Import intentionally replaces the current tab-style map and saved-preset library after an explicit review; cancel leaves both unchanged.
 - Custom colors can fail contrast requirements across states; the live metrics identify the current ratios but do not block or silently rewrite the user's choice.
 - A requested font may be missing or lack CJK glyphs.
 - Per-tab rules stored by an older or manually edited build can be malformed; startup normalization drops unsafe fields and restores missing tabs.
@@ -31,7 +36,7 @@ Global defaults are system theme, comfortable density, `#6750A4` accent, Segoe U
 
 ## Security considerations
 
-Theme files are untrusted structured data. Validate sizes, numeric ranges, identifiers, and color values; never permit arbitrary CSS, URLs, scripts, or font downloads. Keep all fonts/assets local and preserve a CJK-safe fallback.
+Theme files are untrusted structured data. The main process permits only regular local `.json` files selected through Electron dialogs, rejects symbolic-link and network/UNC paths, bounds bytes before reading, decodes UTF-8 fatally, and applies an exact allow-list schema before returning data through authenticated IPC. Export revalidates the same document, writes through a private temporary file, and returns only a basename. The format cannot represent arbitrary CSS, URLs, scripts, fonts, account/message data, credentials, or filesystem paths. Renderer code validates once more before applying an import and never logs file contents.
 
 ## Verification
 
@@ -39,7 +44,9 @@ Six focused unit cases verify normalization of untrusted local tab state, bounde
 
 A separate focused language/humor Electron matrix verifies the editor at English 1, Cantonese 5, bilingual English 1/Cantonese 5, and the inverse bilingual English 5/Cantonese 1 combination. Renderer model tests cover all five table entries and fallback behavior.
 
-Numeric alpha entry outside HEX8; named colors; RGB/A and HSL/A controls; HSV/HSB, HWB, Lab/LCH, OKLab/OKLCH, and CMYK translation; gamut/clipping warnings; installed-font previews; Word-depth typography; editor self-customization; import/export; and every-element context menus remain open.
+Four focused unit/service files pass 29 cases for existing tab behavior, preset-library normalization, strict theme allow-listing, secret-shaped extra-field rejection, byte bounds, IPC validation, native-dialog cancellation, JSON writing, and basename-only transfer results. One additional real-Electron scenario verifies bilingual built-in labels, independent English level 1/Cantonese level 5 toast tone, preset application, user-preset restart persistence, actual native-dialog export/import routing, safe exported content, reviewed replacement, style restoration, and saved-preset reset while the applied tab style remains intact.
+
+Numeric alpha entry outside HEX8; named colors; RGB/A and HSL/A controls; HSV/HSB, HWB, Lab/LCH, OKLab/OKLCH, and CMYK translation; gamut/clipping warnings; installed-font previews; Word-depth typography; editor self-customization; every-element presets/transfer; and every-element context menus remain open.
 
 ## Suggested articles
 

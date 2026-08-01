@@ -56,7 +56,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
 - [x] Keep the expanded tab appearance editor and History/Changelog date pickers collision-contained with preserved focus and reduced-motion timing at 760 × 560 plus smaller effective CSS viewport stress sizes, covered by 2 / 2 real-Electron scenarios; native Windows display scaling remains open
 - [x] Wire English, Hong Kong Cantonese, and semantic bilingual modes plus inverse independent humor levels through the appearance editor, History/Changelog date pickers, notification centre, and renderer toasts with fallback-safe renderer tests and a focused real-Electron matrix
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 52 files / 284 tests on the current tree; focused language/humor passed 1 / 1 real-Electron scenario, focused responsive/accessibility passed 2 / 2, the corrected computed-style appearance workflow passed 1 / 1, and broader evidence remains listed in `HANDOFF.md`)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 54 files / 293 tests on the current tree; focused appearance preset/theme transfer, language/humor, and corrected computed-style appearance workflows each passed 1 / 1 real-Electron scenario, focused responsive/accessibility passed 2 / 2, and broader evidence remains listed in `HANDOFF.md`)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% native Windows scaling matrices (workspace-tab navigation and the focused appearance/date-picker effective-viewport slice are verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content across every remaining app surface (the focused appearance/date-picker/notification matrix is verified)
@@ -102,7 +102,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Add a persisted global appearance reset for the live theme controls
 - [x] Complete a validated per-workspace-tab appearance slice with anchored context/keyboard access, restart persistence, per-property reset, and focus return
 - [x] Deepen per-tab colors with persisted accent/background/text overrides, continuous native selection, synchronized HEX/HEX8/RGB/HSL entry, live preview, and contrast readouts
-- [ ] Complete appearance editing for every element, including picker self-customization and import/export
+- [x] Add bilingual built-in and persisted user-named per-tab presets plus reviewed, versioned, strictly validated native-dialog JSON theme export/import
+- [ ] Complete appearance editing for every element, including picker self-customization, Word-depth typography, complete color translation, and every-element preset/transfer coverage
 - [x] Add persisted tab pinning, fixed grouping, overflow, reviewed bulk close, and four independent discovery searches
 - [x] Expand the factual in-app changelog to every audited published version (eleven versions through `v0.45.1` on 2026-08-01)
 - [x] Add an anchored bilingual changelog calendar with typed locale dates, range selection, month/year navigation, named presets, keyboard focus, and composed search

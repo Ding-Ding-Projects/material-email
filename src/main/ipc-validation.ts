@@ -19,6 +19,7 @@ import {
   type TlsCertificateInspectionRequest,
 } from "../shared/contracts.js";
 import { OAUTH_PROVIDER_IDS } from "../shared/oauth.js";
+import { validateTabAppearanceThemeDocument, type TabAppearanceThemeDocument } from "../shared/tab-appearance-theme.js";
 
 const noControlCharacters = (value: string): boolean => !/[\u0000-\u001f\u007f]/u.test(value);
 const noHeaderBreaks = (value: string): boolean => !/[\r\n\u0000]/u.test(value);
@@ -221,6 +222,11 @@ const cachedMailSearchSchema = z.strictObject({
   limit: z.number().int().min(1).max(200),
 }) as z.ZodType<CachedMailSearchQuery>;
 
+export const tabAppearanceThemeSchema = z.custom<TabAppearanceThemeDocument>(
+  value => validateTabAppearanceThemeDocument(value).ok,
+  "A strictly validated Material Email tab appearance theme is required.",
+);
+
 export const ipcPayloadSchemas = {
   none: z.tuple([]),
   accountDiscover: z.tuple([emailSchema]),
@@ -259,6 +265,7 @@ export const ipcPayloadSchemas = {
   historyPrunePreview: z.tuple([historyRetentionDaysSchema]),
   historyPrune: z.tuple([localHistoryPruneRequestSchema]),
   exportData: z.tuple([z.enum(["history", "settings", "changelog"]), z.string().max(32 * 1024 * 1024), suggestedFilenameSchema]),
+  tabAppearanceThemeExport: z.tuple([tabAppearanceThemeSchema]),
   editorOpen: z.union([z.tuple([]), z.tuple([z.undefined()]), z.tuple([nativePathSchema])]),
   externalLinkRequest: z.tuple([externalLinkRequestIdSchema]),
 } as const;

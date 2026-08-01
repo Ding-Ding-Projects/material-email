@@ -182,6 +182,10 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("data:export", ipcPayloadSchemas.exportData, ([kind, content, suggestedName]) =>
     service.exportData(kind, content, suggestedName),
   );
+  handleValidated("appearance-theme:export", ipcPayloadSchemas.tabAppearanceThemeExport, ([theme]) =>
+    service.exportTabAppearanceTheme(theme),
+  );
+  handleValidated("appearance-theme:import", ipcPayloadSchemas.none, () => service.importTabAppearanceTheme());
   handleValidated("editor:detect", ipcPayloadSchemas.none, () => service.detectEditors());
   handleValidated("editor:open", ipcPayloadSchemas.editorOpen, ([editorPath]) => service.openExternalEditor(editorPath));
   handleValidated("external-link:confirm", ipcPayloadSchemas.externalLinkRequest, async ([requestId]) => {
