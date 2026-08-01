@@ -198,6 +198,9 @@ jobs:
           MATERIAL_EMAIL_RELEASE_VERSION: ${{ steps.release.outputs.version }}
           MATERIAL_EMAIL_RELEASE_DATE: ${{ steps.release.outputs.release_date }}
           MATERIAL_EMAIL_CODE_NAME: ${{ steps.dish.outputs.code_name }}
+          MATERIAL_EMAIL_DISH_ID: ${{ steps.dish.outputs.dish_id }}
+          MATERIAL_EMAIL_DISH_ASSET: ${{ steps.dish.outputs.photo_file }}
+          MATERIAL_EMAIL_CATALOG_COMMIT: ${{ steps.dish.outputs.catalog_commit }}
           BASELINE_AVAILABLE: ${{ steps.baseline.outputs.available }}
           BASELINE_PATH: ${{ steps.baseline.outputs.path }}
         shell: pwsh
@@ -237,32 +240,43 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "baseline_sha256=$($proof.baselineInstallerSha256)"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "upgrade_summary=$upgradeSummary"
 
-      - name: Publish exactly one release with installer and catalog photo
+      - name: Publish exactly one release with installer and optional catalog photo
         shell: pwsh
         run: |
-          $notes = @'
+          $codeName = '${{ steps.dish.outputs.code_name }}'
+          $photoFile = '${{ steps.dish.outputs.photo_file }}'
+          if ($photoFile) {
+            $codeNameLine = "**Code name:** $codeName"
+            $photoAssetLine = "- ``$photoFile`` — verified catalog photo for $codeName; SHA-256 ``${{ steps.dish.outputs.photo_sha256 }}``"
+            $catalogLine = "Catalog source commit: ``${{ steps.dish.outputs.catalog_commit }}``."
+          } else {
+            $codeNameLine = "**Code name:** Not assigned — every verified catalog dish was already used."
+            $photoAssetLine = $null
+            $catalogLine = "> [!NOTE]`n> The verified dim-sum catalog is exhausted. This release intentionally ships without a code name or photo instead of reusing one."
+          }
+          $notes = @"
           # Material Email ${{ steps.release.outputs.version }}
 
-          **Code name:** ${{ steps.dish.outputs.code_name }}
+          $codeNameLine
 
           **Release date (UTC):** ${{ steps.release.outputs.release_date }}
 
-          This release was built and tested from `${{ github.sha }}` on a GitHub-hosted Windows runner. The workflow installed into an isolated directory, launched the packaged executable through its deterministic smoke path, and verified uninstall before publishing.
+          This release was built and tested from ``${{ github.sha }}`` on a GitHub-hosted Windows runner. The workflow installed into an isolated directory, launched the packaged executable through its deterministic smoke path, and verified uninstall before publishing.
 
           **Installer lifecycle:** ${{ steps.package.outputs.upgrade_summary }}
 
-          **Prior-installer SHA-256:** `${{ steps.package.outputs.baseline_sha256 }}`
+          **Prior-installer SHA-256:** ``${{ steps.package.outputs.baseline_sha256 }}``
 
           ## Assets
 
-          - `${{ steps.package.outputs.installer_name }}` — Windows x64 NSIS installer; ${{ steps.package.outputs.installer_size }} bytes; SHA-256 `${{ steps.package.outputs.installer_sha256 }}`
-          - `${{ steps.dish.outputs.photo_file }}` — verified catalog photo for ${{ steps.dish.outputs.code_name }}; SHA-256 `${{ steps.dish.outputs.photo_sha256 }}`
+          - ``${{ steps.package.outputs.installer_name }}`` — Windows x64 NSIS installer; ${{ steps.package.outputs.installer_size }} bytes; SHA-256 ``${{ steps.package.outputs.installer_sha256 }}``
+          $photoAssetLine
 
-          Catalog source commit: `${{ steps.dish.outputs.catalog_commit }}`.
+          $catalogLine
 
           > [!WARNING]
           > This build is not code-signed yet. Windows SmartScreen may show an unrecognized-publisher warning; verify the installer hash above before running it.
-          '@
+          "@
           $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
           Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8
           $assets = @('${{ steps.package.outputs.installer }}')
@@ -276,7 +290,7 @@ jobs:
             --notes-file $notesPath `
             --latest
 
-      - name: Verify immutable release source and assets
+      - name: Verify immutable release source and exact assets
         shell: pwsh
         run: |
           git fetch origin tag '${{ steps.release.outputs.tag }}' --force
@@ -284,18 +298,24 @@ jobs:
           if ($tagSource -ne $env:GITHUB_SHA) { throw "Release tag resolves to $tagSource, not $env:GITHUB_SHA." }
           $release = gh release view '${{ steps.release.outputs.tag }}' --json isDraft,isPrerelease,assets,targetCommitish | ConvertFrom-Json
           if ($release.isDraft -or $release.isPrerelease) { throw "Release is draft or prerelease." }
-          if ($release.assets.Count -ne 2) { throw "Release must contain exactly two assets." }
-          $names = @($release.assets | ForEach-Object name)
-          if ($names -notcontains '${{ steps.package.outputs.installer_name }}' -or $names -notcontains '${{ steps.dish.outputs.photo_file }}') {
-            throw "Release assets do not match the installer and selected catalog photo."
+          $photoFile = '${{ steps.dish.outputs.photo_file }}'
+          $expectedAssetCount = if ($photoFile) { 2 } else { 1 }
+          if ($release.assets.Count -ne $expectedAssetCount) {
+            throw "Release must contain exactly $expectedAssetCount asset(s) for the selected catalog state; found $($release.assets.Count)."
           }
+          $names = @($release.assets | ForEach-Object name)
+          if ($names -notcontains '${{ steps.package.outputs.installer_name }}') { throw "Release installer asset is missing." }
+          if ($photoFile -and $names -notcontains $photoFile) { throw "Selected catalog photo asset is missing." }
           $downloadDir = Join-Path $env:RUNNER_TEMP "release-proof"
           New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
-          gh release download '${{ steps.release.outputs.tag }}' --dir $downloadDir
+          gh release download '${{ steps.release.outputs.tag }}' --pattern '${{ steps.package.outputs.installer_name }}' --dir $downloadDir
           $installerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $downloadDir '${{ steps.package.outputs.installer_name }}')).Hash.ToLowerInvariant()
-          $photoHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $downloadDir '${{ steps.dish.outputs.photo_file }}')).Hash.ToLowerInvariant()
           if ($installerHash -ne '${{ steps.package.outputs.installer_sha256 }}') { throw "Downloaded installer hash mismatch." }
-          if ($photoHash -ne '${{ steps.dish.outputs.photo_sha256 }}') { throw "Downloaded photo hash mismatch." }
+          if ($photoFile) {
+            gh release download '${{ steps.release.outputs.tag }}' --pattern $photoFile --dir $downloadDir
+            $photoHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $downloadDir $photoFile)).Hash.ToLowerInvariant()
+            if ($photoHash -ne '${{ steps.dish.outputs.photo_sha256 }}') { throw "Downloaded photo hash mismatch." }
+          }
 
   pages:
     name: Publish documentation site

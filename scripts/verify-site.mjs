@@ -1,7 +1,7 @@
 import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { assembleSiteArtifact, developmentReleaseMetadata } from "./verify-site-artifact.mjs";
+import { assembleSiteArtifact, developmentReleaseMetadata, validateReleaseMetadata } from "./verify-site-artifact.mjs";
 
 const read = file => readFile(file, "utf8");
 const [html, css, js, runtime, workflow, releaseFallback] = await Promise.all([read("site/index.html"), read("site/styles.css"), read("site/app.js"), read("scripts/verify-site-runtime.mjs"), read(".github/workflows/windows-release.yml"), read("site/release.json")]);
@@ -27,14 +27,32 @@ const publishedFixture = {
   tag: "v0.42.3",
   releaseUrl: "https://github.com/Ding-Ding-Projects/material-email/releases/tag/v0.42.3",
 };
+const exhaustedCatalogFixture = {
+  schemaVersion: 1,
+  published: true,
+  version: "0.43.1",
+  releaseDate: "2026-08-01",
+  codeName: null,
+  photoFile: null,
+  tag: "v0.43.1",
+  releaseUrl: "https://github.com/Ding-Ding-Projects/material-email/releases/tag/v0.43.1",
+};
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), "material-email-pages-"));
 let developmentArtifact;
 let publishedArtifact;
+let exhaustedCatalogArtifact;
 try {
   developmentArtifact = await assembleSiteArtifact({ outputDirectory: path.join(temporaryRoot, "development"), releaseMetadata: developmentReleaseMetadata });
   publishedArtifact = await assembleSiteArtifact({ outputDirectory: path.join(temporaryRoot, "published"), releaseMetadata: publishedFixture });
+  exhaustedCatalogArtifact = await assembleSiteArtifact({ outputDirectory: path.join(temporaryRoot, "published-without-dish"), releaseMetadata: exhaustedCatalogFixture });
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
+}
+let mismatchedDecorationRejected = false;
+try {
+  await validateReleaseMetadata({ ...exhaustedCatalogFixture, codeName: "Classic Har Gow · 蝦餃" });
+} catch {
+  mismatchedDecorationRejected = true;
 }
 const checks = [
   ["local content-security policy", html.includes("Content-Security-Policy") && html.includes("default-src 'self'") && html.includes("connect-src 'self'") && html.includes("object-src 'none'")],
@@ -55,6 +73,8 @@ const checks = [
   ["truthful development release fallback", JSON.stringify(JSON.parse(releaseFallback)) === JSON.stringify(developmentReleaseMetadata)],
   ["exact development Pages artifact", developmentArtifact.fileCount >= 45 && developmentArtifact.markdownCount >= 31 && !developmentArtifact.releaseMetadata.published],
   ["exact published Pages artifact", publishedArtifact.fileCount >= 45 && publishedArtifact.markdownCount >= 31 && publishedArtifact.releaseMetadata.published && publishedArtifact.releaseMetadata.version === publishedFixture.version],
+  ["exact published Pages artifact after catalog exhaustion", exhaustedCatalogArtifact.fileCount >= 45 && exhaustedCatalogArtifact.markdownCount >= 31 && exhaustedCatalogArtifact.releaseMetadata.published && exhaustedCatalogArtifact.releaseMetadata.codeName === null && exhaustedCatalogArtifact.releaseMetadata.photoFile === null],
+  ["release decoration remains all-or-none", mismatchedDecorationRejected],
   ["Pages job assembles rather than uploading raw site", workflow.includes("node scripts/verify-site-artifact.mjs") && workflow.includes("MATERIAL_EMAIL_SITE_PHOTO_FILE") && workflow.includes("path: ${{ runner.temp }}/material-email-pages") && !/path:\s*site\s*$/m.test(workflow)],
   ["standalone real-browser runtime harness", runtime.includes('createServer') && runtime.includes('from "@playwright/test"') && runtime.includes("published metadata, bundled release assets, and exact Pages routes") && runtime.includes("reduced-motion rendering path") && runtime.includes("deterministic local-only dim-sum surprise asset")],
   ["PIM lock evidence is current", js.includes("cross-instance/process lock") && js.includes("Four focused PIM test files with 25 tests") && !js.includes("Cross-process locking, migrations")],

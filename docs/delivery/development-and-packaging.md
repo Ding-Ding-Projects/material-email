@@ -23,6 +23,7 @@ Passing `--baseline <prior-installer.exe>` changes the verifier into a strict up
 - Installer target: NSIS x64
 - Development metadata date: empty, because a source build is not a release
 - Release metadata date: `MATERIAL_EMAIL_RELEASE_DATE`, validated as an actual UTC `YYYY-MM-DD` date
+- Release decoration: code name, dish ID, PNG asset, and catalog commit are all present together or all empty; a dated release with an exhausted catalog never falls back to the development dish
 - Workflow version: unique `0.<run number>.<run attempt>` with a matching immutable `v<version>` tag
 
 ## Failure modes
@@ -33,6 +34,7 @@ Passing `--baseline <prior-installer.exe>` changes the verifier into a strict up
 - Absolute asset paths or an incorrect Vite base can work in development and fail after packaging.
 - A non-HTTP, credential-bearing, non-loopback, or look-alike development URL is rejected rather than loaded.
 - Antivirus, Windows SmartScreen, long paths, non-ASCII user profiles, and restricted enterprise policies can change behavior.
+- An exhausted catalog can leave blank photo paths in notes or verification unless the installer-only one-asset contract is selected explicitly.
 - Electron Builder currently uses its default application icon because the repository has no approved Windows icon asset.
 
 ## Security considerations

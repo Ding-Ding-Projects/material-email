@@ -56,13 +56,32 @@ const validateReleaseMetadata = (metadata, artifact) => {
   if (process.env.MATERIAL_EMAIL_RELEASE_VERSION && metadata.version !== process.env.MATERIAL_EMAIL_RELEASE_VERSION) {
     throw new Error("Packaged metadata version does not match MATERIAL_EMAIL_RELEASE_VERSION.");
   }
-  if (process.env.MATERIAL_EMAIL_CODE_NAME && metadata.codeName !== process.env.MATERIAL_EMAIL_CODE_NAME) {
-    throw new Error("Packaged metadata code name does not match MATERIAL_EMAIL_CODE_NAME.");
+  for (const [metadataKey, environmentKey] of [
+    ["codeName", "MATERIAL_EMAIL_CODE_NAME"],
+    ["dishId", "MATERIAL_EMAIL_DISH_ID"],
+    ["imageAsset", "MATERIAL_EMAIL_DISH_ASSET"],
+    ["catalogCommit", "MATERIAL_EMAIL_CATALOG_COMMIT"],
+  ]) {
+    if (Object.hasOwn(process.env, environmentKey) && metadata[metadataKey] !== (process.env[environmentKey]?.trim() ?? "")) {
+      throw new Error(`Packaged metadata ${metadataKey} does not match ${environmentKey}.`);
+    }
   }
   if (process.env.MATERIAL_EMAIL_RELEASE_DATE && metadata.releaseDate !== process.env.MATERIAL_EMAIL_RELEASE_DATE) {
     throw new Error("Packaged metadata release date does not match MATERIAL_EMAIL_RELEASE_DATE.");
   }
-  if (typeof metadata.codeName !== "string" || !metadata.codeName.trim()) throw new Error("Packaged metadata code name is missing.");
+  for (const key of ["codeName", "dishId", "imageAsset", "catalogCommit"]) {
+    if (typeof metadata[key] !== "string") throw new Error(`Packaged metadata ${key} must be a string.`);
+  }
+  const decorationValues = [metadata.codeName, metadata.dishId, metadata.imageAsset, metadata.catalogCommit].map(value => value.trim());
+  const hasDecoration = decorationValues.some(Boolean);
+  if (hasDecoration && !decorationValues.every(Boolean)) {
+    throw new Error("Packaged release decoration must include code name, dish ID, image asset, and catalog commit together.");
+  }
+  if (hasDecoration) {
+    if (!/^hk-dish-\d{4}$/u.test(metadata.dishId)) throw new Error("Packaged metadata dish ID is invalid.");
+    if (!/^hk-dish-\d{4}-[a-z0-9-]+\.png$/u.test(metadata.imageAsset)) throw new Error("Packaged metadata image asset is invalid.");
+    if (!/^[0-9a-f]{40}$/u.test(metadata.catalogCommit)) throw new Error("Packaged metadata catalog commit is invalid.");
+  }
   if (typeof metadata.releaseDate !== "string") throw new Error("Packaged metadata release date must be a string.");
   if (metadata.releaseDate) {
     const parsedReleaseDate = new Date(`${metadata.releaseDate}T00:00:00.000Z`);
@@ -227,6 +246,6 @@ if (baseline) {
 } else {
   console.log(`PASS installed ${candidate.installerName} silently and launched its packaged executable`);
 }
-console.log(`PASS metadata ${result.version} · ${result.codeName}${result.releaseDate ? ` · ${result.releaseDate}` : " · development build (no release date)"}`);
+console.log(`PASS metadata ${result.version} · ${result.codeName || "no code name assigned"}${result.releaseDate ? ` · ${result.releaseDate}` : " · development build (no release date)"}`);
 console.log("PASS silent uninstall removed the executable and retained isolated user data by policy");
 console.log(`PASS lifecycle report ${options.reportPath}`);

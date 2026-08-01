@@ -46,12 +46,31 @@ if (releaseDate) {
     throw new Error(`MATERIAL_EMAIL_RELEASE_DATE must be a real UTC calendar date in YYYY-MM-DD form, received ${releaseDate}.`);
   }
 }
+const developmentDecoration = {
+  codeName: "Classic Har Gow · 蝦餃",
+  dishId: "hk-dish-0001",
+  imageAsset: "hk-dish-0001-classic-har-gow.png",
+  catalogCommit: "dfb95a20e647d921242358988ada9c5436c78b3d",
+};
+const suppliedDecoration = {
+  codeName: process.env.MATERIAL_EMAIL_CODE_NAME?.trim() || "",
+  dishId: process.env.MATERIAL_EMAIL_DISH_ID?.trim() || "",
+  imageAsset: process.env.MATERIAL_EMAIL_DISH_ASSET?.trim() || "",
+  catalogCommit: process.env.MATERIAL_EMAIL_CATALOG_COMMIT?.trim() || "",
+};
+const suppliedDecorationValues = Object.values(suppliedDecoration);
+const hasAnySuppliedDecoration = suppliedDecorationValues.some(Boolean);
+if (hasAnySuppliedDecoration && !suppliedDecorationValues.every(Boolean)) {
+  throw new Error("Release decoration metadata must provide code name, dish ID, image asset, and catalog commit together.");
+}
+const releaseDecoration = hasAnySuppliedDecoration
+  ? suppliedDecoration
+  : releaseDate
+    ? { codeName: "", dishId: "", imageAsset: "", catalogCommit: "" }
+    : developmentDecoration;
 const releaseMetadata = {
   version,
   releaseDate,
-  codeName: process.env.MATERIAL_EMAIL_CODE_NAME || "Classic Har Gow · 蝦餃",
-  dishId: process.env.MATERIAL_EMAIL_DISH_ID || "hk-dish-0001",
-  imageAsset: process.env.MATERIAL_EMAIL_DISH_ASSET || "hk-dish-0001-classic-har-gow.png",
-  catalogCommit: process.env.MATERIAL_EMAIL_CATALOG_COMMIT || "dfb95a20e647d921242358988ada9c5436c78b3d",
+  ...releaseDecoration,
 };
 await writeFile("dist/release-metadata.json", `${JSON.stringify(releaseMetadata, null, 2)}\n`, "utf8");

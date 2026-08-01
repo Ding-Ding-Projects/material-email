@@ -66,10 +66,6 @@ export const validateReleaseMetadata = async metadata => {
   }
 
   if (!isRealUtcDate(metadata.releaseDate ?? "")) throw new Error("Published release metadata needs a real UTC YYYY-MM-DD date.");
-  if (typeof metadata.codeName !== "string" || !metadata.codeName.trim() || metadata.codeName.length > 160) {
-    throw new Error("Published release metadata needs a bounded code name.");
-  }
-  if (!photoPattern.test(metadata.photoFile ?? "")) throw new Error("Published release metadata has an invalid photo filename.");
   if (metadata.tag !== `v${metadata.version}`) throw new Error("Published release tag must match the version.");
 
   let releaseUrl;
@@ -83,11 +79,20 @@ export const validateReleaseMetadata = async metadata => {
     throw new Error("Published release URL must target the matching Material Email GitHub release.");
   }
 
-  const catalog = await readCatalog();
-  const dish = catalog.find(entry => entry.file === metadata.photoFile);
-  if (!dish) throw new Error("Published release photo is not in the verified catalog.");
-  const expectedCodeName = `${dish.name.en} · ${dish.name.zhHant}`;
-  if (metadata.codeName !== expectedCodeName) throw new Error("Published code name does not match its verified catalog photo.");
+  const hasCodeName = metadata.codeName !== null;
+  const hasPhoto = metadata.photoFile !== null;
+  if (hasCodeName !== hasPhoto) throw new Error("Published release code name and photo must both be present or both be null.");
+  if (hasCodeName && hasPhoto) {
+    if (typeof metadata.codeName !== "string" || !metadata.codeName.trim() || metadata.codeName.length > 160) {
+      throw new Error("Published release metadata has an invalid code name.");
+    }
+    if (!photoPattern.test(metadata.photoFile)) throw new Error("Published release metadata has an invalid photo filename.");
+    const catalog = await readCatalog();
+    const dish = catalog.find(entry => entry.file === metadata.photoFile);
+    if (!dish) throw new Error("Published release photo is not in the verified catalog.");
+    const expectedCodeName = `${dish.name.en} · ${dish.name.zhHant}`;
+    if (metadata.codeName !== expectedCodeName) throw new Error("Published code name does not match its verified catalog photo.");
+  }
   return { ...metadata };
 };
 
@@ -154,7 +159,7 @@ export const verifySiteArtifact = async artifactDirectory => {
 
   const releaseMetadata = await validateReleaseMetadata(JSON.parse(await readFile(path.join(resolvedArtifact, "release.json"), "utf8")));
   const catalog = await verifyCatalogCopies(resolvedArtifact);
-  if (releaseMetadata.published && !catalog.some(entry => entry.file === releaseMetadata.photoFile)) {
+  if (releaseMetadata.published && releaseMetadata.photoFile && !catalog.some(entry => entry.file === releaseMetadata.photoFile)) {
     throw new Error("The selected release photo is absent from the Pages artifact.");
   }
 
@@ -225,8 +230,8 @@ const cli = async () => {
     published: true,
     version: process.env.MATERIAL_EMAIL_SITE_VERSION,
     releaseDate: process.env.MATERIAL_EMAIL_SITE_RELEASE_DATE,
-    codeName: process.env.MATERIAL_EMAIL_SITE_CODE_NAME,
-    photoFile: process.env.MATERIAL_EMAIL_SITE_PHOTO_FILE,
+    codeName: process.env.MATERIAL_EMAIL_SITE_CODE_NAME?.trim() || null,
+    photoFile: process.env.MATERIAL_EMAIL_SITE_PHOTO_FILE?.trim() || null,
     tag: process.env.MATERIAL_EMAIL_SITE_TAG,
     releaseUrl: process.env.MATERIAL_EMAIL_SITE_RELEASE_URL,
   } : undefined;

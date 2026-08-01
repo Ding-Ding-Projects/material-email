@@ -277,6 +277,7 @@ a:hover { text-decoration-thickness: 0.15em; }
 .status-orbit__core span { color: var(--on-surface-variant); font-size: 0.83rem; }
 .truth-note { padding: 0.9rem 1rem; border-radius: var(--radius-medium); background: color-mix(in srgb, var(--surface) 82%, transparent); color: var(--on-surface); font-size: 0.9rem; line-height: 1.5; }
 .release-summary { align-self: center; display: grid; grid-template-columns: minmax(7.5rem, 10rem) minmax(0, 1fr); gap: 1rem; align-items: center; padding: 1rem; border-radius: var(--radius-large); background: var(--surface); color: var(--on-surface); box-shadow: 0 1rem 2.5rem var(--shadow); }
+.release-summary--plain { grid-template-columns: minmax(0, 1fr); }
 .release-summary img { width: 100%; aspect-ratio: 1; border-radius: var(--radius-medium); object-fit: cover; }
 .release-summary strong, .release-summary span, .release-summary time { display: block; overflow-wrap: anywhere; }
 .release-summary strong { margin-block: 0.35rem; font-size: 1.08rem; line-height: 1.25; }

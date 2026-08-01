@@ -13,6 +13,7 @@ const stagingDirectory = await mkdtemp(path.join(tmpdir(), "material-email-site-
 const artifactDirectory = path.join(stagingDirectory, "artifacts");
 const developmentArtifact = path.join(artifactDirectory, "development");
 const publishedArtifact = path.join(artifactDirectory, "published");
+const exhaustedCatalogArtifact = path.join(artifactDirectory, "published-without-dish");
 const preferenceKey = "material-email.docs.preferences.v1";
 const firstVisitKey = "material-email.docs.first-visit.v1";
 const publishedRelease = Object.freeze({
@@ -24,6 +25,16 @@ const publishedRelease = Object.freeze({
   photoFile: "hk-dish-0001-classic-har-gow.png",
   tag: "v0.42.3",
   releaseUrl: "https://github.com/Ding-Ding-Projects/material-email/releases/tag/v0.42.3",
+});
+const exhaustedCatalogRelease = Object.freeze({
+  schemaVersion: 1,
+  published: true,
+  version: "0.43.1",
+  releaseDate: "2026-08-01",
+  codeName: null,
+  photoFile: null,
+  tag: "v0.43.1",
+  releaseUrl: "https://github.com/Ding-Ding-Projects/material-email/releases/tag/v0.43.1",
 });
 const screenshotPaths = {
   development: path.join(outputDirectory, "development-home.png"),
@@ -188,8 +199,9 @@ await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
 await assembleSiteArtifact({ outputDirectory: developmentArtifact, releaseMetadata: developmentReleaseMetadata });
 await assembleSiteArtifact({ outputDirectory: publishedArtifact, releaseMetadata: publishedRelease });
+await assembleSiteArtifact({ outputDirectory: exhaustedCatalogArtifact, releaseMetadata: exhaustedCatalogRelease });
 
-const { server, origin } = await createSiteServer(new Map([["development", developmentArtifact], ["published", publishedArtifact]]));
+const { server, origin } = await createSiteServer(new Map([["development", developmentArtifact], ["published", publishedArtifact], ["published-without-dish", exhaustedCatalogArtifact]]));
 let browser;
 let browserLabel = "";
 let failure;
@@ -198,6 +210,7 @@ try {
   ({ browser, label: browserLabel } = await launchBrowser());
   const pageUrl = `${origin}/development/`;
   const publishedPageUrl = `${origin}/published/`;
+  const exhaustedCatalogPageUrl = `${origin}/published-without-dish/`;
   const context = await browser.newContext({
     colorScheme: "light",
     locale: "en-CA",
@@ -474,6 +487,24 @@ try {
 
     assertCleanObservation(publishedObservation);
     await publishedContext.close();
+  });
+
+  await check("published release remains truthful after catalog exhaustion", async () => {
+    const exhaustedContext = await browser.newContext({ colorScheme: "light", locale: "en-CA", viewport: { width: 1024, height: 768 } });
+    const exhaustedPage = await exhaustedContext.newPage();
+    const exhaustedObservation = observePage(exhaustedPage, origin);
+    const navigation = await exhaustedPage.goto(exhaustedCatalogPageUrl, { waitUntil: "networkidle" });
+    assert.equal(navigation?.status(), 200);
+    await waitForSite(exhaustedPage);
+    const summary = exhaustedPage.locator(".release-summary");
+    assert.equal(await summary.isVisible(), true);
+    assert.match((await summary.textContent()) ?? "", /No code name assigned/);
+    assert.match((await summary.textContent()) ?? "", /0\.43\.1/);
+    assert.equal(await summary.locator("img").count(), 0, "An exhausted release must not reuse a catalog photo.");
+    assert.match((await exhaustedPage.locator(".brand-copy small").textContent()) ?? "", /No code name assigned/);
+    assert.match((await exhaustedPage.locator("#panel-home .notice").textContent()) ?? "", /all ten verified dish names were already used/i);
+    assertCleanObservation(exhaustedObservation);
+    await exhaustedContext.close();
   });
 
   await check("reduced-motion rendering path", async () => {
