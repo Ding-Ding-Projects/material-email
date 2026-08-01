@@ -9,6 +9,7 @@ export const identifierSchema = z.string().trim().min(1).max(512).refine(noContr
 export const folderPathSchema = z.string().min(1).max(2_048).refine(noHeaderBreaks, "Folder paths cannot contain line breaks or NUL.");
 export const messageUidSchema = z.number().int().min(1).max(0xffff_ffff);
 export const attachmentIndexSchema = z.number().int().min(0).max(9_999);
+export const quarantineIdSchema = z.uuid();
 export const revisionHashSchema = z.string().regex(/^[a-f0-9]{7,40}$/iu);
 export const revisionLabelSchema = z
   .string()
@@ -154,6 +155,7 @@ export const ipcPayloadSchemas = {
     z.tuple([identifierSchema, folderPathSchema, messageUidSchema]),
     z.tuple([identifierSchema, folderPathSchema, messageUidSchema, attachmentSaveReviewSchema]),
   ]),
+  quarantineItem: z.tuple([quarantineIdSchema]),
   messageFlags: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, flagPatchSchema]),
   moveMessage: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, folderPathSchema]),
   composeDraft: z.tuple([composeDraftSchema]),

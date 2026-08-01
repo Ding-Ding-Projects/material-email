@@ -1,8 +1,8 @@
-import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { app, dialog, safeStorage } from "electron";
 import type {
   AccountDraft,
@@ -40,6 +40,9 @@ import type {
   OutboxSummary,
   PendingOperationSummary,
   AttachmentSaveReview,
+  AttachmentBatchSaveOutcome,
+  AttachmentSaveOutcome,
+  QuarantinedAttachment,
 } from "../shared/contracts.js";
 import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts.js";
 import {
@@ -53,8 +56,8 @@ import { DEFAULT_APPEARANCE_PREFERENCES } from "../shared/appearance.js";
 import { HistoryRepository } from "./history-repository.js";
 import { AccountDiscoveryService } from "./account-discovery.js";
 import { PimService } from "./pim/index.js";
-import { MailService, type MailMoveResult, type RuntimeAccount } from "./mail-service.js";
-import { accountDraftSchema, composeDraftSchema, preferencesPatchSchema, preferencesSchema } from "./ipc-validation.js";
+import { MailService, type AttachmentContent, type MailMoveResult, type RuntimeAccount } from "./mail-service.js";
+import { accountDraftSchema, composeDraftSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
 import { AttachmentAuthorization, inspectEditorExecutable, sameWindowsPath } from "./local-file-authorization.js";
 import {
   parsePersistedState,
@@ -79,6 +82,9 @@ const defaultPreferences = (): Preferences => ({
 });
 
 const folderKey = (accountId: string, folderPath: string): string => `${accountId}\u0000${folderPath}`;
+
+const fileErrorCode = (error: unknown): string | undefined =>
+  error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
 
 const sameStringList = (left: string[] | undefined, right: string[] | undefined): boolean =>
   left === right || (left !== undefined && right !== undefined && left.length === right.length && left.every((value, index) => value === right[index]));
@@ -203,6 +209,7 @@ const demoMessages = (): { summaries: MessageSummary[]; details: MessageDetail[]
 
 export class AppService {
   readonly #statePath: string;
+  readonly #quarantinePath: string;
   readonly #store: JsonStore<PersistedState>;
   readonly #mail = new MailService();
   readonly #historyRepository: HistoryRepository;
@@ -214,6 +221,7 @@ export class AppService {
 
   constructor(userDataPath: string) {
     this.#statePath = path.join(userDataPath, "material-email-state-v1.json");
+    this.#quarantinePath = path.join(userDataPath, "attachment-quarantine-v1");
     this.#pim = new PimService(userDataPath);
     this.#historyRepository = new HistoryRepository(path.join(userDataPath, "local-history"), parsePersistedState);
     this.#store = new JsonStore<PersistedState>(
@@ -230,6 +238,7 @@ export class AppService {
         outbox: [],
         notifications: [],
         history: [],
+        quarantinedAttachments: [],
         approvedEditorPaths: [],
       }),
       async filePath => {
@@ -268,6 +277,7 @@ export class AppService {
       preferences: state.preferences,
       notifications: state.notifications,
       history: state.history,
+      quarantinedAttachments: state.quarantinedAttachments,
       isFirstRun: state.accounts.length === 0,
       version: app.getVersion(),
       release,
@@ -476,19 +486,31 @@ export class AppService {
     uid: number,
     index: number,
     review?: AttachmentSaveReview,
-  ): Promise<string | null> {
+  ): Promise<AttachmentSaveOutcome> {
     const state = await this.#store.read();
     const account = this.#requireAccount(state, accountId);
     if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
-    const { uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
     const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
     const attachment = attachments[index];
     if (!attachment) throw new Error("That attachment no longer exists.");
     const currentRisk = createAttachmentRiskReviewItem(attachment, index);
     requireAttachmentSaveReview(currentRisk.level === "ordinary" ? [] : [currentRisk], review);
+    if (currentRisk.level !== "ordinary") {
+      const [quarantine] = await this.#quarantineAttachments(
+        accountId,
+        folderPath,
+        uid,
+        uidValidity,
+        message.messageId,
+        [{ attachment, index, risk: currentRisk }],
+      );
+      if (!quarantine) throw new Error("The attachment could not be placed in local quarantine.");
+      return { status: "quarantined", quarantine };
+    }
     const filename = this.#safeFilename(attachment.filename);
     const result = await dialog.showSaveDialog({ defaultPath: filename, title: "Save attachment" });
-    if (result.canceled || !result.filePath) return null;
+    if (result.canceled || !result.filePath) return { status: "cancelled" };
     await writeFile(result.filePath, attachment.content, { flag: "w" });
     await this.#store.update(draft => {
       this.#requireAccount(draft, accountId);
@@ -500,7 +522,7 @@ export class AppService {
       });
       this.#notify(draft, "success", "Attachment saved", filename);
     });
-    return result.filePath;
+    return { status: "saved", path: result.filePath };
   }
 
   async saveAllAttachments(
@@ -508,20 +530,38 @@ export class AppService {
     folderPath: string,
     uid: number,
     review?: AttachmentSaveReview,
-  ): Promise<string[]> {
+  ): Promise<AttachmentBatchSaveOutcome> {
     const state = await this.#store.read();
     const account = this.#requireAccount(state, accountId);
     if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
-    const { uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
     const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
     const currentReview = createAttachmentSaveReview(attachments);
     requireAttachmentSaveReview(currentReview.riskyAttachments, review);
+    const quarantined = await this.#quarantineAttachments(
+      accountId,
+      folderPath,
+      uid,
+      uidValidity,
+      message.messageId,
+      currentReview.riskyAttachments.map(risk => {
+        const attachment = attachments[risk.index];
+        if (!attachment) throw new Error("That attachment no longer exists.");
+        return { attachment, index: risk.index, risk };
+      }),
+    );
+    const ordinaryAttachments = attachments
+      .map((attachment, index) => ({ attachment, index }))
+      .filter(({ attachment }) => createAttachmentRiskReviewItem(attachment, 0).level === "ordinary");
+    if (!ordinaryAttachments.length) {
+      return { savedPaths: [], quarantined, ordinarySaveCancelled: false };
+    }
     const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"], title: "Save all attachments" });
-    if (result.canceled || !result.filePaths[0]) return [];
+    if (result.canceled || !result.filePaths[0]) return { savedPaths: [], quarantined, ordinarySaveCancelled: true };
     const directory = result.filePaths[0];
     await mkdir(directory, { recursive: true });
     const saved: string[] = [];
-    for (const [index, attachment] of attachments.entries()) {
+    for (const { attachment, index } of ordinaryAttachments) {
       const base = this.#safeFilename(attachment.filename || `attachment-${index + 1}`);
       const target = await this.#uniquePath(directory, base);
       await writeFile(target, attachment.content, { flag: "wx" });
@@ -535,7 +575,81 @@ export class AppService {
       });
       this.#notify(draft, "success", "Attachments saved", `${saved.length} file${saved.length === 1 ? "" : "s"} saved.`);
     });
-    return saved;
+    return { savedPaths: saved, quarantined, ordinarySaveCancelled: false };
+  }
+
+  async releaseQuarantinedAttachment(id: string): Promise<string | null> {
+    id = quarantineIdSchema.parse(id);
+    const state = await this.#store.read();
+    const record = state.quarantinedAttachments.find(candidate => candidate.id === id);
+    if (!record) throw new Error("That quarantined attachment is no longer available.");
+    const payloadPath = this.#quarantinePayloadPath(record.id);
+    const payload = await readFile(payloadPath);
+    const digest = createHash("sha256").update(payload).digest("hex");
+    if (payload.length !== record.size || digest !== record.sha256) {
+      throw new Error("The quarantined attachment changed on disk, so release was refused. Delete it or inspect the local application data manually.");
+    }
+    const result = await dialog.showSaveDialog({
+      defaultPath: this.#safeFilename(record.filename),
+      title: "Release quarantined attachment",
+    });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, payload, { flag: "w" });
+
+    const retiredPath = `${payloadPath}.released-${randomUUID()}`;
+    await rename(payloadPath, retiredPath);
+    try {
+      await this.#store.update(draft => {
+        const current = draft.quarantinedAttachments.find(candidate => candidate.id === id);
+        if (!current) throw new Error("That quarantined attachment is no longer available.");
+        draft.quarantinedAttachments = draft.quarantinedAttachments.filter(candidate => candidate.id !== id);
+        this.#record(draft, "updated", "message", `${current.source.accountId}:${current.source.folderPath}:${current.source.uid}`, `Released quarantined attachment ${current.filename}`, {
+          quarantineId: current.id,
+          filename: current.filename,
+          sha256: current.sha256,
+          releasedTo: path.basename(result.filePath),
+        });
+        this.#notify(draft, "warning", "Attachment released from local quarantine", `${current.filename} was copied to the selected destination. No antivirus scan was performed.`);
+      });
+    } catch (error) {
+      await rename(retiredPath, payloadPath).catch(() => undefined);
+      throw error;
+    }
+    await rm(retiredPath, { force: true });
+    return result.filePath;
+  }
+
+  async deleteQuarantinedAttachment(id: string): Promise<void> {
+    id = quarantineIdSchema.parse(id);
+    const state = await this.#store.read();
+    const record = state.quarantinedAttachments.find(candidate => candidate.id === id);
+    if (!record) throw new Error("That quarantined attachment is no longer available.");
+    const payloadPath = this.#quarantinePayloadPath(record.id);
+    const retiredPath = `${payloadPath}.deleted-${randomUUID()}`;
+    let payloadMoved = false;
+    try {
+      await rename(payloadPath, retiredPath);
+      payloadMoved = true;
+    } catch (error) {
+      if (fileErrorCode(error) !== "ENOENT") throw error;
+    }
+    try {
+      await this.#store.update(draft => {
+        const current = draft.quarantinedAttachments.find(candidate => candidate.id === id);
+        if (!current) throw new Error("That quarantined attachment is no longer available.");
+        draft.quarantinedAttachments = draft.quarantinedAttachments.filter(candidate => candidate.id !== id);
+        this.#record(draft, "deleted", "message", `${current.source.accountId}:${current.source.folderPath}:${current.source.uid}`, `Deleted quarantined attachment ${current.filename}`, {
+          quarantineId: current.id,
+          filename: current.filename,
+          sha256: current.sha256,
+        });
+        this.#notify(draft, "info", "Quarantined attachment deleted", `${current.filename} was removed from local quarantine.`);
+      });
+    } catch (error) {
+      if (payloadMoved) await rename(retiredPath, payloadPath).catch(() => undefined);
+      throw error;
+    }
+    if (payloadMoved) await rm(retiredPath, { force: true });
   }
 
   async setMessageFlags(
@@ -1376,6 +1490,116 @@ export class AppService {
       );
     }
     return { message, uidValidity };
+  }
+
+  #quarantinePayloadPath(id: string): string {
+    return path.join(this.#quarantinePath, `${id}.quarantine`);
+  }
+
+  async #quarantineAttachments(
+    accountId: string,
+    folderPath: string,
+    uid: number,
+    uidValidity: string,
+    messageId: string | undefined,
+    items: Array<{ attachment: AttachmentContent; index: number; risk: AttachmentRiskReviewItem }>,
+  ): Promise<QuarantinedAttachment[]> {
+    if (!items.length) return [];
+    await mkdir(this.#quarantinePath, { recursive: true, mode: 0o700 });
+    const currentState = await this.#store.read();
+    const results = new Array<QuarantinedAttachment>(items.length);
+    const created: Array<{ resultIndex: number; record: QuarantinedAttachment; payloadPath: string }> = [];
+
+    for (const [resultIndex, item] of items.entries()) {
+      if (item.risk.level === "ordinary") throw new Error("Ordinary attachments must not enter local quarantine.");
+      const sha256 = createHash("sha256").update(item.attachment.content).digest("hex");
+      const source = {
+        accountId,
+        folderPath,
+        uid,
+        uidValidity,
+        attachmentIndex: item.index,
+        ...(messageId ? { messageId } : {}),
+      };
+      const existing = currentState.quarantinedAttachments.find(candidate =>
+        candidate.source.accountId === source.accountId &&
+        candidate.source.folderPath === source.folderPath &&
+        candidate.source.uid === source.uid &&
+        candidate.source.uidValidity === source.uidValidity &&
+        candidate.source.attachmentIndex === source.attachmentIndex &&
+        candidate.filename === item.attachment.filename &&
+        candidate.contentType === item.attachment.contentType &&
+        candidate.sha256 === sha256,
+      );
+      if (existing) {
+        results[resultIndex] = existing;
+        continue;
+      }
+      const record: QuarantinedAttachment = {
+        id: randomUUID(),
+        filename: item.attachment.filename,
+        contentType: item.attachment.contentType,
+        size: item.attachment.content.length,
+        sha256,
+        risk: { level: item.risk.level, reasons: [...item.risk.reasons] },
+        quarantinedAt: new Date().toISOString(),
+        source,
+      };
+      const payloadPath = this.#quarantinePayloadPath(record.id);
+      await writeFile(payloadPath, item.attachment.content, { flag: "wx", mode: 0o600 });
+      results[resultIndex] = record;
+      created.push({ resultIndex, record, payloadPath });
+    }
+
+    if (!created.length) return results;
+    const acceptedIds = new Set<string>();
+    try {
+      await this.#store.update(draft => {
+        for (const candidate of created) {
+          const { record } = candidate;
+          const duplicate = draft.quarantinedAttachments.find(existing =>
+            existing.source.accountId === record.source.accountId &&
+            existing.source.folderPath === record.source.folderPath &&
+            existing.source.uid === record.source.uid &&
+            existing.source.uidValidity === record.source.uidValidity &&
+            existing.source.attachmentIndex === record.source.attachmentIndex &&
+            existing.filename === record.filename &&
+            existing.contentType === record.contentType &&
+            existing.sha256 === record.sha256,
+          );
+          if (duplicate) {
+            results[candidate.resultIndex] = duplicate;
+            continue;
+          }
+          acceptedIds.add(record.id);
+          draft.quarantinedAttachments.unshift(record);
+          this.#record(draft, "created", "message", `${accountId}:${folderPath}:${uid}`, `Quarantined attachment ${record.filename}`, {
+            quarantineId: record.id,
+            filename: record.filename,
+            contentType: record.contentType,
+            size: record.size,
+            sha256: record.sha256,
+            risk: record.risk,
+            source: record.source,
+          });
+        }
+        if (acceptedIds.size) {
+          this.#notify(
+            draft,
+            "warning",
+            acceptedIds.size === 1 ? "Attachment placed in local quarantine" : "Attachments placed in local quarantine",
+            `${acceptedIds.size} risky attachment${acceptedIds.size === 1 ? "" : "s"} require explicit release or deletion. No antivirus scan was performed.`,
+          );
+        }
+      });
+    } catch (error) {
+      await Promise.all(created.map(candidate => rm(candidate.payloadPath, { force: true }).catch(() => undefined)));
+      throw error;
+    }
+    await Promise.all(created
+      .filter(candidate => !acceptedIds.has(candidate.record.id))
+      .map(candidate => rm(candidate.payloadPath, { force: true })));
+    return results;
   }
 
   #safeFilename(value: string): string {

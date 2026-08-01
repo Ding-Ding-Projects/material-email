@@ -113,6 +113,37 @@ export interface AttachmentSummary {
   contentId?: string;
 }
 
+export interface QuarantinedAttachmentSource {
+  accountId: string;
+  folderPath: string;
+  uid: number;
+  uidValidity: string;
+  attachmentIndex: number;
+  messageId?: string;
+}
+
+export interface QuarantinedAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  sha256: string;
+  risk: AttachmentRiskAssessment & { level: "caution" | "dangerous" };
+  quarantinedAt: string;
+  source: QuarantinedAttachmentSource;
+}
+
+export type AttachmentSaveOutcome =
+  | { status: "cancelled" }
+  | { status: "saved"; path: string }
+  | { status: "quarantined"; quarantine: QuarantinedAttachment };
+
+export interface AttachmentBatchSaveOutcome {
+  savedPaths: string[];
+  quarantined: QuarantinedAttachment[];
+  ordinarySaveCancelled: boolean;
+}
+
 export interface MessageSummary {
   id: string;
   accountId: string;
@@ -273,6 +304,7 @@ export interface BootstrapState {
   preferences: Preferences;
   notifications: NotificationRecord[];
   history: HistoryRecord[];
+  quarantinedAttachments: QuarantinedAttachment[];
   isFirstRun: boolean;
   version: string;
   release: ReleaseIdentity;
@@ -310,8 +342,10 @@ export interface MaterialEmailApi {
   listFolders(accountId: string): Promise<FolderSummary[]>;
   listMessages(accountId: string, folderPath: string): Promise<MessageSummary[]>;
   getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail>;
-  saveAttachment(accountId: string, folderPath: string, uid: number, index: number, review?: AttachmentSaveReview): Promise<string | null>;
-  saveAllAttachments(accountId: string, folderPath: string, uid: number, review?: AttachmentSaveReview): Promise<string[]>;
+  saveAttachment(accountId: string, folderPath: string, uid: number, index: number, review?: AttachmentSaveReview): Promise<AttachmentSaveOutcome>;
+  saveAllAttachments(accountId: string, folderPath: string, uid: number, review?: AttachmentSaveReview): Promise<AttachmentBatchSaveOutcome>;
+  releaseQuarantinedAttachment(id: string): Promise<string | null>;
+  deleteQuarantinedAttachment(id: string): Promise<void>;
   setMessageFlags(accountId: string, folderPath: string, uid: number, patch: { unread?: boolean; starred?: boolean }): Promise<void>;
   moveMessage(accountId: string, folderPath: string, uid: number, destination: string): Promise<void>;
   sendMessage(draft: ComposeDraft): Promise<SendResult>;

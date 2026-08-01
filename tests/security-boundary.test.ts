@@ -34,6 +34,8 @@ describe("Electron security boundary", () => {
       "mail:message",
       "mail:save-attachment",
       "mail:save-all-attachments",
+      "quarantine:release",
+      "quarantine:delete",
       "mail:flags",
       "mail:move",
       "mail:send",

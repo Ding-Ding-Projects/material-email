@@ -28,6 +28,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] UIDVALIDITY-bound detail, attachment, flag, MOVE, and queued-operation handling
 - [x] Compare-and-swap preservation for concurrent draft save and send completion
 - [x] Attachment save/save-all with normalized collision-safe filenames
+- [x] Persisted local quarantine for caution/dangerous attachments with randomized payload names, provenance, integrity metadata, and explicit release/delete
 - [x] Isolated whole-state Git snapshot repository foundation
 - [x] Contact and mailing-list CRUD with stable UIDs and append-only restore
 - [x] Bounded conservative vCard 3.0/4.0 import and deterministic export
@@ -60,7 +61,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] Unified folders and cross-account views
 - [ ] Conversation threading and complete search indexing
 - [x] Attachment risk classification and review-before-save warnings
-- [ ] Attachment quarantine/scanner integration
+- [x] Local attachment quarantine with reviewed batch routing and accessible bilingual release/delete decisions
+- [ ] Antivirus or malware-content scanner integration and provider-backed reputation checks
 - [x] Native Windows notifications with privacy controls (opt-in generic summaries)
 - [x] Renderer/preload/IPC integration for contacts, mailing lists, calendars, tasks, vCard actions, and transaction recovery
 - [ ] CardDAV/CalDAV/ICS/task-provider synchronization and broad interoperability

@@ -551,6 +551,17 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .queue-card--conflict { border-color: color-mix(in srgb, var(--error) 58%, var(--outline-variant)); }
 .queue-card__body { min-width: 0; }
 .queue-card__body small { display: block; margin-top: 8px; overflow-wrap: anywhere; color: var(--on-surface-variant); }
+.quarantine-tool .record-list { margin-top: 8px; }
+.quarantine-card { align-items: start; border-color: color-mix(in srgb, var(--warning) 44%, var(--outline-variant)); }
+.quarantine-card--dangerous { border-color: color-mix(in srgb, var(--error) 58%, var(--outline-variant)); }
+.quarantine-card__icon { color: var(--error); background: var(--error-container); }
+.quarantine-card__body { min-width: 0; }
+.quarantine-card__body h3, .quarantine-card__body p { margin: 3px 0; overflow-wrap: anywhere; }
+.quarantine-card__body p, .quarantine-card__body small { color: var(--on-surface-variant); }
+.quarantine-card__body small { display: block; margin-top: 5px; overflow-wrap: anywhere; }
+.quarantine-empty { padding: 22px; text-align: center; }
+.quarantine-empty h3, .quarantine-empty p { margin: 6px 0; }
+.quarantine-review code { display: block; margin-top: 5px; max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
 .queue-head-badge { padding: 3px 8px; border-radius: 999px; background: var(--primary-container); color: var(--on-primary-container); font-weight: 750; }
 .queue-status { display: flex; align-items: flex-start; gap: 8px; margin-block: 10px !important; padding: 10px 12px; border-radius: var(--radius-md); }
 .queue-status > .icon { flex: 0 0 auto; margin-top: 2px; }

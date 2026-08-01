@@ -76,6 +76,8 @@ describe("non-PIM IPC validation", () => {
     expect(ipcPayloadSchemas.saveAttachment.parse(["account-1", "Inbox", 8, 2, riskyAttachmentReview()])).toHaveLength(5);
     expect(ipcPayloadSchemas.saveAllAttachments.parse(["account-1", "Inbox", 8, riskyAttachmentReview()])).toHaveLength(4);
     expect(ipcPayloadSchemas.saveAttachment.parse(["account-1", "Inbox", 8, 2])).toHaveLength(4);
+    expect(ipcPayloadSchemas.quarantineItem.parse(["11111111-1111-4111-8111-111111111111"])).toHaveLength(1);
+    expect(() => ipcPayloadSchemas.quarantineItem.parse(["../payload"])).toThrow();
     expect(() => ipcPayloadSchemas.saveAttachment.parse([
       "account-1",
       "Inbox",

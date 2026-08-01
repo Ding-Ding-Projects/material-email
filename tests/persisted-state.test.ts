@@ -31,6 +31,7 @@ const minimalState = () => ({
 describe("persisted application state schema", () => {
   it("migrates the main-only editor approval list into older version-1 state", () => {
     expect(parsePersistedState(minimalState()).approvedEditorPaths).toEqual([]);
+    expect(parsePersistedState(minimalState()).quarantinedAttachments).toEqual([]);
   });
 
   it("rejects unknown fields and renderer-shaped executable paths", () => {

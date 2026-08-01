@@ -40,7 +40,7 @@ External editor launch accepts only a real Windows `.exe` with an executable sig
 
 ## Security considerations
 
-Do not enable plaintext transport by default. Add clear warnings before allowing it. Attachment saving needs scanner/quarantine integration, risky-extension warnings, MIME-versus-extension checks, and provenance. Message links need phishing and look-alike-domain treatment. Future OAuth must use a system-browser flow, PKCE where applicable, state/nonce validation, strict redirect handling, scoped tokens, rotation, and revocation.
+Do not enable plaintext transport by default. Add clear warnings before allowing it. Attachment quarantine now supplies risky-extension and MIME/extension classification, randomized local payload names, provenance, integrity checking, and explicit release/delete; antivirus/content scanning and external reputation remain open. Message links need phishing and look-alike-domain treatment. Future OAuth must use a system-browser flow, PKCE where applicable, state/nonce validation, strict redirect handling, scoped tokens, rotation, and revocation.
 
 The local Git history validates snapshots before commit and accepts restores only from commits in the current append-only lineage. Credentials remain ciphertext, but access permissions, stable encryption identifiers, restore migrations, and repository-retention behavior require continuing review.
 

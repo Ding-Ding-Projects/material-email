@@ -86,6 +86,8 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("mail:save-all-attachments", ipcPayloadSchemas.saveAllAttachments, ([accountId, folderPath, uid, review]) =>
     service.saveAllAttachments(accountId, folderPath, uid, review),
   );
+  handleValidated("quarantine:release", ipcPayloadSchemas.quarantineItem, ([id]) => service.releaseQuarantinedAttachment(id));
+  handleValidated("quarantine:delete", ipcPayloadSchemas.quarantineItem, ([id]) => service.deleteQuarantinedAttachment(id));
   handleValidated("mail:flags", ipcPayloadSchemas.messageFlags, ([accountId, folderPath, uid, patch]) =>
     service.setMessageFlags(accountId, folderPath, uid, patch),
   );

@@ -31,6 +31,8 @@ const api: MaterialEmailApi = {
   saveAllAttachments: (accountId, folderPath, uid, review) => review
     ? ipcRenderer.invoke("mail:save-all-attachments", accountId, folderPath, uid, review)
     : ipcRenderer.invoke("mail:save-all-attachments", accountId, folderPath, uid),
+  releaseQuarantinedAttachment: id => ipcRenderer.invoke("quarantine:release", id),
+  deleteQuarantinedAttachment: id => ipcRenderer.invoke("quarantine:delete", id),
   setMessageFlags: (accountId, folderPath, uid, patch) => ipcRenderer.invoke("mail:flags", accountId, folderPath, uid, patch),
   moveMessage: (accountId, folderPath, uid, destination) => ipcRenderer.invoke("mail:move", accountId, folderPath, uid, destination),
   sendMessage: draft => ipcRenderer.invoke("mail:send", draft),

@@ -10,6 +10,8 @@ Mail mutation handling now treats false IMAP results as failures, refuses unsafe
 
 External message links now use a deny-by-default review flow. Electron denies every popup, the main process keeps only a short-lived single-use opaque request, and the trusted renderer shows a bilingual confirmation with the normalized URL, hostname, risk, and factual warning reasons. Confirmation revalidates expiry and HTTP(S) protocol before `shell.openExternal`; cancellation, expiry, duplicate use, and browser-launch failures do not open the link.
 
+Caution and dangerous received attachments now enter local quarantine before any user-selected save destination. The main process stores bytes under randomized `.quarantine` names and persists original metadata, source UID/UIDVALIDITY provenance, risk reasons, byte size, timestamp, and SHA-256 integrity. The Tools panel provides keyboard-accessible English, playful Hong Kong-style Cantonese, and bilingual Release/Delete decisions. Release rechecks size/hash and uses a native destination dialog; delete never releases a copy. Ordinary batch members still use the native folder chooser. This is not antivirus scanning, and no malware-clean verdict is produced.
+
 Compose and PIM editors use saved/loaded dirty baselines. Their discard decision is accessible and restores focus, replacement attempts are guarded, and the unload guard covers either dirty editor so a whole-window close cannot silently discard the form. Send/Save operations are mutually exclusive; edits made during an in-flight operation remain visible and unsaved, while the main process preserves newer same-ID draft versions. PIM saves are bound to their originating editor and keep a retryable, factual state if post-save refresh fails. Mail account/folder/message requests use monotonic ownership so late results cannot overwrite the current view.
 
 No hosted documentation site or clean-machine installation proof exists at this handoff. Published installers exist, and a new local verifier now proves a strict prior-release-to-candidate upgrade without confusing that evidence with clean-machine certification. The release workflow is wired to download the latest prior installer and require the same upgrade evidence before its next publication; that updated hosted gate has not run yet.
@@ -41,7 +43,7 @@ The coverage targets JSON/persistence behavior, process and IPC trust boundaries
 - Message HTML is allowlisted and removes scripts, styles, images, event attributes, and unsafe schemes.
 - State writes use a same-directory temporary file and rename and serialize concurrent updates.
 
-Open security work includes broader IPC payload testing, certificate diagnostics and safe-link preview, attachment scanning/quarantine, OAuth browser flow review, cryptographic messaging, migration testing, and PIM at-rest encryption decisions.
+Open security work includes broader IPC payload testing, certificate diagnostics and safe-link preview, antivirus/content scanning and reputation integration, OAuth browser flow review, cryptographic messaging, migration testing, and PIM at-rest encryption decisions.
 
 ## Documentation delivered in this pass
 
@@ -63,4 +65,4 @@ Open security work includes broader IPC payload testing, certificate diagnostics
 
 ## Known open product gaps
 
-Browser OAuth, POP, unified folders, threading, SQLite mail indexing, history retention/pruning and every-record restore, CardDAV/CalDAV/ICS/task providers, broad vCard interoperability, recurrence expansion, alarm delivery, PIM at-rest encryption, message cryptography, attachment scanning/quarantine, clean-machine lifecycle proof, hosted verification of the new upgrade gate, wiki synchronization, and Pages deployment remain open. Native Windows notifications, attachment risk warnings, the searchable local revision diff/label/restore slice, the factual in-app changelog, and a locally exercised strict NSIS upgrade verifier are implemented.
+Browser OAuth, POP, unified folders, threading, SQLite mail indexing, history retention/pruning and every-record restore, CardDAV/CalDAV/ICS/task providers, broad vCard interoperability, recurrence expansion, alarm delivery, PIM at-rest encryption, message cryptography, antivirus/content scanning, clean-machine lifecycle proof, hosted verification of the new upgrade gate, wiki synchronization, and Pages deployment remain open. Native Windows notifications, attachment risk warnings, persisted local quarantine with explicit release/delete, the searchable local revision diff/label/restore slice, the factual in-app changelog, and a locally exercised strict NSIS upgrade verifier are implemented.

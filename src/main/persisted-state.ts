@@ -8,6 +8,7 @@ import type {
   MessageSummary,
   NotificationRecord,
   Preferences,
+  QuarantinedAttachment,
 } from "../shared/contracts.js";
 import {
   composeDraftSchema,
@@ -59,6 +60,7 @@ export interface PersistedState {
   outbox: OutboxItem[];
   notifications: NotificationRecord[];
   history: HistoryRecord[];
+  quarantinedAttachments: QuarantinedAttachment[];
   approvedEditorPaths: string[];
 }
 
@@ -116,6 +118,10 @@ const attachmentRiskReasonSchema = z.enum([
 const attachmentRiskSchema = z.strictObject({
   level: z.enum(["ordinary", "caution", "dangerous"]),
   reasons: z.array(attachmentRiskReasonSchema).max(9),
+});
+const quarantineRiskSchema = z.strictObject({
+  level: z.enum(["caution", "dangerous"]),
+  reasons: z.array(attachmentRiskReasonSchema).min(1).max(9),
 });
 const attachmentSummarySchema = z
   .strictObject({
@@ -202,6 +208,23 @@ const historyRecordSchema = z.strictObject({
   createdAt: timestampSchema,
   snapshot: jsonValueSchema,
 });
+const quarantinedAttachmentSchema = z.strictObject({
+  id: z.uuid(),
+  filename: z.string().min(1).max(4_096),
+  contentType: z.string().min(1).max(1_024),
+  size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  risk: quarantineRiskSchema,
+  quarantinedAt: timestampSchema,
+  source: z.strictObject({
+    accountId: identifierSchema,
+    folderPath: folderPathSchema,
+    uid: messageUidSchema,
+    uidValidity: z.string().min(1).max(128),
+    attachmentIndex: z.number().int().min(0).max(9_999),
+    messageId: z.string().min(1).max(4_096).optional(),
+  }),
+});
 
 const folderRecordSchema = z
   .record(z.string().max(512), z.array(folderSchema).max(10_000))
@@ -225,6 +248,7 @@ export const persistedStateSchema = z.strictObject({
   outbox: z.array(outboxItemSchema).max(1_000),
   notifications: z.array(notificationSchema).max(500),
   history: z.array(historyRecordSchema).max(2_000),
+  quarantinedAttachments: z.array(quarantinedAttachmentSchema).max(1_000).default([]),
   approvedEditorPaths: z.array(nativePathSchema).max(100).default([]),
 });
 

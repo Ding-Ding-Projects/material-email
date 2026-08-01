@@ -29,6 +29,7 @@ import type {
   NotificationRecord,
   PimTransaction,
   Preferences,
+  QuarantinedAttachment,
   Task,
   TaskPatch,
   TransactionFilter,
@@ -145,6 +146,8 @@ type ConfirmationState =
   | { kind: "delete-pim"; entityKind: PimEntityKind; uid: string; label: string }
   | { kind: "bulk-close-tabs"; tabIds: PageId[]; inverse: boolean }
   | { kind: "save-risky-attachments"; target: number | "all"; review: AttachmentSaveReview }
+  | { kind: "release-quarantined-attachment"; item: QuarantinedAttachment }
+  | { kind: "delete-quarantined-attachment"; item: QuarantinedAttachment }
   | { kind: "external-link"; request: ExternalLinkReviewRequest };
 
 interface FiltersState {
@@ -2280,9 +2283,20 @@ function renderToolsPage(): string {
   const hasReleaseCodeName = Boolean(releaseCodeName && /^[a-z0-9][a-z0-9._-]*\.png$/iu.test(releaseImage));
   const releaseDishId = release?.dishId.trim() || tx("Not recorded", "未有記錄");
   const releaseCatalogCommit = release?.catalogCommit.trim().slice(0, 12) || tx("Not recorded", "未有記錄");
+  const quarantined = state.bootstrap?.quarantinedAttachments ?? [];
+  const quarantineRows = quarantined.map(item => {
+    const titleId = `quarantine-title-${item.id}`;
+    const riskLabel = item.risk.level === "dangerous" ? tx("Dangerous", "危險") : tx("Caution", "小心");
+    return `<article class="history-card quarantine-card quarantine-card--${item.risk.level}" data-testid="quarantine-card" aria-labelledby="${titleId}">
+      <span class="history-card__icon quarantine-card__icon">${icon("warning")}</span>
+      <div class="quarantine-card__body"><div class="record-meta"><span class="attachment-risk-badge attachment-risk-badge--${item.risk.level}">${escapeHtml(riskLabel)}</span><time datetime="${escapeHtml(item.quarantinedAt)}">${escapeHtml(formatDate(item.quarantinedAt))}</time></div><h3 id="${titleId}"><bdi>${escapeHtml(item.filename)}</bdi></h3><p>${escapeHtml(item.risk.reasons.map(attachmentRiskReasonLabel).join(" · "))}</p><small>${escapeHtml(formatBytes(item.size))} · ${escapeHtml(item.contentType)} · ${escapeHtml(tx(`Source ${item.source.folderPath}, message UID ${item.source.uid}`, `來源 ${item.source.folderPath}，郵件 UID ${item.source.uid}`))}</small><small>${escapeHtml(tx(`Integrity SHA-256 ${item.sha256.slice(0, 12)}…`, `完整性 SHA-256 ${item.sha256.slice(0, 12)}…`))}</small></div>
+      <div class="button-row"><button class="button button--tonal" type="button" data-action="request-release-quarantined-attachment" data-quarantine-id="${escapeHtml(item.id)}" data-focus-key="quarantine-release-${escapeHtml(item.id)}">${icon("download")}<span>${escapeHtml(tx("Release…", "放行……"))}</span></button><button class="button button--text button--danger" type="button" data-action="request-delete-quarantined-attachment" data-quarantine-id="${escapeHtml(item.id)}" data-focus-key="quarantine-delete-${escapeHtml(item.id)}">${icon("trash")}<span>${escapeHtml(tx("Delete", "刪除"))}</span></button></div>
+    </article>`;
+  }).join("");
   return `<section class="standard-page" id="panel-tools" role="tabpanel" aria-labelledby="tab-tools">
     ${renderPageHeader("WORKBENCH", tx("Tools", "工具"), tx("Keyboard-first utilities and honest local diagnostics.", "鍵盤優先工具同如實本機診斷。"), "tools")}
     <div class="tool-grid">
+      <section class="tool-card tool-card--wide quarantine-tool" data-testid="quarantine-center" aria-labelledby="quarantine-center-title"><header><span>${icon("warning")}</span><div><h2 id="quarantine-center-title">${escapeHtml(tx("Attachment quarantine", "附件隔離區"))} <span class="count-pill" aria-label="${escapeHtml(tx(`${quarantined.length} quarantined attachments`, `${quarantined.length} 個已隔離附件`))}">${quarantined.length}</span></h2><p id="quarantine-boundary-note">${escapeHtml(tx("Caution and dangerous attachments stay in private local storage until you explicitly release or delete them. Filename checks and SHA-256 integrity are not antivirus scanning.", "小心同危險附件會留喺私人本機儲存，直至你明確放行或者刪除。檔名檢查同 SHA-256 完整性唔係防毒掃描。"))}</p></div></header><div class="record-list" aria-describedby="quarantine-boundary-note">${quarantineRows || `<div class="empty-card quarantine-empty" role="status">${icon("check")}<h3>${escapeHtml(tx("Local quarantine is empty", "本機隔離區係空嘅"))}</h3><p>${escapeHtml(tx("No caution or dangerous attachment is waiting for a decision.", "冇小心或者危險附件等緊你決定。"))}</p></div>`}</div></section>
       <section class="tool-card tool-card--wide"><header><span>${icon("regex")}</span><div><h2>${escapeHtml(tx("Regex playground", "正規表達式試驗場"))}</h2><p>${escapeHtml(tx("A standalone field using the same bounded JavaScript engine as every search surface.", "獨立欄位，使用同每個搜尋介面一樣嘅有界 JavaScript 引擎。"))}</p></div></header>${renderSearchField("tools-regex", tx("Build and test a pattern", "建立同測試模式"))}</section>
       <section class="tool-card"><header><span>${icon("search")}</span><div><h2>${escapeHtml(tx("Command palette", "指令面板"))}</h2><p>${escapeHtml(tx("Find a destination or action without reaching for the mouse.", "唔使掂滑鼠都可以搵到目的地或者操作。"))}</p></div></header><button class="button button--tonal" type="button" data-action="open-command-palette">${escapeHtml(tx("Open commands", "開啟指令"))}<kbd>Ctrl+K</kbd></button></section>
       <section class="tool-card"><header><span>${icon("tools")}</span><div><h2>${escapeHtml(tx("External editor", "外部編輯器"))}</h2><p>${escapeHtml(preferences().externalEditorPath ?? tx("Choose an editor in Settings first.", "先喺設定揀一個編輯器。"))}</p></div></header><button class="button button--tonal" type="button" data-action="open-editor" ${!preferences().externalEditorPath ? "disabled" : ""}>${escapeHtml(tx("Open project", "開啟專案"))}<kbd>Alt+E</kbd></button></section>
@@ -2553,15 +2567,34 @@ function renderConfirmation(): string {
   } else if (confirmation.kind === "save-risky-attachments") {
     const riskyCount = confirmation.review.riskyAttachments.length;
     title = confirmation.target === "all"
-      ? tx(`Review ${riskyCount} risky attachment${riskyCount === 1 ? "" : "s"} before saving the batch`, `儲存整批之前，審閱 ${riskyCount} 個有風險嘅附件`)
-      : tx("Review this risky attachment before saving", "儲存之前，審閱呢個有風險嘅附件");
+      ? tx(`Quarantine ${riskyCount} risky attachment${riskyCount === 1 ? "" : "s"} before saving the ordinary files?`, `儲存普通檔案之前，隔離 ${riskyCount} 個有風險嘅附件？`)
+      : tx("Place this risky attachment in local quarantine?", "將呢個有風險嘅附件放入本機隔離區？");
     body = tx(
-      "Material Email found filename or declared-type warning signs. These files have not been scanned or quarantined. Continuing opens the native destination chooser for the original save request.",
-      "Material Email 發現檔名或者聲稱類型有警號。呢啲檔案未經掃描，亦冇隔離。繼續會為原本嘅儲存要求開啟原生目的地選擇器。",
+      "Material Email found filename or declared-type warning signs. Continuing stores each risky file under a randomized local quarantine name; it will not reach a chosen destination until you separately release it. Ordinary files in a batch can still use the native folder chooser. No antivirus scan is performed.",
+      "Material Email 發現檔名或者聲稱類型有警號。繼續會用隨機本機隔離名稱儲存每個有風險檔案；除非你之後另行放行，否則唔會去到所選目的地。批次入面嘅普通檔案仍然可以用原生資料夾選擇器。呢個流程冇做防毒掃描。",
     );
-    confirmLabel = confirmation.target === "all" ? tx("Save reviewed batch", "儲存已審閱批次") : tx("Save reviewed attachment", "儲存已審閱附件");
+    confirmLabel = confirmation.target === "all" ? tx("Quarantine risks and continue", "隔離風險並繼續") : tx("Place in quarantine", "放入隔離區");
     cancelLabel = tx("Cancel save", "取消儲存");
     detailsMarkup = `<ul class="attachment-review-list" id="confirmation-details" aria-label="${escapeHtml(tx("Risky attachments to review", "要審閱嘅有風險附件"))}">${confirmation.review.riskyAttachments.map(item => `<li><div><strong><bdi>${escapeHtml(item.filename)}</bdi></strong><span class="attachment-risk-badge attachment-risk-badge--${item.level}">${escapeHtml(item.level === "dangerous" ? tx("Dangerous", "危險") : tx("Caution", "小心"))}</span></div><small>${escapeHtml(item.reasons.map(attachmentRiskReasonLabel).join(" · "))}</small></li>`).join("")}</ul>`;
+  } else if (confirmation.kind === "release-quarantined-attachment") {
+    const item = confirmation.item;
+    title = tx(`Release ${item.filename} from local quarantine?`, `由本機隔離區放行 ${item.filename}？`);
+    body = tx(
+      "Release verifies the stored SHA-256 value, opens a native save dialog, and copies the file to the destination you choose. The local quarantine copy and active metadata are removed only after that copy succeeds. This is not an antivirus approval.",
+      "放行會核對已儲存嘅 SHA-256、開啟原生儲存對話框，再複製檔案去你揀嘅目的地。複製成功之後先會移除本機隔離副本同目前中繼資料。呢個唔係防毒批准。",
+    );
+    confirmLabel = tx("Release to a chosen location…", "放行去所選位置……");
+    cancelLabel = tx("Keep quarantined", "繼續隔離");
+    detailsMarkup = `<div class="quarantine-review" id="confirmation-details"><p><span class="attachment-risk-badge attachment-risk-badge--${item.risk.level}">${escapeHtml(item.risk.level === "dangerous" ? tx("Dangerous", "危險") : tx("Caution", "小心"))}</span> ${escapeHtml(item.risk.reasons.map(attachmentRiskReasonLabel).join(" · "))}</p><p><strong>${escapeHtml(tx("Integrity", "完整性"))}</strong> <code>${escapeHtml(item.sha256)}</code></p></div>`;
+  } else if (confirmation.kind === "delete-quarantined-attachment") {
+    const item = confirmation.item;
+    title = tx(`Delete ${item.filename} from local quarantine?`, `由本機隔離區刪除 ${item.filename}？`);
+    body = tx(
+      "The quarantined payload and active metadata will be removed without releasing a copy. The deletion event remains in local history, but the attachment bytes cannot be restored from that metadata.",
+      "隔離內容同目前中繼資料會直接移除，唔會放行副本。刪除事件會留喺本機歷史，但附件內容唔可以靠嗰啲中繼資料還原。",
+    );
+    confirmLabel = tx("Delete quarantined file", "刪除隔離檔案");
+    cancelLabel = tx("Keep quarantined", "繼續隔離");
   } else if (confirmation.kind === "external-link") {
     const request = confirmation.request;
     title = tx("Review external link before opening", "開啟外部連結之前先審閱");
@@ -3457,14 +3490,33 @@ const saveReaderAttachment = async (index: number | "all", reviewed?: Attachment
   }
   await withBusy("save-attachment", async () => {
     if (index === "all") {
-      const paths = await api.saveAllAttachments(detail.accountId, detail.folderPath, detail.uid, reviewed);
-      if (paths.length) pushToast("success", "Attachments saved", `${paths.length} attachment${paths.length === 1 ? "" : "s"} written to the chosen folder.`, "附件已儲存", `${paths.length} 個附件已寫入所選資料夾。`);
-      else pushToast("info", "No attachments saved", "The folder chooser was cancelled or no attachment could be written.", "冇儲存附件", "資料夾選擇已取消，或者冇附件可以寫入。 ");
+      const outcome = await api.saveAllAttachments(detail.accountId, detail.folderPath, detail.uid, reviewed);
+      if (outcome.quarantined.length) {
+        await refreshMetadata();
+        pushToast(
+          "warning",
+          "Risky attachments quarantined",
+          `${outcome.quarantined.length} attachment${outcome.quarantined.length === 1 ? "" : "s"} now require an explicit Release or Delete decision. No antivirus scan was performed.`,
+          "有風險附件已隔離",
+          `${outcome.quarantined.length} 個附件而家要明確揀「放行」或者「刪除」。冇做防毒掃描。`,
+        );
+      }
+      if (outcome.savedPaths.length) {
+        pushToast("success", "Ordinary attachments saved", `${outcome.savedPaths.length} ordinary attachment${outcome.savedPaths.length === 1 ? "" : "s"} written to the chosen folder.`, "普通附件已儲存", `${outcome.savedPaths.length} 個普通附件已寫入所選資料夾。`);
+      } else if (outcome.ordinarySaveCancelled) {
+        pushToast("info", "Ordinary attachment save cancelled", "No ordinary attachment was written; any reviewed risky attachment remains safely quarantined.", "已取消普通附件儲存", "冇寫入普通附件；任何已審閱嘅有風險附件仍然安全留喺隔離區。 ");
+      }
       return;
     }
-    const destination = await api.saveAttachment(detail.accountId, detail.folderPath, detail.uid, index, reviewed);
-    if (destination) pushToast("success", "Attachment saved", `${detail.attachments[index]?.filename ?? "Attachment"} was written to the chosen destination.`, "附件已儲存", `${detail.attachments[index]?.filename ?? "附件"} 已寫入所選位置。`);
-    else pushToast("info", "Attachment save cancelled", "No file was written.", "已取消附件儲存", "冇寫入任何檔案。 ");
+    const outcome = await api.saveAttachment(detail.accountId, detail.folderPath, detail.uid, index, reviewed);
+    if (outcome.status === "saved") {
+      pushToast("success", "Attachment saved", `${detail.attachments[index]?.filename ?? "Attachment"} was written to the chosen destination.`, "附件已儲存", `${detail.attachments[index]?.filename ?? "附件"} 已寫入所選位置。`);
+    } else if (outcome.status === "quarantined") {
+      await refreshMetadata();
+      pushToast("warning", "Attachment quarantined", `${outcome.quarantine.filename} is held locally until you explicitly release or delete it. No antivirus scan was performed.`, "附件已隔離", `${outcome.quarantine.filename} 會留喺本機，直至你明確放行或者刪除。冇做防毒掃描。`);
+    } else {
+      pushToast("info", "Attachment save cancelled", "No file was written.", "已取消附件儲存", "冇寫入任何檔案。 ");
+    }
   });
 };
 
@@ -3502,6 +3554,26 @@ const handleConfirmation = async (): Promise<void> => {
   }
   if (confirmation.kind === "save-risky-attachments") {
     await saveReaderAttachment(confirmation.target, confirmation.review);
+    return;
+  }
+  if (confirmation.kind === "release-quarantined-attachment") {
+    await withBusy(`quarantine-release-${confirmation.item.id}`, async () => {
+      const destination = await api.releaseQuarantinedAttachment(confirmation.item.id);
+      if (!destination) {
+        pushToast("info", "Release cancelled", "The attachment remains in local quarantine.", "已取消放行", "附件仍然留喺本機隔離區。 ");
+        return;
+      }
+      await refreshMetadata();
+      pushToast("warning", "Attachment released", `${confirmation.item.filename} was copied to the chosen location and removed from local quarantine. This was not an antivirus approval.`, "附件已放行", `${confirmation.item.filename} 已複製去所選位置，並由本機隔離區移除。呢個唔係防毒批准。`);
+    });
+    return;
+  }
+  if (confirmation.kind === "delete-quarantined-attachment") {
+    await withBusy(`quarantine-delete-${confirmation.item.id}`, async () => {
+      await api.deleteQuarantinedAttachment(confirmation.item.id);
+      await refreshMetadata();
+      pushToast("success", "Quarantined attachment deleted", `${confirmation.item.filename} was removed without being released.`, "已刪除隔離附件", `${confirmation.item.filename} 已經移除，冇被放行。`);
+    });
     return;
   }
   if (confirmation.kind === "external-link") {
@@ -3925,6 +3997,16 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     }
     case "save-attachment": await saveReaderAttachment(Number(button.dataset.attachmentIndex)); break;
     case "save-all-attachments": await saveReaderAttachment("all"); break;
+    case "request-release-quarantined-attachment": {
+      const item = state.bootstrap?.quarantinedAttachments.find(candidate => candidate.id === button.dataset.quarantineId);
+      if (item) showConfirmation({ kind: "release-quarantined-attachment", item }, button.dataset.focusKey ?? null);
+      break;
+    }
+    case "request-delete-quarantined-attachment": {
+      const item = state.bootstrap?.quarantinedAttachments.find(candidate => candidate.id === button.dataset.quarantineId);
+      if (item) showConfirmation({ kind: "delete-quarantined-attachment", item }, button.dataset.focusKey ?? null);
+      break;
+    }
     case "open-account-setup":
       state.setupOpen = true; state.setupContext = state.bootstrap?.accounts.length ? "settings" : "first-run"; state.discoveries = []; state.selectedDiscovery = null; state.setupEmail = ""; render(); break;
     case "close-account-setup": if (state.bootstrap?.accounts.length) { state.setupOpen = false; render(); } break;
