@@ -452,6 +452,7 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .message-row__preview { color: var(--on-surface-variant); font-size: 0.72rem; }
 .unified-folder-note, .reader-unified-note { margin: 8px 10px; }
 .conversation-limit-note { margin: 8px 10px; }
+.cached-mail-search-note, .cached-mail-search-limit { margin: 8px 10px; }
 .conversation-group { margin: 6px 7px 10px; border: 1px solid var(--outline-variant); border-radius: 18px; overflow: hidden; background: var(--surface); }
 .conversation-group__header { min-height: 48px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 7px 11px; background: var(--surface-container-high); color: var(--on-surface); }
 .conversation-group__header > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; gap: 1px; }

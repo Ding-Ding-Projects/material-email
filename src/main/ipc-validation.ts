@@ -7,6 +7,7 @@ import {
   type AccountDraft,
   type AttachmentSaveReview,
   type ComposeDraft,
+  type CachedMailSearchQuery,
   type LocalHistoryPruneRequest,
   type Preferences,
 } from "../shared/contracts.js";
@@ -163,6 +164,13 @@ const localHistoryPruneRequestSchema = z.strictObject({
     .refine(hashes => new Set(hashes).size === hashes.length, "Eligible revision identifiers must be unique."),
 }) as z.ZodType<LocalHistoryPruneRequest>;
 
+const cachedMailSearchSchema = z.strictObject({
+  mode: z.enum(["plain", "regex"]),
+  pattern: z.string().min(1).max(2_048),
+  flags: z.string().max(4).regex(/^[imsu]*$/u),
+  limit: z.number().int().min(1).max(200),
+}) as z.ZodType<CachedMailSearchQuery>;
+
 export const ipcPayloadSchemas = {
   none: z.tuple([]),
   accountDiscover: z.tuple([emailSchema]),
@@ -170,6 +178,7 @@ export const ipcPayloadSchemas = {
   accountId: z.tuple([identifierSchema]),
   accountFolder: z.tuple([identifierSchema, folderPathSchema]),
   unifiedFolder: z.tuple([z.enum(["inbox", "starred", "unread"])]),
+  cachedMailSearch: z.tuple([cachedMailSearchSchema]),
   accountFolderMessage: z.tuple([identifierSchema, folderPathSchema, messageUidSchema]),
   remoteContentConsent: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, z.boolean()]),
   saveAttachment: z.union([

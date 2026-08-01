@@ -187,6 +187,33 @@ export interface MessageDetail extends MessageSummary {
   replyTo: Address[];
 }
 
+export interface CachedMailSearchQuery {
+  mode: "plain" | "regex";
+  pattern: string;
+  flags: string;
+  limit: number;
+}
+
+export type CachedMailSearchField = "subject" | "addresses" | "preview" | "body" | "account" | "folder" | "conversation";
+
+export interface CachedMailSearchHit {
+  message: MessageSummary;
+  snippet: string;
+  matchedFields: CachedMailSearchField[];
+  account: { id: string; displayName: string; email: string };
+  folder: { path: string; name: string; role: FolderSummary["role"] };
+  conversation: { id: string; subject: string; messageCount: number };
+}
+
+export interface CachedMailSearchResult {
+  hits: CachedMailSearchHit[];
+  totalMatched: number;
+  indexedDocumentCount: number;
+  documentLimit: number;
+  documentLimitReached: boolean;
+  resultLimit: number;
+}
+
 export interface ComposeDraft {
   id?: string;
   accountId: string;
@@ -413,6 +440,7 @@ export interface MaterialEmailApi {
   listFolders(accountId: string): Promise<FolderSummary[]>;
   listMessages(accountId: string, folderPath: string): Promise<MessageSummary[]>;
   listUnifiedMessages(folder: UnifiedFolderKind): Promise<MessageSummary[]>;
+  searchCachedMail(query: CachedMailSearchQuery): Promise<CachedMailSearchResult>;
   getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail>;
   setRemoteContentAllowed(accountId: string, folderPath: string, uid: number, allowed: boolean): Promise<MessageDetail>;
   saveAttachment(accountId: string, folderPath: string, uid: number, index: number, review?: AttachmentSaveReview): Promise<AttachmentSaveOutcome>;

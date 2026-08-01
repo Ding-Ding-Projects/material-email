@@ -38,6 +38,8 @@ import type {
   TransactionFilter,
   ExternalLinkReviewRequest,
   UnifiedFolderKind,
+  CachedMailSearchHit,
+  CachedMailSearchResult,
 } from "../shared/contracts";
 import {
   AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
@@ -72,6 +74,7 @@ import {
 import {
   createMatcher,
   evaluateSample,
+  normalizeFlags,
   regexLimits,
   validatePattern,
   type MatchMode,
@@ -201,6 +204,10 @@ interface RendererState {
   selectedMessageId: string | null;
   busy: Set<string>;
   searches: Record<string, SearchModel>;
+  mailSearchResult: CachedMailSearchResult | null;
+  mailSearchResultKey: string;
+  mailSearchPending: boolean;
+  mailSearchError: string;
   toasts: LocalToast[];
   compose: ComposerState | null;
   editors: Array<{ id: string; name: string; path: string }>;
@@ -318,6 +325,10 @@ const state: RendererState = {
   selectedMessageId: null,
   busy: new Set(),
   searches: {},
+  mailSearchResult: null,
+  mailSearchResultKey: "",
+  mailSearchPending: false,
+  mailSearchError: "",
   toasts: [],
   compose: null,
   editors: [],
@@ -398,6 +409,8 @@ let pimSaveSequence = 0;
 let pimLoadPromise: Promise<void> | null = null;
 let contactSearchTimer: number | null = null;
 let contactSearchSequence = 0;
+let mailSearchTimer: number | null = null;
+let mailSearchSequence = 0;
 let localRevisionDiffSequence = 0;
 let pendingFocusKey: string | null = null;
 let confirmationNeedsInitialFocus = false;
@@ -625,16 +638,32 @@ const renderToasts = (): void => {
 };
 
 const activeAccount = (): AccountSummary | null => state.bootstrap?.accounts.find(account => account.id === state.accountId) ?? null;
-const activeMessage = (): MessageSummary | null => state.messages.find(message => message.id === state.selectedMessageId) ?? null;
+const currentMailSearchKey = (): string => {
+  const model = searchFor("mail");
+  return JSON.stringify([model.mode, model.pattern, normalizeFlags(model.flags)]);
+};
+const mailSearchIsActive = (): boolean => {
+  const model = searchFor("mail");
+  return Boolean(model.pattern) && validatePattern(model).valid;
+};
+const currentMailSearchResult = (): CachedMailSearchResult | null =>
+  mailSearchIsActive() && state.mailSearchResultKey === currentMailSearchKey() ? state.mailSearchResult : null;
+const searchHitForMessage = (id: string): CachedMailSearchHit | null =>
+  currentMailSearchResult()?.hits.find(hit => hit.message.id === id) ?? null;
+const activeMessage = (): MessageSummary | null => mailSearchIsActive()
+  ? searchHitForMessage(state.selectedMessageId ?? "")?.message ?? null
+  : state.messages.find(message => message.id === state.selectedMessageId) ?? null;
 const folderByRole = (role: FolderSummary["role"]): FolderSummary | null => state.folders.find(folder => folder.role === role) ?? null;
 const unifiedFolderLabel = (folder: UnifiedFolderKind): string => folder === "inbox"
   ? tx("Unified Inbox", "統一收件匣")
   : folder === "starred"
     ? tx("Starred", "已加星號")
     : tx("Unread", "未讀");
-const messageBelongsToCurrentView = (message: MessageSummary): boolean => state.unifiedFolder
-  ? state.messages.some(candidate => candidate.id === message.id)
-  : state.accountId === message.accountId && state.folderPath === message.folderPath;
+const messageBelongsToCurrentView = (message: MessageSummary): boolean => mailSearchIsActive()
+  ? Boolean(searchHitForMessage(message.id))
+  : state.unifiedFolder
+    ? state.messages.some(candidate => candidate.id === message.id)
+    : state.accountId === message.accountId && state.folderPath === message.folderPath;
 const isBusy = (key?: string): boolean => key ? state.busy.has(key) : state.busy.size > 0;
 
 const withBusy = async (key: string, operation: () => Promise<void>): Promise<void> => {
@@ -846,6 +875,41 @@ const loadUnifiedFolder = async (folder: UnifiedFolderKind, owner?: MailNavigati
   }
 };
 
+const scheduleMailSearch = (delay = 160): void => {
+  if (mailSearchTimer !== null) window.clearTimeout(mailSearchTimer);
+  const model = searchFor("mail");
+  const validation = validatePattern(model);
+  const sequence = ++mailSearchSequence;
+  state.mailSearchError = "";
+  if (!model.pattern || !validation.valid) {
+    state.mailSearchResult = null;
+    state.mailSearchResultKey = "";
+    state.mailSearchPending = false;
+    return;
+  }
+  const key = currentMailSearchKey();
+  state.mailSearchResult = null;
+  state.mailSearchResultKey = "";
+  state.mailSearchPending = true;
+  mailSearchTimer = window.setTimeout(() => {
+    void api.searchCachedMail({ mode: model.mode, pattern: model.pattern, flags: validation.normalizedFlags, limit: 100 }).then(result => {
+      if (sequence !== mailSearchSequence || key !== currentMailSearchKey()) return;
+      state.mailSearchResult = result;
+      state.mailSearchResultKey = key;
+      state.mailSearchPending = false;
+      render();
+    }).catch(error => {
+      if (sequence !== mailSearchSequence || key !== currentMailSearchKey()) return;
+      state.mailSearchResult = null;
+      state.mailSearchResultKey = "";
+      state.mailSearchPending = false;
+      state.mailSearchError = errorMessage(error);
+      pushToast("error", "Cached mail search failed", state.mailSearchError, "快取郵件搜尋失敗", state.mailSearchError);
+      render();
+    });
+  }, delay);
+};
+
 const loadFolder = async (folderPath: string, persist = true, owner?: MailNavigationOwner): Promise<void> => {
   const accountId = owner?.accountId ?? state.accountId;
   if (!accountId) return;
@@ -988,6 +1052,7 @@ const syncCurrentAccount = async (): Promise<void> => {
     if (!(await refreshMetadata(ownsRequest))) return;
     await refreshDraftAndOutbox();
     if (!ownsRequest()) return;
+    if (mailSearchIsActive()) scheduleMailSearch(0);
     pushToast(
       "success",
       "Mail synchronized",
@@ -1005,6 +1070,8 @@ const toggleSelectedFlag = async (field: "unread" | "starred"): Promise<void> =>
   await withBusy(`flag-${field}`, async () => {
     await api.setMessageFlags(message.accountId, message.folderPath, message.uid, { [field]: next });
     message[field] = next;
+    const cachedViewMessage = state.messages.find(item => item.id === message.id);
+    if (cachedViewMessage) cachedViewMessage[field] = next;
     if (state.detail) state.detail[field] = next;
     await refreshMetadata();
     const unifiedFolder = state.unifiedFolder;
@@ -1018,7 +1085,7 @@ const toggleSelectedFlag = async (field: "unread" | "starred"): Promise<void> =>
 const moveSelectedMessage = async (destination: FolderSummary): Promise<void> => {
   const message = activeMessage();
   if (!message || destination.path === message.folderPath) return;
-  if (state.unifiedFolder) {
+  if (state.unifiedFolder || mailSearchIsActive()) {
     pushToast("warning", "Open the account folder before moving", "Unified folders do not guess destination folders across accounts.", "移動之前先開帳戶資料夾", "統一資料夾唔會跨帳戶估目的地。");
     return;
   }
@@ -1535,6 +1602,13 @@ function renderOutboxPage(): string {
 }
 
 function messageAccountAttribution(message: MessageSummary): string {
+  const searchHit = searchHitForMessage(message.id);
+  if (searchHit) {
+    const thread = searchHit.conversation.messageCount === 1
+      ? tx("single-message conversation", "單封郵件對話")
+      : tx(`${searchHit.conversation.messageCount}-message conversation`, `${searchHit.conversation.messageCount} 封郵件對話`);
+    return `${searchHit.account.displayName} · ${searchHit.account.email} · ${searchHit.folder.name} · ${thread}`;
+  }
   const account = state.bootstrap?.accounts.find(candidate => candidate.id === message.accountId);
   return account ? `${account.displayName} · ${account.email}` : message.accountId;
 }
@@ -1542,14 +1616,8 @@ function messageAccountAttribution(message: MessageSummary): string {
 function filteredMessages(): MessageSummary[] {
   const model = searchFor("mail");
   if (!model.pattern) return state.messages;
-  const matches = createMatcher(model);
-  return state.messages.filter(message => matches([
-    message.subject,
-    message.preview,
-    addressLine(message.from),
-    addressLine(message.to),
-    messageAccountAttribution(message),
-  ].join("\n")));
+  if (!validatePattern(model).valid) return [];
+  return currentMailSearchResult()?.hits.map(hit => hit.message) ?? [];
 }
 
 function renderMailPage(): string {
@@ -1913,15 +1981,19 @@ function renderFolderPane(current: FolderSummary | undefined): string {
 function renderMessagePane(current: FolderSummary | undefined, messages: MessageSummary[], searchValid: boolean): string {
   const totalUnread = messages.filter(message => message.unread).length;
   const unified = state.unifiedFolder;
-  const title = unified ? unifiedFolderLabel(unified) : current?.name ?? tx("Messages", "郵件");
+  const searchActive = mailSearchIsActive();
+  const searchResult = currentMailSearchResult();
+  const title = searchActive ? tx("Cached mail search", "快取郵件搜尋") : unified ? unifiedFolderLabel(unified) : current?.name ?? tx("Messages", "郵件");
   const grouping = groupCachedConversations(messages);
   return `<section class="message-pane" aria-label="${escapeHtml(tx("Message list", "郵件清單"))}">
-    <header class="pane-heading message-pane__heading"><div><span class="overline">${escapeHtml(unified ? tx("LOCAL UNIFIED VIEW", "本機統一檢視") : tx("FOLDER", "資料夾"))}</span><h2>${escapeHtml(title)}</h2></div><span class="count-pill">${messages.length}${totalUnread ? ` · ${totalUnread} ${escapeHtml(tx("unread", "未讀"))}` : ""}</span></header>
+    <header class="pane-heading message-pane__heading"><div><span class="overline">${escapeHtml(searchActive ? tx("IN-MEMORY CACHE INDEX", "記憶體快取索引") : unified ? tx("LOCAL UNIFIED VIEW", "本機統一檢視") : tx("FOLDER", "資料夾"))}</span><h2>${escapeHtml(title)}</h2></div><span class="count-pill">${searchResult ? `${messages.length} / ${searchResult.totalMatched}` : messages.length}${totalUnread ? ` · ${totalUnread} ${escapeHtml(tx("unread", "未讀"))}` : ""}</span></header>
+    ${searchActive ? `<p class="local-truth-note cached-mail-search-note" data-testid="cached-mail-search-truth">${icon("info")}<span>${escapeHtml(searchResult ? tx(`Searched ${searchResult.indexedDocumentCount.toLocaleString()} cached summaries/body snippets in memory; showing up to ${searchResult.resultLimit} attributed results. No SQLite or server-scale index is implied.`, `喺記憶體搜尋咗 ${searchResult.indexedDocumentCount.toLocaleString()} 個快取摘要／內文片段；最多顯示 ${searchResult.resultLimit} 個有來源標示結果。唔代表有 SQLite 或伺服器級索引。`) : tx("Searching the bounded in-memory cache index. No server request is being made.", "正在搜尋有限記憶體快取索引。冇發出伺服器要求。"))}</span></p>` : ""}
+    ${searchResult?.documentLimitReached ? `<p class="local-truth-note cached-mail-search-limit" data-testid="cached-mail-search-limit">${icon("warning")}<span>${escapeHtml(tx(`Only the first ${searchResult.documentLimit.toLocaleString()} coherent cached rows entered this query-time index. Narrow the cache or use folder views for rows beyond that ceiling.`, `今次查詢索引只收錄首 ${searchResult.documentLimit.toLocaleString()} 個一致快取項目。超出上限請收窄快取或者使用資料夾檢視。`))}</span></p>` : ""}
     ${unified ? `<p class="local-truth-note unified-folder-note" data-testid="unified-folder-truth">${icon("info")}<span>${escapeHtml(tx("Built only from summaries already cached on this computer. Subject/reference grouping is local and bounded; server-wide coverage and a scalable search index are not implied.", "只會使用呢部電腦已有嘅郵件摘要快取。主旨／reference 分組只係本機有限處理；唔代表全伺服器覆蓋或者可擴展搜尋索引。"))}</span></p>` : ""}
     ${grouping.limited ? `<p class="local-truth-note conversation-limit-note" data-testid="conversation-limit-note">${icon("warning")}<span>${escapeHtml(tx(`Conversation grouping is paused above ${CACHED_CONVERSATION_MESSAGE_LIMIT.toLocaleString()} visible cached messages; every message remains available as its own row.`, `畫面已快取郵件超過 ${CACHED_CONVERSATION_MESSAGE_LIMIT.toLocaleString()} 封，所以 conversation grouping 暫停；每封郵件仍然會獨立顯示。`))}</span></p>` : ""}
-    ${isBusy("folder") ? `<div class="linear-progress" role="progressbar" aria-label="${escapeHtml(tx("Loading messages", "載入郵件"))}"></div>` : ""}
+    ${isBusy("folder") || state.mailSearchPending ? `<div class="linear-progress" role="progressbar" aria-label="${escapeHtml(state.mailSearchPending ? tx("Searching cached mail", "搜尋快取郵件") : tx("Loading messages", "載入郵件"))}"></div>` : ""}
     <div class="message-list" data-testid="message-list" role="listbox" aria-label="${escapeHtml(tx("Messages", "郵件"))}" tabindex="0">
-      ${!searchValid ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(tx("Correct the regular expression to search messages.", "修正正規表達式先可以搜尋郵件。"))}</p></div>` : messages.length ? grouping.conversations.map(renderConversation).join("") : `<div class="pane-empty"><span>${icon(searchFor("mail").pattern ? "search" : "inbox")}</span><h3>${escapeHtml(searchFor("mail").pattern ? tx("No matching messages", "冇符合嘅郵件") : unified ? tx("No cached messages in this view", "呢個檢視冇已快取郵件") : tx("This folder is clear", "呢個資料夾好乾淨"))}</h3><p>${escapeHtml(searchFor("mail").pattern ? tx("Try different words or adjust the regex builder.", "試吓其他字，或者調整正規表達式建立器。") : unified ? tx("Synchronize individual accounts, then refresh this local view.", "逐個帳戶同步，再重新整理呢個本機檢視。") : tx("Synchronize to check the server for anything new.", "同步一下，睇吓伺服器有冇新嘢。"))}</p></div>`}
+      ${!searchValid ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(tx("Correct the regular expression to search messages.", "修正正規表達式先可以搜尋郵件。"))}</p></div>` : state.mailSearchPending ? `<div class="pane-empty"><span>${icon("search")}</span><h3>${escapeHtml(tx("Searching cached mail…", "正在搜尋快取郵件……"))}</h3></div>` : state.mailSearchError ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(state.mailSearchError)}</p></div>` : messages.length ? grouping.conversations.map(renderConversation).join("") : `<div class="pane-empty"><span>${icon(searchFor("mail").pattern ? "search" : "inbox")}</span><h3>${escapeHtml(searchFor("mail").pattern ? tx("No matching cached messages", "冇符合嘅快取郵件") : unified ? tx("No cached messages in this view", "呢個檢視冇已快取郵件") : tx("This folder is clear", "呢個資料夾好乾淨"))}</h3><p>${escapeHtml(searchFor("mail").pattern ? tx("Try different words or adjust the regex builder.", "試吓其他字，或者調整正規表達式建立器。") : unified ? tx("Synchronize individual accounts, then refresh this local view.", "逐個帳戶同步，再重新整理呢個本機檢視。") : tx("Synchronize to check the server for anything new.", "同步一下，睇吓伺服器有冇新嘢。"))}</p></div>`}
     </div>
   </section>`;
 }
@@ -1946,7 +2018,7 @@ function renderMessageRow(message: MessageSummary): string {
   return `<div class="message-row${message.unread ? " is-unread" : ""}${selected ? " is-selected" : ""}" role="option" aria-selected="${selected}" data-message-id="${escapeHtml(message.id)}">
     <button class="message-row__main" type="button" data-action="select-message" data-message-id="${escapeHtml(message.id)}">
       <span class="avatar" aria-hidden="true">${escapeHtml(avatar)}</span>
-      <span class="message-row__copy"><span class="message-row__top"><strong>${escapeHtml(sender)}</strong><time datetime="${escapeHtml(message.date)}">${escapeHtml(formatDate(message.date))}</time></span>${state.unifiedFolder ? `<span class="message-row__account">${escapeHtml(messageAccountAttribution(message))}</span>` : ""}<span class="message-row__subject">${escapeHtml(message.subject)}</span><span class="message-row__preview">${escapeHtml(message.preview)}</span></span>
+      <span class="message-row__copy"><span class="message-row__top"><strong>${escapeHtml(sender)}</strong><time datetime="${escapeHtml(message.date)}">${escapeHtml(formatDate(message.date))}</time></span>${state.unifiedFolder || mailSearchIsActive() ? `<span class="message-row__account">${escapeHtml(messageAccountAttribution(message))}</span>` : ""}<span class="message-row__subject">${escapeHtml(message.subject)}</span><span class="message-row__preview">${escapeHtml(searchHitForMessage(message.id)?.snippet || message.preview)}</span></span>
       ${message.hasAttachments ? `<span class="attachment-indicator" aria-label="${escapeHtml(tx("Has attachments", "有附件"))}">${icon("attach")}</span>` : ""}
     </button>
     <button class="star-button${message.starred ? " is-starred" : ""}" type="button" data-action="toggle-row-star" data-message-id="${escapeHtml(message.id)}" aria-label="${escapeHtml(message.starred ? tx("Remove star", "移除星號") : tx("Add star", "加入星號"))}">${icon("star")}</button>
@@ -2082,7 +2154,7 @@ function renderReaderPane(): string {
   if (isBusy("message") && !state.detail) return `<article class="reader-pane reader-pane--empty" aria-busy="true"><div class="circular-progress" role="progressbar" aria-label="${escapeHtml(tx("Opening message", "開啟郵件"))}"></div><p>${escapeHtml(tx("Opening message…", "正在開啟郵件……"))}</p></article>`;
   const detail = state.detail;
   if (!detail) return `<article class="reader-pane reader-pane--empty"><span class="hero-icon hero-icon--error">${icon("error")}</span><h2>${escapeHtml(tx("Message unavailable", "郵件暫時開唔到"))}</h2><button class="button button--outlined" type="button" data-action="retry-message">${icon("refresh")}<span>${escapeHtml(tx("Try again", "再試一次"))}</span></button></article>`;
-  const movesAvailable = state.unifiedFolder === null;
+  const movesAvailable = state.unifiedFolder === null && !mailSearchIsActive();
   const archive = movesAvailable ? folderByRole("archive") : null;
   const trash = movesAvailable ? folderByRole("trash") : null;
   return `<article class="reader-pane" aria-label="${escapeHtml(tx("Message reader", "郵件閱讀器"))}">
@@ -4051,12 +4123,14 @@ const exportSettings = async (): Promise<void> => {
 };
 
 const toggleRowStar = async (id: string): Promise<void> => {
-  const message = state.messages.find(item => item.id === id);
+  const message = searchHitForMessage(id)?.message ?? state.messages.find(item => item.id === id);
   if (!message) return;
   const next = !message.starred;
   await withBusy(`row-star-${message.id}`, async () => {
     await api.setMessageFlags(message.accountId, message.folderPath, message.uid, { starred: next });
     message.starred = next;
+    const cachedViewMessage = state.messages.find(item => item.id === message.id);
+    if (cachedViewMessage) cachedViewMessage.starred = next;
     if (state.detail?.id === message.id) state.detail.starred = next;
     await refreshMetadata();
     if (state.unifiedFolder === "starred") await loadUnifiedFolder("starred");
@@ -4104,6 +4178,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (key) {
         searchFor(key).pattern = "";
         if (key === "contacts") scheduleContactSearch();
+        if (key === "mail") scheduleMailSearch(0);
         render();
       }
       break;
@@ -4128,6 +4203,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (key && (button.dataset.mode === "plain" || button.dataset.mode === "regex")) {
         searchFor(key).mode = button.dataset.mode;
         if (key === "contacts") scheduleContactSearch();
+        if (key === "mail") scheduleMailSearch(0);
         render();
       }
       break;
@@ -4138,6 +4214,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (!key || !guide) break;
       const snippets: Record<string, string> = { literal: "literal", class: "[A-Za-z0-9]", anchors: "^…$", group: "(group)", alternation: "one|two", quantifier: "{1,3}" };
       searchFor(key).pattern += snippets[guide] ?? "";
+      if (key === "mail") scheduleMailSearch();
       render();
       break;
     }
@@ -4159,6 +4236,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (key) {
         searchFor(key).builderOpen = false;
         if (key === "contacts") scheduleContactSearch();
+        if (key === "mail") scheduleMailSearch(0);
         render();
       }
       break;
@@ -4312,7 +4390,8 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     }
     case "select-folder": if (button.dataset.folderPath) await loadFolder(button.dataset.folderPath); break;
     case "select-message": {
-      const message = state.messages.find(item => item.id === button.dataset.messageId);
+      const id = button.dataset.messageId ?? "";
+      const message = searchHitForMessage(id)?.message ?? state.messages.find(item => item.id === id);
       if (message) await loadMessage(message);
       break;
     }
@@ -4561,6 +4640,7 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
     const model = searchFor(control.dataset.regexFlag);
     const flag = control.value;
     model.flags = control.checked ? `${model.flags}${flag}` : model.flags.replaceAll(flag, "");
+    if (control.dataset.regexFlag === "mail") scheduleMailSearch(0);
     render(); return;
   }
   if (control.dataset.pimMemberUid && control instanceof HTMLInputElement) {
@@ -4617,12 +4697,14 @@ app.addEventListener("input", event => {
   if (searchKey) {
     searchFor(searchKey).pattern = control.value;
     if (searchKey === "contacts") scheduleContactSearch();
+    if (searchKey === "mail") scheduleMailSearch();
     render(); return;
   }
   const patternKey = control.dataset.regexPattern;
   if (patternKey) {
     searchFor(patternKey).pattern = control.value;
     if (patternKey === "contacts") scheduleContactSearch();
+    if (patternKey === "mail") scheduleMailSearch();
     render(); return;
   }
   const sampleKey = control.dataset.regexSample;

@@ -32,6 +32,7 @@ The current foundation provides:
 - manual IMAP and SMTP settings, connection tests, account persistence, folder/message synchronization, message reading, read/star flags, moving, sending, and local draft storage;
 - local cached Unified Inbox, Starred, and Unread views with source-account labels, shared literal/regex mail search, and stable composite selection (not server-complete synchronization or indexing);
 - bounded local conversation grouping over visible cached summaries using normalized subjects and cached reference identifiers, with a 2,000-row fail-open ceiling (not server-complete threading or scalable indexing);
+- ephemeral in-memory plain/regex search over up to 2,000 cached summaries and bounded body snippets, returning capped results with account, folder, and conversation attribution (not SQLite or server-scale search);
 - bounded MIME parsing and a conservative HTML sanitizer that removes active and remotely loaded content;
 - Windows-backed credential encryption through Electron `safeStorage` before account secrets reach the JSON state file;
 - serialized, temporary-file-backed JSON state writes; demo mail data; notification history; append-only-style history records; export hooks; and external-editor discovery;

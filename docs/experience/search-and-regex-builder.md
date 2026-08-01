@@ -12,6 +12,8 @@ Settings, semantic and whole-workspace History, Notifications, the four Tab Mana
 
 The real engine is JavaScript `RegExp`. Supported flags are `i`, `m`, `s`, and `u`; duplicate and unsupported flags are removed. Zero-width matches advance safely.
 
+The mail field sends valid plain/regex queries through the desktop bridge to an ephemeral [bounded cached-mail index](../mail/cached-mail-search-index.md). It searches capped summary/body-snippet fields across cached accounts and returns account/folder/conversation attribution. Other search surfaces retain their documented local collection behavior.
+
 ## Configuration
 
 - Pattern maximum: 2,048 characters

@@ -77,6 +77,7 @@ test("shows cached cross-account folders with attribution, shared regex search, 
       "mail:folders",
       "mail:messages",
       "mail:unified-messages",
+      "mail:search-cached",
       "mail:message",
       "mail:flags",
       "mail:drafts",
@@ -97,6 +98,46 @@ test("shows cached cross-account folders with attribution, shared regex search, 
       return inboxReads % 2
         ? [fixture.alphaMessage, fixture.bravoMessage, fixture.alphaReply]
         : [fixture.bravoMessage, fixture.alphaReply, fixture.alphaMessage];
+    });
+    ipcMain.handle("mail:search-cached", (_event, query: { mode: "plain" | "regex"; pattern: string; flags: string; limit: number }) => {
+      const rows = [fixture.alphaReply, fixture.bravoMessage, fixture.alphaMessage];
+      const bodyById: Record<string, string> = {
+        [fixture.alphaReply.id]: "Cached body needle belongs only to the Alpha reply.",
+        [fixture.alphaMessage.id]: "Alpha root body.",
+        [fixture.bravoMessage.id]: "Bravo body.",
+      };
+      const expression = query.mode === "regex" ? new RegExp(query.pattern, query.flags) : null;
+      const matches = (value: string): boolean => {
+        if (expression) { expression.lastIndex = 0; return expression.test(value); }
+        return value.toLocaleLowerCase("en-US").includes(query.pattern.toLocaleLowerCase("en-US"));
+      };
+      const matched = rows.filter(message => matches([
+        message.subject,
+        message.preview,
+        bodyById[message.id] ?? "",
+        message.accountId === "alpha" ? "Alpha Account alpha@example.test" : "Bravo Account bravo@example.test",
+        "Inbox",
+      ].join("\n")));
+      const hits = matched.slice(0, query.limit).map(message => ({
+        message,
+        snippet: bodyById[message.id] ?? message.preview,
+        matchedFields: matches(bodyById[message.id] ?? "") ? ["body"] : ["account"],
+        account: message.accountId === "alpha"
+          ? { id: "alpha", displayName: "Alpha Account", email: "alpha@example.test" }
+          : { id: "bravo", displayName: "Bravo Account", email: "bravo@example.test" },
+        folder: { path: "Inbox", name: "Inbox", role: "inbox" },
+        conversation: message.accountId === "alpha"
+          ? { id: "conversation:alpha", subject: "Alpha unread inbox", messageCount: 2 }
+          : { id: "message:bravo", subject: "Bravo starred inbox", messageCount: 1 },
+      }));
+      return {
+        hits,
+        totalMatched: matched.length,
+        indexedDocumentCount: rows.length,
+        documentLimit: 2_000,
+        documentLimitReached: false,
+        resultLimit: query.limit,
+      };
     });
     ipcMain.handle("mail:message", (_event, accountId: string, _folderPath: string, uid: number) => {
       const message = accountId === "bravo" ? fixture.bravoMessage : uid === fixture.alphaReply.uid ? fixture.alphaReply : fixture.alphaMessage;
@@ -143,9 +184,16 @@ test("shows cached cross-account folders with attribution, shared regex search, 
   const mailSearch = page.locator('[data-search-anchor="mail"]');
   await mailSearch.locator("input").fill("bravo@example.test");
   await expect(list.locator(".message-row")).toHaveCount(1);
+  await expect(page.getByTestId("cached-mail-search-truth")).toContainText(/Searched 3 cached summaries\/body snippets/i);
+  await expect(list.locator(".message-row__account")).toContainText("Bravo Account · bravo@example.test · Inbox · single-message conversation");
   await mailSearch.locator('[data-action="toggle-regex-builder"]').click();
-  await expect(page.getByTestId("regex-popover")).toHaveAttribute("data-search-owner", "mail");
-  await page.keyboard.press("Escape");
+  const builder = page.getByTestId("regex-popover");
+  await expect(builder).toHaveAttribute("data-search-owner", "mail");
+  await builder.getByRole("button", { name: /^Regular expression$/i }).click();
+  await builder.locator('textarea[data-regex-pattern="mail"]').fill("cached\\s+body\\s+needle");
+  await builder.getByRole("button", { name: /Use in search/i }).click();
+  await expect(list.locator(".message-row")).toHaveCount(1);
+  await expect(list).toContainText("Cached body needle belongs only to the Alpha reply.");
   await mailSearch.locator("input").fill("");
 
   await unified.getByRole("button", { name: /^Starred/i }).click();

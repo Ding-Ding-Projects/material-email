@@ -39,6 +39,13 @@ describe("non-PIM IPC validation", () => {
     expect(() => ipcPayloadSchemas.unifiedFolder.parse(["all-mail"])).toThrow();
   });
 
+  it("bounds cached-mail plain and regex search requests", () => {
+    expect(ipcPayloadSchemas.cachedMailSearch.parse([{ mode: "plain", pattern: "receipt", flags: "i", limit: 100 }])).toHaveLength(1);
+    expect(ipcPayloadSchemas.cachedMailSearch.parse([{ mode: "regex", pattern: "^Receipt", flags: "imu", limit: 200 }])).toHaveLength(1);
+    expect(() => ipcPayloadSchemas.cachedMailSearch.parse([{ mode: "regex", pattern: "x", flags: "g", limit: 10 }])).toThrow();
+    expect(() => ipcPayloadSchemas.cachedMailSearch.parse([{ mode: "plain", pattern: "x", flags: "i", limit: 201 }])).toThrow();
+  });
+
   it("accepts a bounded account request and rejects unknown fields at every object layer", () => {
     expect(ipcPayloadSchemas.accountDraft.parse([accountDraft()])[0].email).toBe("demo@example.test");
     expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), unexpected: true }])).toThrow();
