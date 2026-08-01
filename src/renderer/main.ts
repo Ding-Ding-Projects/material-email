@@ -580,7 +580,7 @@ const pushToast = (kind: ToastKind, title: string, body: string, cantoneseTitle 
   renderToasts();
   if (kind === "error") announce(`${item.title}. ${item.body}`);
   narrate(`${title}. ${body}`, `${cantoneseTitle}。${cantoneseBody}`);
-  if (preferences().nativeNotificationsEnabled) void api.nativeNotification(kind);
+  if (preferences().nativeNotificationsEnabled) void api.nativeNotification(kind).catch(() => undefined);
   if (kind === "info" || kind === "success") {
     const timer = window.setTimeout(() => dismissToast(item.id), kind === "success" ? 5_000 : 7_000);
     toastTimers.set(item.id, timer);
