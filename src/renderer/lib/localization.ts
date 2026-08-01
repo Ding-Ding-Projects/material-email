@@ -61,6 +61,22 @@ export const SURFACE_TONE_COPY = {
       "設定標籤、說明同目前值都冇配對。調校一下本機搜尋；啲設定只係喺後台，未去放假。",
     ],
   },
+  tabDiscoveryNoMatch: {
+    english: [
+      "Nothing in this tab-discovery scope matched. Edit or clear this local search.",
+      "Nothing in this tab-discovery scope matched. Edit or clear this local search and try again.",
+      "Nothing in this tab-discovery scope matched; adjust the local search and the tabs will step back into view.",
+      "Nothing in this tab-discovery scope matched. Tune the local search—the tabs have not wandered off.",
+      "Nothing in this tab-discovery scope matched. Tune the local search; the tabs are backstage, not on holiday.",
+    ],
+    cantonese: [
+      "呢個分頁探索範圍冇任何配對。請修改或者清除呢個本機搜尋。",
+      "呢個分頁探索範圍冇任何配對。修改或者清除呢個本機搜尋再試。",
+      "呢個分頁探索範圍冇任何配對；調整本機搜尋，啲分頁就會再行返出嚟。",
+      "呢個分頁探索範圍冇任何配對。調校一下本機搜尋——啲分頁冇走失。",
+      "呢個分頁探索範圍冇任何配對。調校一下本機搜尋；啲分頁只係喺後台，未去放假。",
+    ],
+  },
   appearance: {
     english: [
       "Changes preview immediately and remain local to this tab.",

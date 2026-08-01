@@ -128,6 +128,13 @@ import {
   parseSettingsSearch,
   serializeSettingsSearch,
 } from "./lib/settings-search";
+import {
+  TAB_DISCOVERY_SEARCH_STORAGE_KEY,
+  isTabDiscoverySearchKey,
+  parseTabDiscoverySearches,
+  serializeTabDiscoverySearches,
+  type TabDiscoverySearchKey,
+} from "./lib/tab-discovery-search";
 import { selectStableMessageId } from "../shared/unified-folders";
 import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
 import {
@@ -403,6 +410,16 @@ const readSettingsSearch = (): Pick<SearchModel, "mode" | "pattern" | "flags"> =
     return parseSettingsSearch(null);
   }
 };
+
+const readTabDiscoverySearches = () => {
+  try {
+    return parseTabDiscoverySearches(localStorage.getItem(TAB_DISCOVERY_SEARCH_STORAGE_KEY));
+  } catch {
+    return parseTabDiscoverySearches(null);
+  }
+};
+
+const restoredTabDiscoverySearches = readTabDiscoverySearches();
 
 const DEFAULT_PREFERENCES: Preferences = {
   language: "en",
@@ -694,7 +711,11 @@ const tabDefinition = (id: PageId): TabDefinition => TAB_DEFINITIONS.find(tab =>
 const searchFor = (key: string): SearchModel => {
   const existing = state.searches[key];
   if (existing) return existing;
-  const persisted = key === "settings" ? readSettingsSearch() : null;
+  const persisted = key === "settings"
+    ? readSettingsSearch()
+    : isTabDiscoverySearchKey(key)
+      ? restoredTabDiscoverySearches[key]
+      : null;
   const created: SearchModel = {
     mode: persisted?.mode ?? (key === "mail" ? readCachedMailSearchMode() : "plain"),
     pattern: persisted?.pattern ?? "",
@@ -707,11 +728,25 @@ const searchFor = (key: string): SearchModel => {
 };
 
 const persistSearch = (key: string): void => {
-  if (key !== "settings") return;
+  if (key === "settings") {
+    try {
+      localStorage.setItem(SETTINGS_SEARCH_STORAGE_KEY, serializeSettingsSearch(searchFor(key)));
+    } catch {
+      // The Settings search remains usable when browser storage is unavailable.
+    }
+    return;
+  }
+  if (!isTabDiscoverySearchKey(key)) return;
+  const model = searchFor(key);
+  restoredTabDiscoverySearches[key] = {
+    mode: model.mode,
+    pattern: model.pattern,
+    flags: model.flags,
+  };
   try {
-    localStorage.setItem(SETTINGS_SEARCH_STORAGE_KEY, serializeSettingsSearch(searchFor(key)));
+    localStorage.setItem(TAB_DISCOVERY_SEARCH_STORAGE_KEY, serializeTabDiscoverySearches(restoredTabDiscoverySearches));
   } catch {
-    // The Settings search remains usable when browser storage is unavailable.
+    // Tab discovery remains usable when browser storage is unavailable.
   }
 };
 
@@ -1699,7 +1734,9 @@ function renderRegexBuilder(key: string): string {
     </header>
     <p class="supporting-copy">${escapeHtml(key === "settings"
       ? tx("This builder is attached only to this search field. Its Settings pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢一個搜尋欄。設定模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
-      : tx("This builder is attached only to this search field. Patterns and samples stay on this computer.", "呢個建立器只連住呢一個搜尋欄。模式同範例都留喺你部電腦。"))}</p>
+      : isTabDiscoverySearchKey(key)
+        ? tx("This builder is attached only to this tab-discovery field. Its pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢一個分頁探索搜尋欄。模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
+        : tx("This builder is attached only to this search field. Patterns and samples stay on this computer.", "呢個建立器只連住呢一個搜尋欄。模式同範例都留喺你部電腦。"))}</p>
     <div class="segmented-control" role="group" aria-label="${escapeHtml(tx("Match mode", "配對模式"))}">
       <button type="button" class="segment${model.mode === "plain" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="plain" data-focus-key="regex-mode-${escapeHtml(key)}-plain" aria-pressed="${model.mode === "plain"}">${escapeHtml(tx("Plain text", "純文字"))}</button>
       <button type="button" class="segment${model.mode === "regex" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="regex" data-focus-key="regex-mode-${escapeHtml(key)}-regex" aria-pressed="${model.mode === "regex"}">${escapeHtml(tx("Regular expression", "正規表達式"))}</button>
@@ -3552,18 +3589,55 @@ const groupLabel = (group: TabDefinition["group"]): string => group === "workspa
     ? tx("Records", "記錄")
     : tx("System", "系統");
 
-function filterTabs(key: string, tabs: TabDefinition[]): TabDefinition[] {
-  const model = searchFor(key);
-  return model.pattern ? tabs.filter(tab => createMatcher(model)(`${tab.en}\n${tab.yue}\n${groupLabel(tab.group)}\n${tab.id}`)) : tabs;
+const TAB_GROUPS = ["workspace", "records", "system"] as const satisfies readonly TabDefinition["group"][];
+
+const tabSearchEmptyTitle = (key: TabDiscoverySearchKey): string => key === "tabs-current"
+  ? tx("No matching open tabs", "冇符合嘅已開啟分頁")
+  : key === "tabs-group"
+    ? tx("No matching tabs in this group", "呢個群組冇符合嘅分頁")
+    : key === "tab-groups"
+      ? tx("No matching tab groups", "冇符合嘅分頁群組")
+      : tx("No matching app tabs", "冇符合嘅應用程式分頁");
+
+function renderTabSearchEmpty(key: TabDiscoverySearchKey): string {
+  const titleId = `tab-search-empty-title-${key}`;
+  return `<div class="tab-search-empty" role="status" aria-labelledby="${titleId}" data-testid="tab-search-empty-${key}">
+    <span aria-hidden="true">${icon("search")}</span>
+    <div><strong id="${titleId}">${escapeHtml(tabSearchEmptyTitle(key))}</strong><p>${escapeHtml(surfaceTone("tabDiscoveryNoMatch"))}</p></div>
+    <button class="button button--text" type="button" data-action="focus-tab-search" data-search-key="${key}">${icon("search")}<span>${escapeHtml(tx("Edit this tab search", "修改呢個分頁搜尋"))}</span></button>
+  </div>`;
 }
 
-function renderTabSearchResults(key: string, tabs: TabDefinition[]): string {
+function filterTabs(key: TabDiscoverySearchKey, tabs: TabDefinition[]): TabDefinition[] {
+  const model = searchFor(key);
+  const validation = validatePattern(model);
+  return model.pattern && validation.valid
+    ? tabs.filter(tab => createMatcher(model)(`${tab.en}\n${tab.yue}\n${groupLabel(tab.group)}\n${tab.id}`))
+    : model.pattern
+      ? []
+      : tabs;
+}
+
+function renderTabSearchResults(key: TabDiscoverySearchKey, tabs: TabDefinition[]): string {
+  const model = searchFor(key);
   const results = filterTabs(key, tabs);
-  return `<div class="tab-search-results" role="list">${results.length ? results.map(tab => {
+  return `<div class="tab-search-results"${results.length ? ` role="list"` : ""}>${results.length ? results.map(tab => {
     const open = !state.tabPreferences.closed.includes(tab.id);
     const pinned = state.tabPreferences.pinned.includes(tab.id);
     return `<button type="button" role="listitem" data-action="activate-tab" data-tab-id="${tab.id}"><span>${icon(tab.icon)}</span><span><strong>${escapeHtml(tx(tab.en, tab.yue))}</strong><small>${escapeHtml(groupLabel(tab.group))} · ${escapeHtml(open ? tx("open", "已開啟") : tx("closed", "已關閉"))}${pinned ? ` · ${escapeHtml(tx("pinned", "已釘選"))}` : ""}</small></span>${icon("chevron")}</button>`;
-  }).join("") : `<p class="empty-inline">${escapeHtml(tx("No matching tabs", "冇符合嘅分頁"))}</p>`}</div>`;
+  }).join("") : model.pattern && validatePattern(model).valid ? renderTabSearchEmpty(key) : ""}</div>`;
+}
+
+function renderTabGroupSearchResults(): string {
+  const key = "tab-groups";
+  const model = searchFor(key);
+  const validation = validatePattern(model);
+  const groups = model.pattern && validation.valid
+    ? TAB_GROUPS.filter(group => createMatcher(model)(groupLabel(group)))
+    : model.pattern
+      ? []
+      : [...TAB_GROUPS];
+  return `<div class="group-result-list"${groups.length ? ` role="list"` : ""}>${groups.length ? groups.map(group => `<button type="button" role="listitem" data-action="select-group-result" data-group="${group}"><span class="group-swatch group-swatch--${group}"></span><span><strong>${escapeHtml(groupLabel(group))}</strong><small>${TAB_DEFINITIONS.filter(tab => tab.group === group).length} ${escapeHtml(tx("tabs", "個分頁"))}</small></span>${icon("chevron")}</button>`).join("") : model.pattern && validation.valid ? renderTabSearchEmpty(key) : ""}</div>`;
 }
 
 function bulkClosePreview(): PageId[] {
@@ -3588,11 +3662,8 @@ function renderTabManager(): string {
     <header class="popover-header"><div><p class="eyebrow">${escapeHtml(tx("TAB DISCOVERY", "分頁探索"))}</p><h2 id="tab-manager-title">${escapeHtml(tx("Search and manage tabs", "搜尋同管理分頁"))}</h2></div><button class="icon-button" type="button" data-action="close-tab-manager" aria-label="${escapeHtml(tx("Close tab manager", "關閉分頁管理器"))}">${icon("close")}</button></header>
     <div class="tab-manager__scroll">
       <section class="tab-search-section"><h3>${escapeHtml(tx("1. Current tab strip", "1. 目前分頁列"))}</h3>${renderSearchField("tabs-current", tx("Search open tabs", "搜尋已開啟分頁"), true)}${renderTabSearchResults("tabs-current", current)}</section>
-      <section class="tab-search-section"><div class="section-title-row"><h3>${escapeHtml(tx("2. Tabs inside a group", "2. 群組入面嘅分頁"))}</h3><label><span class="visually-hidden">${escapeHtml(tx("Tab group", "分頁群組"))}</span><select data-action-change="select-tab-group">${(["workspace", "records", "system"] as const).map(group => `<option value="${group}" ${group === state.selectedTabGroup ? "selected" : ""}>${escapeHtml(groupLabel(group))}</option>`).join("")}</select></label></div>${renderSearchField("tabs-group", tx("Search this group", "搜尋呢個群組"), true)}${renderTabSearchResults("tabs-group", groupTabs)}</section>
-      <section class="tab-search-section"><h3>${escapeHtml(tx("3. Tab groups", "3. 分頁群組"))}</h3>${renderSearchField("tab-groups", tx("Search group names", "搜尋群組名稱"), true)}<div class="group-result-list">${(["workspace", "records", "system"] as const).filter(group => {
-        const model = searchFor("tab-groups");
-        return !model.pattern || createMatcher(model)(groupLabel(group));
-      }).map(group => `<button type="button" data-action="select-group-result" data-group="${group}"><span class="group-swatch group-swatch--${group}"></span><span><strong>${escapeHtml(groupLabel(group))}</strong><small>${TAB_DEFINITIONS.filter(tab => tab.group === group).length} ${escapeHtml(tx("tabs", "個分頁"))}</small></span>${icon("chevron")}</button>`).join("")}</div></section>
+      <section class="tab-search-section"><div class="section-title-row"><h3>${escapeHtml(tx("2. Tabs inside a group", "2. 群組入面嘅分頁"))}</h3><label><span class="visually-hidden">${escapeHtml(tx("Tab group", "分頁群組"))}</span><select data-action-change="select-tab-group">${TAB_GROUPS.map(group => `<option value="${group}" ${group === state.selectedTabGroup ? "selected" : ""}>${escapeHtml(groupLabel(group))}</option>`).join("")}</select></label></div>${renderSearchField("tabs-group", tx("Search this group", "搜尋呢個群組"), true)}${renderTabSearchResults("tabs-group", groupTabs)}</section>
+      <section class="tab-search-section"><h3>${escapeHtml(tx("3. Tab groups", "3. 分頁群組"))}</h3>${renderSearchField("tab-groups", tx("Search group names", "搜尋群組名稱"), true)}${renderTabGroupSearchResults()}</section>
       <section class="tab-search-section"><h3>${escapeHtml(tx("4. Master tab search", "4. 全部分頁搜尋"))}</h3>${renderSearchField("tabs-master", tx("Search all app tabs", "搜尋所有應用程式分頁"), true)}${renderTabSearchResults("tabs-master", [...TAB_DEFINITIONS])}</section>
       <section class="bulk-close-card"><header><span>${icon("trash")}</span><div><h3>${escapeHtml(state.bulkInverse ? tx("Close tabs not containing text", "關閉唔包含文字嘅分頁") : tx("Close tabs containing text", "關閉包含文字嘅分頁"))}</h3><p>${escapeHtml(tx("Matching uses visible tab labels only. Empty or invalid patterns never close anything.", "配對只使用可見分頁標籤。空白或者無效模式永遠唔會關閉任何嘢。"))}</p></div></header>${renderSearchField("bulk-tabs", tx("Text to review before closing", "關閉前要審閱嘅文字"), true)}<div class="bulk-options"><label class="switch-row"><span>${escapeHtml(tx("Inverse: close non-matches", "反向：關閉唔符合項目"))}</span><input type="checkbox" role="switch" data-bulk-option="inverse" ${state.bulkInverse ? "checked" : ""}/></label><label class="switch-row"><span>${escapeHtml(tx("Include pinned tabs", "包括釘選分頁"))}</span><input type="checkbox" role="switch" data-bulk-option="pinned" ${state.bulkIncludePinned ? "checked" : ""}/></label></div><div class="bulk-preview"><strong>${preview.length} ${escapeHtml(tx("tabs would close", "個分頁將會關閉"))}</strong>${preview.length ? `<span>${preview.map(id => escapeHtml(tx(tabDefinition(id).en, tabDefinition(id).yue))).join(" · ")}</span>` : `<span>${escapeHtml(!bulk.pattern ? tx("Enter a non-empty query.", "輸入非空白搜尋。") : !bulkValidation.valid ? bulkValidation.message : tx("No tabs match this scope.", "呢個範圍冇符合分頁。"))}</span>`}</div><button class="button button--danger" type="button" data-action="request-bulk-close" ${preview.length === 0 ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Review and close…", "審閱並關閉……"))}</span></button></section>
       ${state.tabPreferences.closed.length ? `<section class="closed-tabs"><h3>${escapeHtml(tx("Recently closed app tabs", "最近關閉嘅應用程式分頁"))}</h3><div>${state.tabPreferences.closed.slice(-10).reverse().map(id => `<button class="assist-chip" type="button" data-action="reopen-tab" data-tab-id="${id}">${icon(tabDefinition(id).icon)}<span>${escapeHtml(tx(tabDefinition(id).en, tabDefinition(id).yue))}</span></button>`).join("")}</div></section>` : ""}
@@ -5976,6 +6047,11 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "focus-settings-search":
       focusByKey("search-settings");
       break;
+    case "focus-tab-search": {
+      const key = button.dataset.searchKey;
+      if (key && isTabDiscoverySearchKey(key)) focusByKey(`search-${key}`);
+      break;
+    }
     case "edit-mail-search": {
       const model = searchFor("mail");
       model.builderOpen = true;
@@ -7111,10 +7187,22 @@ document.addEventListener("keydown", event => {
     else if (state.pimEditor) { event.preventDefault(); requestPimEditorClose(); return; }
     else if (state.appearanceEditor) { event.preventDefault(); closeTabAppearanceEditor(); return; }
     else if (state.contextMenu) { event.preventDefault(); closeTabContextMenu(); return; }
-    else if (state.tabManagerOpen) state.tabManagerOpen = false;
+    else if (state.tabManagerOpen) {
+      const openBuilder = Object.entries(state.searches).find(([key, model]) =>
+        (isTabDiscoverySearchKey(key) || key === "bulk-tabs") && model.builderOpen);
+      if (openBuilder) {
+        openBuilder[1].builderOpen = false;
+        pendingFocusKey = `search-${openBuilder[0]}`;
+      } else {
+        state.tabManagerOpen = false;
+      }
+    }
     else {
-      const openBuilder = Object.values(state.searches).find(model => model.builderOpen);
-      if (openBuilder) openBuilder.builderOpen = false;
+      const openBuilder = Object.entries(state.searches).find(([, model]) => model.builderOpen);
+      if (openBuilder) {
+        openBuilder[1].builderOpen = false;
+        pendingFocusKey = `search-${openBuilder[0]}`;
+      }
       else return;
     }
     event.preventDefault(); render(); return;

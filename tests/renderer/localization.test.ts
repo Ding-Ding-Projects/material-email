@@ -55,6 +55,11 @@ describe("renderer language and humor selection", () => {
       funnyEnglish: 1,
       funnyCantonese: 5,
     })).toBe(`${SURFACE_TONE_COPY.settingsNoMatch.english[0]} · ${SURFACE_TONE_COPY.settingsNoMatch.cantonese[4]}`);
+    expect(localizedSurfaceTone("tabDiscoveryNoMatch", {
+      language: "bilingual",
+      funnyEnglish: 1,
+      funnyCantonese: 5,
+    })).toBe(`${SURFACE_TONE_COPY.tabDiscoveryNoMatch.english[0]} · ${SURFACE_TONE_COPY.tabDiscoveryNoMatch.cantonese[4]}`);
   });
 
   it("falls back to the nearest lower level and then the other language instead of rendering blank copy", () => {
