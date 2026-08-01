@@ -26,6 +26,7 @@ const api: MaterialEmailApi = {
   revokeOAuthTokenVault: provider => ipcRenderer.invoke("account:oauth-vault-revoke", provider),
   inspectTlsCertificate: request => ipcRenderer.invoke("account:inspect-tls-certificate", request),
   runPop3Foundation: options => ipcRenderer.invoke("account:pop3-foundation", options),
+  runPimProviderFoundation: profile => ipcRenderer.invoke("pim:provider-foundation", profile),
   addAccount: draft => ipcRenderer.invoke("account:add", draft),
   testAccount: draft => ipcRenderer.invoke("account:test", draft),
   removeAccount: accountId => ipcRenderer.invoke("account:remove", accountId),

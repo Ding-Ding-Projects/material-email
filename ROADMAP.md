@@ -41,6 +41,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Contact and mailing-list CRUD with stable UIDs and append-only restore
 - [x] Bounded conservative vCard 3.0/4.0 import and deterministic export
 - [x] Local Home calendar, events, recurrence metadata, attendees, alarms, and tasks
+- [x] Bounded local CardDAV/CalDAV/ICS profile validation, deterministic capability/state reporting, and vCard/iCalendar interchange limits with explicit no-network/no-credential facts
 - [x] Generation-based PIM persistence with validated recovery copies and cross-instance/process locking
 - [x] Task refresh ordering that rejects stale or edit-overwriting results
 - [x] Windows x64 NSIS packaging configuration
@@ -78,7 +79,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [ ] Antivirus or malware-content scanner integration and provider-backed reputation checks
 - [x] Native Windows notifications with privacy controls (opt-in generic summaries)
 - [x] Renderer/preload/IPC integration for contacts, mailing lists, calendars, tasks, vCard actions, and transaction recovery
-- [ ] CardDAV/CalDAV/ICS/task-provider synchronization and broad interoperability
+- [ ] Live CardDAV/CalDAV/ICS/task-provider discovery, authentication, credential storage, synchronization, conflicts, recurrence expansion, and broad interoperability (the local validation/interchange foundation is not provider proof)
 - [ ] OpenPGP and S/MIME signing/encryption with clear trust UX
 - [ ] Audited OpenPGP/S/MIME libraries, OS-backed key/certificate lifecycle, real signing/encryption/decryption/verification, revocation/expiry handling, and provider interoperability (the metadata-only trust-state foundation is not completion evidence)
 - [x] Pure external-link risk assessment (HTTP, credentials, host and Unicode deception signals)

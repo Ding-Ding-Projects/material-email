@@ -4,6 +4,7 @@ import {
   LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
   LOCAL_HISTORY_RETENTION_DAYS_MAX,
   LOCAL_HISTORY_RETENTION_DAYS_MIN,
+  PIM_PROVIDER_ENDPOINT_LIMIT,
   POP3_MESSAGE_LIMIT_MAX,
   POP3_MESSAGE_LIMIT_MIN,
   type AccountDraft,
@@ -11,6 +12,7 @@ import {
   type ComposeDraft,
   type CachedMailSearchQuery,
   type LocalHistoryPruneRequest,
+  type PimProviderProfileInput,
   type Pop3AccountOptions,
   type Preferences,
   type TlsCertificateInspectionRequest,
@@ -84,6 +86,12 @@ export const pop3AccountOptionsSchema = z.strictObject({
   leaveOnServer: z.literal(true),
   messageLimit: z.number().int().min(POP3_MESSAGE_LIMIT_MIN).max(POP3_MESSAGE_LIMIT_MAX),
 }) as z.ZodType<Pop3AccountOptions>;
+
+export const pimProviderProfileInputSchema = z.strictObject({
+  kind: z.enum(["carddav", "caldav", "ics-file"]),
+  endpointUrl: z.string().max(PIM_PROVIDER_ENDPOINT_LIMIT),
+  authMode: z.enum(["none", "basic", "oauth2"]),
+}) as z.ZodType<PimProviderProfileInput>;
 
 export const accountDraftSchema = z.union([
   z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("imap").default("imap") }),
@@ -201,6 +209,7 @@ export const ipcPayloadSchemas = {
   oauthProvider: z.tuple([z.enum(OAUTH_PROVIDER_IDS)]),
   tlsCertificateInspection: z.tuple([tlsCertificateInspectionSchema]),
   pop3Foundation: z.tuple([pop3AccountOptionsSchema]),
+  pimProviderFoundation: z.tuple([pimProviderProfileInputSchema]),
   accountDraft: z.tuple([accountDraftSchema]),
   accountId: z.tuple([identifierSchema]),
   accountFolder: z.tuple([identifierSchema, folderPathSchema]),

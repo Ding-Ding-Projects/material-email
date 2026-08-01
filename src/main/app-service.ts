@@ -45,6 +45,8 @@ import type {
   PendingOperationSummary,
   Pop3AccountOptions,
   Pop3FoundationSnapshot,
+  PimProviderFoundationSnapshot,
+  PimProviderProfileInput,
   AttachmentSaveReview,
   AttachmentBatchSaveOutcome,
   AttachmentSaveOutcome,
@@ -66,7 +68,7 @@ import { JsonStore } from "./storage.js";
 import { DEFAULT_APPEARANCE_PREFERENCES } from "../shared/appearance.js";
 import { HistoryRepository } from "./history-repository.js";
 import { AccountDiscoveryService } from "./account-discovery.js";
-import { PimService } from "./pim/index.js";
+import { PimService, runPimProviderFoundation } from "./pim/index.js";
 import {
   MailService,
   sanitizeMessageContent,
@@ -75,7 +77,7 @@ import {
   type RuntimeAccount,
 } from "./mail-service.js";
 import { assertMimeSourceSize } from "./mime-safety.js";
-import { accountDraftSchema, composeDraftSchema, pop3AccountOptionsSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
+import { accountDraftSchema, composeDraftSchema, pimProviderProfileInputSchema, pop3AccountOptionsSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
 import { AttachmentAuthorization, inspectEditorExecutable, sameWindowsPath } from "./local-file-authorization.js";
 import {
   parsePersistedState,
@@ -346,6 +348,10 @@ export class AppService {
 
   async runPop3Foundation(input: Pop3AccountOptions): Promise<Pop3FoundationSnapshot> {
     return runPop3Foundation(pop3AccountOptionsSchema.parse(input));
+  }
+
+  async runPimProviderFoundation(input: PimProviderProfileInput): Promise<PimProviderFoundationSnapshot> {
+    return runPimProviderFoundation(pimProviderProfileInputSchema.parse(input));
   }
 
   async addAccount(input: AccountDraft): Promise<AccountSummary> {

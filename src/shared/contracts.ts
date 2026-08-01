@@ -129,6 +129,84 @@ export interface Pop3FoundationSnapshot {
   boundary: "local-demo-only" | "live-network-unsupported";
 }
 
+export const PIM_PROVIDER_ENDPOINT_LIMIT = 2_048;
+export const PIM_INTERCHANGE_MAX_BYTES = 1_048_576;
+export const PIM_INTERCHANGE_MAX_LINES = 20_000;
+
+export type PimProviderKind = "carddav" | "caldav" | "ics-file";
+export type PimProviderAuthMode = "none" | "basic" | "oauth2";
+
+export interface PimProviderProfileInput {
+  kind: PimProviderKind;
+  endpointUrl: string;
+  authMode: PimProviderAuthMode;
+}
+
+export interface PimProviderProfile extends PimProviderProfileInput {
+  endpointUrl: string;
+}
+
+export type PimProviderFoundationState = "idle" | "validating" | "capability-review" | "ready" | "rejected";
+export type PimProviderFoundationEvent = "start" | "accept-profile" | "reject-profile" | "inspect-local-capabilities" | "finish";
+
+export interface PimProviderFoundationTransition {
+  sequence: number;
+  from: PimProviderFoundationState;
+  event: PimProviderFoundationEvent;
+  to: PimProviderFoundationState;
+}
+
+export type PimProviderCapabilityName =
+  | "local-vcard-boundary"
+  | "local-icalendar-boundary"
+  | "collection-discovery"
+  | "etag-concurrency"
+  | "sync-token"
+  | "remote-read"
+  | "remote-write"
+  | "scheduling"
+  | "recurrence-expansion"
+  | "credential-use";
+
+export interface PimProviderCapabilityStatus {
+  name: PimProviderCapabilityName;
+  available: boolean;
+  used: boolean;
+  evidence: "bounded-local-parser" | "not-implemented";
+}
+
+export interface PimProviderFoundationSnapshot {
+  profile: PimProviderProfile | null;
+  state: PimProviderFoundationState;
+  issues: string[];
+  capabilities: PimProviderCapabilityStatus[];
+  transitions: PimProviderFoundationTransition[];
+  serverContacted: false;
+  credentialsUsed: false;
+  providerStatePersisted: false;
+  liveSynchronization: false;
+  recurrenceExpanded: false;
+  boundary: "local-validation-only" | "invalid-local-profile";
+}
+
+export type PimInterchangeFormat = "vcard" | "icalendar";
+
+export interface PimInterchangeInspection {
+  format: PimInterchangeFormat;
+  byteLength: number;
+  lineCount: number;
+  contactCount: number;
+  eventCount: number;
+  taskCount: number;
+  timeZoneCount: number;
+  recurrenceRuleCount: number;
+  importable: true;
+  exportable: true;
+  recurrenceExpanded: false;
+  schedulingProcessed: false;
+  boundary: "bounded-local-interchange";
+}
+
 export const AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT = 3;
 export const LOCAL_HISTORY_RETENTION_DAYS_MIN = 30;
 export const LOCAL_HISTORY_RETENTION_DAYS_MAX = 3_650;
@@ -569,6 +647,7 @@ export interface MaterialEmailApi {
   revokeOAuthTokenVault(provider: OAuthProviderId): Promise<OAuthTokenVaultActionResult>;
   inspectTlsCertificate(request: TlsCertificateInspectionRequest): Promise<TlsCertificateInspectionResult>;
   runPop3Foundation(options: Pop3AccountOptions): Promise<Pop3FoundationSnapshot>;
+  runPimProviderFoundation(profile: PimProviderProfileInput): Promise<PimProviderFoundationSnapshot>;
   addAccount(draft: AccountDraft): Promise<AccountSummary>;
   testAccount(draft: AccountDraft): Promise<{ incoming: true; outgoing: true }>;
   removeAccount(accountId: string): Promise<void>;

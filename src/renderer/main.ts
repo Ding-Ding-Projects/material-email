@@ -28,6 +28,8 @@ import type {
   OAuthProviderId,
   OAuthTokenVaultSnapshot,
   PendingOperationSummary,
+  PimProviderFoundationSnapshot,
+  PimProviderProfileInput,
   Pop3AccountOptions,
   Pop3FoundationSnapshot,
   MailingList,
@@ -53,6 +55,7 @@ import {
   LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
   LOCAL_HISTORY_RETENTION_DAYS_MAX,
   LOCAL_HISTORY_RETENTION_DAYS_MIN,
+  PIM_INTERCHANGE_MAX_BYTES,
   POP3_MESSAGE_LIMIT_MAX,
   POP3_MESSAGE_LIMIT_MIN,
 } from "../shared/contracts";
@@ -287,6 +290,8 @@ interface RendererState {
   pimEditorLastFocusName: string | null;
   confirmationReturnFocusKey: string | null;
   pimFilters: PimFilterState;
+  pimProviderProfile: PimProviderProfileInput;
+  pimProviderSnapshot: PimProviderFoundationSnapshot | null;
   localDrafts: LocalDraftSummary[];
   pendingOperations: PendingOperationSummary[];
   outboxItems: OutboxSummary[];
@@ -432,6 +437,8 @@ const state: RendererState = {
   pimEditorLastFocusName: null,
   confirmationReturnFocusKey: null,
   pimFilters: { actions: new Set(), kinds: new Set(), from: "", to: "" },
+  pimProviderProfile: { kind: "caldav", endpointUrl: "", authMode: "none" },
+  pimProviderSnapshot: null,
   localDrafts: [],
   pendingOperations: [],
   outboxItems: [],
@@ -2628,6 +2635,7 @@ function renderSettingsPage(): string {
     settingSectionMatches("appearance theme light dark system density compact comfortable relaxed accent color font family size weight") ? renderAppearanceSettings(prefs) : "",
     settingSectionMatches("language English Cantonese bilingual funny humour voice narrator warning error dim sum startup") ? renderLanguageSettings(prefs) : "",
     settingSectionMatches("accounts email IMAP POP3 SMTP server local demo capability state machine remove add credentials OAuth") ? renderAccountSettings() : "",
+    settingSectionMatches("contacts calendars tasks PIM CardDAV CalDAV ICS provider URL HTTPS authentication import export recurrence capability local") ? renderPimProviderSettings() : "",
     settingSectionMatches("OAuth token vault Windows safeStorage encrypted access refresh rotation revoke clear provider registration credentials") ? renderOAuthTokenVaultSettings() : "",
     settingSectionMatches("external editor Visual Studio Code Cursor Notepad detect open") ? renderEditorSettings(prefs) : "",
     settingSectionMatches("tabs pin reorder overflow search restore appearance") ? renderTabSettings() : "",
@@ -2682,6 +2690,75 @@ function renderAccountSettings(): string {
   return `<section class="settings-card settings-card--wide" data-setting-section="accounts">
     <header><span class="settings-card__icon">${icon("mail")}</span><div><h2>${escapeHtml(tx("Mail accounts", "郵件帳戶"))}</h2><p>${escapeHtml(tx("Incoming, outgoing, and identity scope", "收取、寄出同身份範圍"))}</p></div><span class="action-spacer"></span><button class="button button--filled" type="button" data-action="open-account-setup">${icon("account")}<span>${escapeHtml(tx("Add account", "新增帳戶"))}</span></button></header>
     <div class="account-list">${accounts.length ? accounts.map(account => `<article class="account-card"><span class="avatar">${escapeHtml((account.displayName.charAt(0) || "?").toUpperCase())}</span><div><strong>${escapeHtml(account.displayName)}</strong><p>${escapeHtml(account.email)}</p><small>${escapeHtml(account.kind === "demo" ? tx("Local demo · no network", "本機示範 · 唔連網") : `${account.incoming.host}:${account.incoming.port} · ${account.outgoing.host}:${account.outgoing.port}`)}</small></div><span class="account-kind">${escapeHtml(account.kind.toUpperCase())}</span><button class="icon-button danger-action" type="button" data-action="request-remove-account" data-account-id="${escapeHtml(account.id)}" aria-label="${escapeHtml(tx(`Remove ${account.email}`, `移除 ${account.email}`))}" data-tooltip="${escapeHtml(tx("Remove account", "移除帳戶"))}">${icon("trash")}</button></article>`).join("") : `<p>${escapeHtml(tx("No accounts are configured.", "未有設定帳戶。"))}</p>`}</div>
+  </section>`;
+}
+
+function pimProviderCapabilityLabel(name: string): string {
+  switch (name) {
+    case "local-vcard-boundary": return tx("Bounded local vCard envelope", "有界本機 vCard 封套");
+    case "local-icalendar-boundary": return tx("Bounded local iCalendar envelope", "有界本機 iCalendar 封套");
+    case "collection-discovery": return tx("Provider collection discovery", "供應商集合探索");
+    case "etag-concurrency": return tx("ETag conflict control", "ETag 衝突控制");
+    case "sync-token": return tx("Sync-token continuation", "同步權杖接續");
+    case "remote-read": return tx("Provider read", "供應商讀取");
+    case "remote-write": return tx("Provider write-back", "供應商寫回");
+    case "scheduling": return tx("Invitations and scheduling", "邀請同排程");
+    case "recurrence-expansion": return tx("Recurrence expansion", "重複活動展開");
+    case "credential-use": return tx("Credential handling", "憑證處理");
+    default: return name;
+  }
+}
+
+function renderPimProviderResult(): string {
+  const snapshot = state.pimProviderSnapshot;
+  if (!snapshot) {
+    return `<p>${icon("info")}<span>${escapeHtml(tx("Ready. Local validation will not contact, authenticate with, or save the provider.", "準備好。本機驗證唔會聯絡供應商、唔會登入，亦唔會儲存供應商。"))}</span></p>`;
+  }
+  const transitions = snapshot.transitions.map(item => `${item.sequence}. ${item.from} —${item.event}→ ${item.to}`).join("\n");
+  const factValue = (english: string, cantonese: string): string => escapeHtml(tx(english, cantonese));
+  const facts = `<dl class="pop3-foundation__facts">
+    <div><dt>${factValue("Endpoint contacted", "已聯絡端點")}</dt><dd>${factValue("No", "冇")}</dd></div>
+    <div><dt>${factValue("Credential used", "已使用憑證")}</dt><dd>${factValue("No", "冇")}</dd></div>
+    <div><dt>${factValue("Provider state saved", "已儲存供應商狀態")}</dt><dd>${factValue("No", "冇")}</dd></div>
+    <div><dt>${factValue("Live synchronization", "即時同步")}</dt><dd>${factValue("Not provided", "未提供")}</dd></div>
+    <div><dt>${factValue("Recurrence", "重複活動")}</dt><dd>${factValue("Metadata only; not expanded", "只保留 metadata；冇展開")}</dd></div>
+    <div><dt>${factValue("Boundary", "邊界")}</dt><dd>${factValue("Local validation only", "只限本機驗證")}</dd></div>
+  </dl>`;
+  if (snapshot.state === "rejected") {
+    return `<div class="pop3-foundation__summary pop3-foundation__summary--warning">${icon("warning")}<div><strong>${escapeHtml(tx("Profile rejected locally", "設定檔已喺本機拒絕"))}</strong><p>${escapeHtml(tx("Correct the listed fields. No provider interaction was attempted.", "修正列出嘅欄位。完全冇嘗試同供應商互動。"))}</p></div></div>
+      <ul class="pop3-foundation__messages">${snapshot.issues.map(issue => `<li><strong>${escapeHtml(issue)}</strong></li>`).join("")}</ul>
+      ${facts}
+      <details><summary>${escapeHtml(tx("Deterministic state trace", "固定狀態軌跡"))}</summary><pre>${escapeHtml(transitions)}</pre></details>`;
+  }
+  const capabilities = snapshot.capabilities.map(capability => `<li><strong>${escapeHtml(pimProviderCapabilityLabel(capability.name))}</strong><span>${escapeHtml(capability.available
+    ? tx("Available only at the bounded local import/export envelope", "只喺有界本機匯入／匯出封套可用")
+    : tx("Unavailable; no provider proof", "不可用；冇供應商證據"))}</span></li>`).join("");
+  return `<div class="pop3-foundation__summary">${icon("check")}<div><strong>${escapeHtml(tx("Local provider profile is structurally ready", "本機供應商設定檔結構已準備好"))}</strong><p>${escapeHtml(tx("This proves only URL, HTTPS, authentication-mode, and local capability rules.", "呢個只證明 URL、HTTPS、驗證模式同本機能力規則。"))}</p></div></div>
+    <p class="pop3-foundation__boundary"><span><strong>${escapeHtml(tx("Normalized URL", "正規化 URL"))}</strong><br/><code><bdi>${escapeHtml(snapshot.profile?.endpointUrl ?? "")}</bdi></code></span></p>
+    ${facts}
+    <details open><summary>${escapeHtml(tx("Capability model", "能力模型"))}</summary><ul class="pop3-foundation__messages">${capabilities}</ul></details>
+    <details><summary>${escapeHtml(tx("Deterministic state trace", "固定狀態軌跡"))}</summary><pre>${escapeHtml(transitions)}</pre></details>`;
+}
+
+function renderPimProviderSettings(): string {
+  const profile = state.pimProviderProfile;
+  const isIcs = profile.kind === "ics-file";
+  const endpointHelp = isIcs
+    ? tx("Use an absolute Windows file URL ending in .ics, for example file:///C:/Calendars/home.ics. UNC and network files are refused.", "使用以 .ics 結尾嘅 Windows 絕對檔案 URL，例如 file:///C:/Calendars/home.ics。UNC 同網絡檔案會被拒絕。")
+    : tx("CardDAV and CalDAV require an absolute HTTPS URL without user info, query data, or a fragment.", "CardDAV 同 CalDAV 必須使用絕對 HTTPS URL，唔可以包含使用者資料、query 資料或者 fragment。 ");
+  return `<section class="settings-card settings-card--wide pim-provider-settings" data-setting-section="pim-providers" data-testid="pim-provider-settings" aria-labelledby="pim-provider-title">
+    <header><span class="settings-card__icon">${icon("calendar")}</span><div><h2 id="pim-provider-title">${escapeHtml(tx("Contacts and calendar provider foundation", "聯絡人同日曆供應商地基"))}</h2><p>${escapeHtml(tx("Local CardDAV, CalDAV, and ICS validation with zero live provider claims", "本機 CardDAV、CalDAV 同 ICS 驗證；零即時供應商聲稱"))}</p></div></header>
+    <form class="pop3-foundation pim-provider-foundation" data-form="pim-provider-foundation" aria-describedby="pim-provider-boundary pim-interchange-boundary">
+      <div class="form-grid pop3-foundation__options">
+        <label class="field"><span>${escapeHtml(tx("Provider kind", "供應商類型"))}</span><select name="kind"><option value="carddav" ${profile.kind === "carddav" ? "selected" : ""}>CardDAV · vCard</option><option value="caldav" ${profile.kind === "caldav" ? "selected" : ""}>CalDAV · iCalendar</option><option value="ics-file" ${isIcs ? "selected" : ""}>${escapeHtml(tx("Local ICS file", "本機 ICS 檔案"))}</option></select></label>
+        <label class="field"><span>${escapeHtml(tx("Authentication mode", "驗證模式"))}</span><select name="authMode" ${isIcs ? "disabled" : ""} aria-describedby="pim-auth-boundary"><option value="none" ${profile.authMode === "none" ? "selected" : ""}>${escapeHtml(tx("None / public metadata", "無／公開 metadata"))}</option><option value="basic" ${profile.authMode === "basic" ? "selected" : ""}>${escapeHtml(tx("Password mode label only", "只記錄密碼模式標籤"))}</option><option value="oauth2" ${profile.authMode === "oauth2" ? "selected" : ""}>${escapeHtml(tx("OAuth 2 mode label only", "只記錄 OAuth 2 模式標籤"))}</option></select><small id="pim-auth-boundary">${escapeHtml(tx("This foundation accepts no user name, password, token, client ID, or scope.", "呢個地基唔會接收使用者名稱、密碼、權杖、client ID 或 scope。"))}</small></label>
+        <label class="field"><span>${escapeHtml(tx("Provider URL", "供應商 URL"))}</span><input name="endpointUrl" type="text" inputmode="url" value="${escapeHtml(profile.endpointUrl)}" maxlength="2048" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="pim-endpoint-help" placeholder="${escapeHtml(isIcs ? "file:///C:/Calendars/home.ics" : "https://calendar.example.test/dav/")}"/><small id="pim-endpoint-help">${escapeHtml(endpointHelp)}</small></label>
+      </div>
+      <p class="pop3-foundation__boundary" id="pim-provider-boundary">${icon("warning")}<span>${escapeHtml(tx("Validation is local and ephemeral. It performs no DNS lookup, socket connection, TLS handshake, discovery, authentication, read, write, sync-token, ETag, invitation, or credential operation, and it saves no provider state.", "驗證只喺本機短暫進行。佢唔會做 DNS 查詢、socket 連線、TLS 握手、探索、登入、讀取、寫入、同步權杖、ETag、邀請或者憑證操作，亦唔會儲存供應商狀態。"))}</span></p>
+      <p class="pop3-foundation__boundary" id="pim-interchange-boundary">${icon("info")}<span>${escapeHtml(tx(`The import/export gate is limited to ${PIM_INTERCHANGE_MAX_BYTES / 1_048_576} MiB local vCard 3/4 or iCalendar 2.0 envelopes. Scheduling METHOD and attachments are refused; recurrence rules are counted and preserved as metadata, never expanded. This panel does not import records.`, `匯入／匯出閘門只處理最多 ${PIM_INTERCHANGE_MAX_BYTES / 1_048_576} MiB 嘅本機 vCard 3/4 或 iCalendar 2.0 封套。排程 METHOD 同附件會被拒絕；重複規則只會計數同保留做 metadata，永遠唔會展開。呢個面板唔會匯入記錄。`))}</span></p>
+      <div class="button-row"><button class="button button--tonal" type="submit" data-testid="run-pim-provider-foundation" ${isBusy("pim-provider-foundation") ? "disabled" : ""}>${icon("check", isBusy("pim-provider-foundation") ? "is-spinning" : "")}<span>${escapeHtml(isBusy("pim-provider-foundation") ? tx("Validating locally…", "本機驗證緊……") : tx("Validate local foundation", "驗證本機地基"))}</span></button></div>
+      <div class="pop3-foundation__result" data-testid="pim-provider-foundation-result" role="status" aria-live="polite" aria-atomic="true" aria-busy="${isBusy("pim-provider-foundation")}">${renderPimProviderResult()}</div>
+    </form>
   </section>`;
 }
 
@@ -3743,6 +3820,36 @@ const runPop3FoundationFromSetup = async (button: HTMLButtonElement): Promise<vo
     button.innerHTML = original;
     applyBilingualSemantics(button);
   }
+};
+
+const runPimProviderFoundationFromSettings = async (form: HTMLFormElement): Promise<void> => {
+  const kindControl = form.elements.namedItem("kind");
+  const authControl = form.elements.namedItem("authMode");
+  const endpointControl = form.elements.namedItem("endpointUrl");
+  if (!(kindControl instanceof HTMLSelectElement) || !(authControl instanceof HTMLSelectElement) || !(endpointControl instanceof HTMLInputElement)) return;
+  if (kindControl.value !== "carddav" && kindControl.value !== "caldav" && kindControl.value !== "ics-file") return;
+  const authMode = kindControl.value === "ics-file"
+    ? "none"
+    : authControl.value === "basic" || authControl.value === "oauth2"
+      ? authControl.value
+      : "none";
+  state.pimProviderProfile = { kind: kindControl.value, endpointUrl: endpointControl.value, authMode };
+  state.pimProviderSnapshot = null;
+  await withBusy("pim-provider-foundation", async () => {
+    const snapshot = await api.runPimProviderFoundation(state.pimProviderProfile);
+    state.pimProviderSnapshot = snapshot;
+    pushToast(
+      snapshot.state === "ready" ? "success" : "warning",
+      snapshot.state === "ready" ? "Local provider profile validated" : "Provider profile needs attention",
+      snapshot.state === "ready"
+        ? "The bounded local model is ready. No endpoint was contacted, no credential was used, and no live synchronization was performed."
+        : "The profile was rejected locally before any endpoint, credential, or provider state could be used.",
+      snapshot.state === "ready" ? "本機供應商設定檔已驗證" : "供應商設定檔要處理",
+      snapshot.state === "ready"
+        ? "有界本機模型已準備好。冇聯絡端點、冇使用憑證，亦冇進行即時同步。"
+        : "設定檔喺本機已被拒絕，完全未有使用端點、憑證或者供應商狀態。",
+    );
+  });
 };
 
 const handleAccountSubmit = async (form: HTMLFormElement, mode: "test" | "add"): Promise<void> => {
@@ -5484,6 +5591,28 @@ const updateTabStyleControl = (control: HTMLInputElement): boolean => {
 
 const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement): Promise<void> => {
   if (control.closest('[data-testid="pim-editor"]') && control.name) updatePimEditorDirty();
+  const providerForm = control.closest<HTMLFormElement>('[data-form="pim-provider-foundation"]');
+  if (providerForm) {
+    const kindControl = providerForm.elements.namedItem("kind");
+    const authControl = providerForm.elements.namedItem("authMode");
+    const endpointControl = providerForm.elements.namedItem("endpointUrl");
+    const kind = kindControl instanceof HTMLSelectElement && (kindControl.value === "carddav" || kindControl.value === "caldav" || kindControl.value === "ics-file")
+      ? kindControl.value
+      : state.pimProviderProfile.kind;
+    const authMode = kind === "ics-file"
+      ? "none"
+      : authControl instanceof HTMLSelectElement && (authControl.value === "none" || authControl.value === "basic" || authControl.value === "oauth2")
+        ? authControl.value
+        : state.pimProviderProfile.authMode;
+    state.pimProviderProfile = {
+      kind,
+      authMode,
+      endpointUrl: endpointControl instanceof HTMLInputElement ? endpointControl.value : state.pimProviderProfile.endpointUrl,
+    };
+    state.pimProviderSnapshot = null;
+    if (control.name === "kind") render();
+    return;
+  }
   const accountSetupForm = control.closest<HTMLFormElement>('[data-form="account-setup"]');
   if (accountSetupForm && CONNECTION_PREFLIGHT_FIELD_NAMES.has(control.name)) updateConnectionPreflight(accountSetupForm);
   if (accountSetupForm && control.name === "incomingProtocol") {
@@ -5634,6 +5763,10 @@ app.addEventListener("submit", event => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
   const submitter = (event as SubmitEvent).submitter as HTMLElement | null;
+  if (form.dataset.form === "pim-provider-foundation") {
+    void runPimProviderFoundationFromSettings(form);
+    return;
+  }
   if (form.dataset.form === "account-setup") {
     const mode = submitter?.dataset.accountSubmit;
     if (mode === "test" || mode === "add") void handleAccountSubmit(form, mode);

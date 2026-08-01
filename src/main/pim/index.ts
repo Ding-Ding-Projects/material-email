@@ -3,6 +3,14 @@ export type { AtomicStorePaths, MutationDecision } from "./atomic-json-store.js"
 export { PimConflictError, PimNotFoundError, PimService } from "./pim-service.js";
 export type { PimServiceOptions } from "./pim-service.js";
 export {
+  inspectPimInterchange,
+  normalizePimInterchangeForExport,
+  PimInterchangeBoundaryError,
+  PimProviderFoundationStateMachine,
+  runPimProviderFoundation,
+  validatePimProviderProfile,
+} from "./provider-foundation.js";
+export {
   parseVCardBundle,
   serializeContactVCard,
   serializeMailingListVCard,

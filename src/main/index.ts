@@ -83,6 +83,7 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("account:oauth-vault-revoke", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.revokeAndClear(provider));
   handleValidated("account:inspect-tls-certificate", ipcPayloadSchemas.tlsCertificateInspection, ([request]) => service.inspectTlsCertificate(request));
   handleValidated("account:pop3-foundation", ipcPayloadSchemas.pop3Foundation, ([options]) => service.runPop3Foundation(options));
+  handleValidated("pim:provider-foundation", ipcPayloadSchemas.pimProviderFoundation, ([profile]) => service.runPimProviderFoundation(profile));
   handleValidated("account:test", ipcPayloadSchemas.accountDraft, ([draft]) => service.testAccount(draft));
   handleValidated("account:add", ipcPayloadSchemas.accountDraft, ([draft]) => service.addAccount(draft));
   handleValidated("account:remove", ipcPayloadSchemas.accountId, ([accountId]) => service.removeAccount(accountId));
