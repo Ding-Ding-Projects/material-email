@@ -116,6 +116,12 @@ import {
 } from "./lib/regex";
 import { deletionEvidenceDescription, diffLineDescription, filterHistoryRecords, filterLocalRevisions, retentionPreviewDescription } from "./lib/local-history";
 import { filterPaletteCommands } from "./lib/command-search";
+import {
+  CACHED_MAIL_SEARCH_MODE_STORAGE_KEY,
+  cachedMailResultCountCopy,
+  parseCachedMailSearchMode,
+  serializeCachedMailSearchMode,
+} from "./lib/cached-mail-search";
 import { selectStableMessageId } from "../shared/unified-folders";
 import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
 import {
@@ -367,6 +373,22 @@ const ALL_TAB_IDS = TAB_DEFINITIONS.map(tab => tab.id);
 const TAB_STORAGE_KEY = "material-email.renderer-tabs.v1";
 const TAB_APPEARANCE_PRESET_STORAGE_KEY = "material-email.tab-appearance-presets.v1";
 const HISTORY_DATE_SESSION_KEY = "material-email.history-date-range.v1";
+
+const readCachedMailSearchMode = (): MatchMode => {
+  try {
+    return parseCachedMailSearchMode(localStorage.getItem(CACHED_MAIL_SEARCH_MODE_STORAGE_KEY));
+  } catch {
+    return "plain";
+  }
+};
+
+const persistCachedMailSearchMode = (mode: MatchMode): void => {
+  try {
+    localStorage.setItem(CACHED_MAIL_SEARCH_MODE_STORAGE_KEY, serializeCachedMailSearchMode(mode));
+  } catch {
+    // Search remains usable when browser storage is unavailable; the mode simply cannot survive restart.
+  }
+};
 
 const DEFAULT_PREFERENCES: Preferences = {
   language: "en",
@@ -658,7 +680,7 @@ const tabDefinition = (id: PageId): TabDefinition => TAB_DEFINITIONS.find(tab =>
 const searchFor = (key: string): SearchModel => {
   const existing = state.searches[key];
   if (existing) return existing;
-  const created: SearchModel = { mode: "plain", pattern: "", flags: "i", sample: "", builderOpen: false };
+  const created: SearchModel = { mode: key === "mail" ? readCachedMailSearchMode() : "plain", pattern: "", flags: "i", sample: "", builderOpen: false };
   state.searches[key] = created;
   return created;
 };
@@ -1052,13 +1074,19 @@ const scheduleMailSearch = (delay = 160): void => {
       state.mailSearchResultKey = key;
       state.mailSearchPending = false;
       render();
-    }).catch(error => {
+    }).catch(() => {
       if (sequence !== mailSearchSequence || key !== currentMailSearchKey()) return;
       state.mailSearchResult = null;
       state.mailSearchResultKey = "";
       state.mailSearchPending = false;
-      state.mailSearchError = errorMessage(error);
-      pushToast("error", "Cached mail search failed", state.mailSearchError, "快取郵件搜尋失敗", state.mailSearchError);
+      state.mailSearchError = "failed";
+      pushToast(
+        "error",
+        "Cached mail search could not finish",
+        "The query and cached messages were unchanged. Retry from the message list or edit the search.",
+        "快取郵件搜尋未能完成",
+        "查詢同快取郵件都冇改動。可以喺郵件清單重試，或者修改搜尋。",
+      );
       render();
     });
   }, delay);
@@ -1624,7 +1652,7 @@ function renderSearchField(key: string, placeholder: string, compact = false): s
   return `<div class="search-anchor${compact ? " search-anchor--compact" : ""}" data-search-anchor="${escapeHtml(key)}">
     <div class="search-field${invalid ? " has-error" : ""}">
       ${icon("search")}
-      <input type="search" value="${escapeHtml(model.pattern)}" placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(placeholder)}" aria-invalid="${invalid}" ${invalid ? `aria-describedby="search-error-${escapeHtml(key)}"` : ""} data-search-key="${escapeHtml(key)}" data-focus-key="search-${escapeHtml(key)}" maxlength="${regexLimits.pattern}" autocomplete="off" spellcheck="false" />
+      <input type="search" value="${escapeHtml(model.pattern)}" placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(placeholder)}" aria-invalid="${invalid}" ${invalid ? `aria-describedby="search-error-${escapeHtml(key)}"` : ""}${key === "mail" ? ` aria-controls="mail-message-list"` : ""} data-search-key="${escapeHtml(key)}" data-focus-key="search-${escapeHtml(key)}" maxlength="${regexLimits.pattern}" autocomplete="off" spellcheck="false" />
       ${model.pattern ? `<button class="icon-button icon-button--small" type="button" data-action="clear-search" data-search-key="${escapeHtml(key)}" aria-label="${escapeHtml(tx("Clear search", "清除搜尋"))}">${icon("close")}</button>` : ""}
       <button class="regex-mode-button${model.mode === "regex" ? " is-regex" : ""}" type="button" data-action="toggle-regex-builder" data-search-key="${escapeHtml(key)}" aria-expanded="${model.builderOpen}" aria-label="${escapeHtml(tx("Open regular expression builder", "開啟正規表達式建立器"))}">${icon("regex")}<span>${model.mode === "regex" ? "Regex" : tx("Build", "建立")}</span></button>
     </div>
@@ -1644,8 +1672,8 @@ function renderRegexBuilder(key: string): string {
     </header>
     <p class="supporting-copy">${escapeHtml(tx("This builder is attached only to this search field. Patterns and samples stay on this computer.", "呢個建立器只連住呢一個搜尋欄。模式同範例都留喺你部電腦。"))}</p>
     <div class="segmented-control" role="group" aria-label="${escapeHtml(tx("Match mode", "配對模式"))}">
-      <button type="button" class="segment${model.mode === "plain" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="plain">${escapeHtml(tx("Plain text", "純文字"))}</button>
-      <button type="button" class="segment${model.mode === "regex" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="regex">${escapeHtml(tx("Regular expression", "正規表達式"))}</button>
+      <button type="button" class="segment${model.mode === "plain" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="plain" data-focus-key="regex-mode-${escapeHtml(key)}-plain" aria-pressed="${model.mode === "plain"}">${escapeHtml(tx("Plain text", "純文字"))}</button>
+      <button type="button" class="segment${model.mode === "regex" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="regex" data-focus-key="regex-mode-${escapeHtml(key)}-regex" aria-pressed="${model.mode === "regex"}">${escapeHtml(tx("Regular expression", "正規表達式"))}</button>
     </div>
     ${model.mode === "regex" ? `<div class="builder-guides" aria-label="${escapeHtml(tx("Pattern building blocks", "模式積木"))}">
       ${([
@@ -2173,19 +2201,51 @@ function renderFolderPane(current: FolderSummary | undefined): string {
 function renderMessagePane(current: FolderSummary | undefined, messages: MessageSummary[], searchValid: boolean): string {
   const totalUnread = messages.filter(message => message.unread).length;
   const unified = state.unifiedFolder;
-  const searchActive = mailSearchIsActive();
+  const mailSearch = searchFor("mail");
+  const searchRequested = Boolean(mailSearch.pattern);
   const searchResult = currentMailSearchResult();
-  const title = searchActive ? tx("Cached mail search", "快取郵件搜尋") : unified ? unifiedFolderLabel(unified) : current?.name ?? tx("Messages", "郵件");
+  const title = searchRequested ? tx("Cached mail search", "快取郵件搜尋") : unified ? unifiedFolderLabel(unified) : current?.name ?? tx("Messages", "郵件");
   const grouping = groupCachedConversations(messages);
+  const resultCount = searchResult ? cachedMailResultCountCopy(messages.length, searchResult.totalMatched) : null;
+  const locale = preferences().language === "yue" ? "zh-HK" : "en-CA";
+  const countText = searchRequested
+    ? !searchValid
+      ? tx("Search needs attention", "搜尋需要處理")
+      : resultCount
+        ? tx(resultCount.english, resultCount.cantonese)
+        : state.mailSearchError
+          ? tx("Search unavailable", "搜尋暫時不可用")
+          : tx("Searching…", "搜尋緊……")
+    : `${messages.length.toLocaleString(locale)}${totalUnread ? ` · ${totalUnread.toLocaleString(locale)} ${tx("unread", "未讀")}` : ""}`;
+  const searchTruth = !searchRequested
+    ? ""
+    : !searchValid
+      ? tx("The invalid regular expression was not sent to the cache index. Correct it or switch to plain text.", "無效嘅正規表達式冇送去快取索引。請修正佢，或者轉用純文字。")
+      : state.mailSearchError
+        ? tx("The local search stopped without changing the query or cached messages. Retry makes one new bounded in-memory request; no server request is made.", "本機搜尋已停止，查詢同快取郵件都冇改動。重試只會發出一次新嘅有限記憶體請求；唔會要求伺服器。")
+        : searchResult
+          ? tx(`Searched ${searchResult.indexedDocumentCount.toLocaleString("en-CA")} cached summaries/body snippets in memory; showing up to ${searchResult.resultLimit.toLocaleString("en-CA")} attributed results. No SQLite or server-scale index is implied.`, `喺記憶體搜尋咗 ${searchResult.indexedDocumentCount.toLocaleString("zh-HK")} 個快取摘要／內文片段；最多顯示 ${searchResult.resultLimit.toLocaleString("zh-HK")} 個有來源標示結果。唔代表有 SQLite 或伺服器級索引。`)
+          : tx("Searching the bounded in-memory cache index. No server request is being made.", "正在搜尋有限記憶體快取索引。冇發出伺服器要求。");
+  const messageListContent = !searchValid
+    ? `<div class="pane-empty pane-empty--action" role="status" data-testid="cached-mail-search-invalid" aria-labelledby="cached-mail-search-invalid-title">${icon("warning")}<h3 id="cached-mail-search-invalid-title">${escapeHtml(tx("Regular expression needs attention", "正規表達式需要處理"))}</h3><p>${escapeHtml(tx("Correct the expression or switch to plain text before searching cached mail.", "修正表達式，或者轉用純文字，再搜尋快取郵件。"))}</p><button class="button button--tonal" type="button" data-action="edit-mail-search">${icon("regex")}<span>${escapeHtml(tx("Edit regular expression", "編輯正規表達式"))}</span></button></div>`
+    : state.mailSearchPending
+      ? `<div class="pane-empty" role="status" aria-live="polite"><span>${icon("search")}</span><h3>${escapeHtml(tx("Searching cached mail…", "正在搜尋快取郵件……"))}</h3><p>${escapeHtml(tx("The query stays local and bounded.", "查詢只會喺本機有限範圍內運行。"))}</p></div>`
+      : state.mailSearchError
+        ? `<div class="pane-empty pane-empty--action" role="status" data-testid="cached-mail-search-error" aria-labelledby="cached-mail-search-error-title"><span>${icon("warning")}</span><h3 id="cached-mail-search-error-title">${escapeHtml(tx("Cached search unavailable", "快取搜尋暫時不可用"))}</h3><p>${escapeHtml(tx("The query and cached messages were unchanged. Retry once or edit the search.", "查詢同快取郵件都冇改動。可以重試一次，或者修改搜尋。"))}</p><div class="button-row"><button class="button button--tonal" type="button" data-action="retry-mail-search">${icon("refresh")}<span>${escapeHtml(tx("Retry cached search", "重試快取搜尋"))}</span></button><button class="button button--text" type="button" data-action="focus-mail-search">${icon("search")}<span>${escapeHtml(tx("Edit search", "修改搜尋"))}</span></button></div></div>`
+        : messages.length
+          ? grouping.conversations.map(renderConversation).join("")
+          : searchRequested
+            ? `<div class="pane-empty pane-empty--action" role="status" data-testid="cached-mail-search-empty" aria-labelledby="cached-mail-search-empty-title"><span>${icon("search")}</span><h3 id="cached-mail-search-empty-title">${escapeHtml(tx("No matching cached messages", "冇符合嘅快取郵件"))}</h3><p>${escapeHtml(tx("No cached subject, address, preview, or already-cached body snippet matched. Edit the query or adjust the regex builder.", "快取主旨、地址、預覽同已快取內文片段都冇符合。請修改查詢或者調整正規表達式建立器。"))}</p><button class="button button--tonal" type="button" data-action="focus-mail-search">${icon("search")}<span>${escapeHtml(tx("Edit search", "修改搜尋"))}</span></button></div>`
+            : `<div class="pane-empty" role="status"><span>${icon(unified ? "search" : "inbox")}</span><h3>${escapeHtml(unified ? tx("No cached messages in this view", "呢個檢視冇已快取郵件") : tx("This folder is clear", "呢個資料夾好乾淨"))}</h3><p>${escapeHtml(unified ? tx("Synchronize individual accounts, then refresh this local view.", "逐個帳戶同步，再重新整理呢個本機檢視。") : tx("Synchronize to check the server for anything new.", "同步一下，睇吓伺服器有冇新嘢。"))}</p></div>`;
   return `<section class="message-pane" aria-label="${escapeHtml(tx("Message list", "郵件清單"))}">
-    <header class="pane-heading message-pane__heading"><div><span class="overline">${escapeHtml(searchActive ? tx("IN-MEMORY CACHE INDEX", "記憶體快取索引") : unified ? tx("LOCAL UNIFIED VIEW", "本機統一檢視") : tx("FOLDER", "資料夾"))}</span><h2>${escapeHtml(title)}</h2></div><span class="count-pill">${searchResult ? `${messages.length} / ${searchResult.totalMatched}` : messages.length}${totalUnread ? ` · ${totalUnread} ${escapeHtml(tx("unread", "未讀"))}` : ""}</span></header>
-    ${searchActive ? `<p class="local-truth-note cached-mail-search-note" data-testid="cached-mail-search-truth">${icon("info")}<span>${escapeHtml(searchResult ? tx(`Searched ${searchResult.indexedDocumentCount.toLocaleString()} cached summaries/body snippets in memory; showing up to ${searchResult.resultLimit} attributed results. No SQLite or server-scale index is implied.`, `喺記憶體搜尋咗 ${searchResult.indexedDocumentCount.toLocaleString()} 個快取摘要／內文片段；最多顯示 ${searchResult.resultLimit} 個有來源標示結果。唔代表有 SQLite 或伺服器級索引。`) : tx("Searching the bounded in-memory cache index. No server request is being made.", "正在搜尋有限記憶體快取索引。冇發出伺服器要求。"))}</span></p>` : ""}
+    <header class="pane-heading message-pane__heading"><div><span class="overline">${escapeHtml(searchRequested ? tx("IN-MEMORY CACHE INDEX", "記憶體快取索引") : unified ? tx("LOCAL UNIFIED VIEW", "本機統一檢視") : tx("FOLDER", "資料夾"))}</span><h2>${escapeHtml(title)}</h2></div><span class="count-pill"${searchRequested ? ` data-testid="cached-mail-search-count" role="status" aria-live="polite" aria-atomic="true"` : ""}>${escapeHtml(countText)}</span></header>
+    ${searchRequested ? `<p class="local-truth-note cached-mail-search-note" id="cached-mail-search-truth" data-testid="cached-mail-search-truth">${icon(state.mailSearchError || !searchValid ? "warning" : "info")}<span>${escapeHtml(searchTruth)}</span></p>` : ""}
     ${searchResult?.documentLimitReached ? `<p class="local-truth-note cached-mail-search-limit" data-testid="cached-mail-search-limit">${icon("warning")}<span>${escapeHtml(tx(`Only the first ${searchResult.documentLimit.toLocaleString()} coherent cached rows entered this query-time index. Narrow the cache or use folder views for rows beyond that ceiling.`, `今次查詢索引只收錄首 ${searchResult.documentLimit.toLocaleString()} 個一致快取項目。超出上限請收窄快取或者使用資料夾檢視。`))}</span></p>` : ""}
     ${unified ? `<p class="local-truth-note unified-folder-note" data-testid="unified-folder-truth">${icon("info")}<span>${escapeHtml(tx("Built only from summaries already cached on this computer. Subject/reference grouping is local and bounded; server-wide coverage and a scalable search index are not implied.", "只會使用呢部電腦已有嘅郵件摘要快取。主旨／reference 分組只係本機有限處理；唔代表全伺服器覆蓋或者可擴展搜尋索引。"))}</span></p>` : ""}
     ${grouping.limited ? `<p class="local-truth-note conversation-limit-note" data-testid="conversation-limit-note">${icon("warning")}<span>${escapeHtml(tx(`Conversation grouping is paused above ${CACHED_CONVERSATION_MESSAGE_LIMIT.toLocaleString()} visible cached messages; every message remains available as its own row.`, `畫面已快取郵件超過 ${CACHED_CONVERSATION_MESSAGE_LIMIT.toLocaleString()} 封，所以 conversation grouping 暫停；每封郵件仍然會獨立顯示。`))}</span></p>` : ""}
     ${isBusy("folder") || state.mailSearchPending ? `<div class="linear-progress" role="progressbar" aria-label="${escapeHtml(state.mailSearchPending ? tx("Searching cached mail", "搜尋快取郵件") : tx("Loading messages", "載入郵件"))}"></div>` : ""}
-    <div class="message-list" data-testid="message-list" role="listbox" aria-label="${escapeHtml(tx("Messages", "郵件"))}" tabindex="0">
-      ${!searchValid ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(tx("Correct the regular expression to search messages.", "修正正規表達式先可以搜尋郵件。"))}</p></div>` : state.mailSearchPending ? `<div class="pane-empty"><span>${icon("search")}</span><h3>${escapeHtml(tx("Searching cached mail…", "正在搜尋快取郵件……"))}</h3></div>` : state.mailSearchError ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(state.mailSearchError)}</p></div>` : messages.length ? grouping.conversations.map(renderConversation).join("") : `<div class="pane-empty"><span>${icon(searchFor("mail").pattern ? "search" : "inbox")}</span><h3>${escapeHtml(searchFor("mail").pattern ? tx("No matching cached messages", "冇符合嘅快取郵件") : unified ? tx("No cached messages in this view", "呢個檢視冇已快取郵件") : tx("This folder is clear", "呢個資料夾好乾淨"))}</h3><p>${escapeHtml(searchFor("mail").pattern ? tx("Try different words or adjust the regex builder.", "試吓其他字，或者調整正規表達式建立器。") : unified ? tx("Synchronize individual accounts, then refresh this local view.", "逐個帳戶同步，再重新整理呢個本機檢視。") : tx("Synchronize to check the server for anything new.", "同步一下，睇吓伺服器有冇新嘢。"))}</p></div>`}
+    <div class="message-list" id="mail-message-list" data-testid="message-list" role="listbox" aria-label="${escapeHtml(searchRequested ? tx("Cached mail search results", "快取郵件搜尋結果") : tx("Messages", "郵件"))}"${searchRequested ? ` aria-describedby="cached-mail-search-truth"` : ""} tabindex="${messages.length ? "0" : "-1"}">
+      ${messageListContent}
     </div>
   </section>`;
 }
@@ -5879,12 +5939,30 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       break;
     case "close-command-palette": state.commandPaletteOpen = false; render(); break;
     case "run-command": if (button.dataset.commandId) runPaletteCommand(button.dataset.commandId); break;
+    case "focus-mail-search":
+      focusByKey("search-mail");
+      break;
+    case "edit-mail-search": {
+      const model = searchFor("mail");
+      model.builderOpen = true;
+      pendingFocusKey = "regex-pattern-mail";
+      render();
+      break;
+    }
+    case "retry-mail-search":
+      if (mailSearchIsActive() && !state.mailSearchPending) {
+        pendingFocusKey = "search-mail";
+        scheduleMailSearch(0);
+        render();
+      }
+      break;
     case "toggle-tab-manager": state.tabManagerOpen = !state.tabManagerOpen; state.contextMenu = null; render(); break;
     case "close-tab-manager": state.tabManagerOpen = false; render(); break;
     case "clear-search": {
       const key = button.dataset.searchKey;
       if (key) {
         searchFor(key).pattern = "";
+        pendingFocusKey = `search-${key}`;
         if (key === "contacts") scheduleContactSearch();
         if (key === "mail") scheduleMailSearch(0);
         render();
@@ -5903,13 +5981,14 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     }
     case "close-regex-builder": {
       const key = button.dataset.searchKey;
-      if (key) { searchFor(key).builderOpen = false; render(); }
+      if (key) { searchFor(key).builderOpen = false; pendingFocusKey = `search-${key}`; render(); }
       break;
     }
     case "set-regex-mode": {
       const key = button.dataset.searchKey;
       if (key && (button.dataset.mode === "plain" || button.dataset.mode === "regex")) {
         searchFor(key).mode = button.dataset.mode;
+        if (key === "mail") persistCachedMailSearchMode(button.dataset.mode);
         if (key === "contacts") scheduleContactSearch();
         if (key === "mail") scheduleMailSearch(0);
         render();
@@ -5943,6 +6022,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       const key = button.dataset.searchKey;
       if (key) {
         searchFor(key).builderOpen = false;
+        pendingFocusKey = `search-${key}`;
         if (key === "contacts") scheduleContactSearch();
         if (key === "mail") scheduleMailSearch(0);
         render();
@@ -7050,6 +7130,15 @@ document.addEventListener("keydown", event => {
     const current = messages.findIndex(message => message.id === state.selectedMessageId);
     const index = event.key === "Home" ? 0 : event.key === "End" ? messages.length - 1 : Math.min(messages.length - 1, Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)));
     const message = messages[index]; if (message) void loadMessage(message); return;
+  }
+  if (target instanceof HTMLInputElement && target.dataset.searchKey === "mail" && event.key === "ArrowDown") {
+    const list = document.querySelector<HTMLElement>("#mail-message-list");
+    if (list && filteredMessages().length) {
+      event.preventDefault();
+      list.focus({ preventScroll: true });
+      announce(tx("Cached mail results focused. Use the arrow keys to choose a message.", "焦點已去到快取郵件結果。用方向鍵揀郵件。"));
+    }
+    return;
   }
   if (!editable && event.key === "/" && state.activeTab === "mail") { event.preventDefault(); document.querySelector<HTMLInputElement>('[data-focus-key="search-mail"]')?.focus(); return; }
   if (state.commandPaletteOpen && event.key === "Enter" && target instanceof HTMLInputElement && target.dataset.searchKey === "commands") {

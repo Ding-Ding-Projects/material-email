@@ -87,8 +87,9 @@ test("shows cached cross-account folders with attribution, shared regex search, 
       "preferences:save",
     ];
     for (const channel of channels) ipcMain.removeHandler(channel);
-    let preferences = { ...fixture.bootstrap.preferences, selectedAccountId: "alpha", selectedFolderPath: "Inbox" };
+    let preferences: Preferences = { ...fixture.bootstrap.preferences, language: "bilingual", selectedAccountId: "alpha", selectedFolderPath: "Inbox" };
     let inboxReads = 0;
+    (globalThis as typeof globalThis & { cachedMailRetryProbeCalls?: number }).cachedMailRetryProbeCalls = 0;
     ipcMain.handle("app:bootstrap", () => ({ ...fixture.bootstrap, accounts: [fixture.alpha, fixture.bravo], preferences, isFirstRun: false }));
     ipcMain.handle("mail:folders", (_event, accountId: string) => [{ accountId, path: "Inbox", name: "Inbox", role: "inbox", unread: 1, total: 1 }]);
     ipcMain.handle("mail:messages", (_event, accountId: string) => accountId === "alpha" ? [fixture.alphaReply, fixture.alphaMessage] : [fixture.bravoMessage]);
@@ -101,6 +102,11 @@ test("shows cached cross-account folders with attribution, shared regex search, 
         : [fixture.bravoMessage, fixture.alphaReply, fixture.alphaMessage];
     });
     ipcMain.handle("mail:search-cached", (_event, query: { mode: "plain" | "regex"; pattern: string; flags: string; limit: number }) => {
+      if (query.pattern === "retry sentinel") {
+        const probe = globalThis as typeof globalThis & { cachedMailRetryProbeCalls?: number };
+        probe.cachedMailRetryProbeCalls = (probe.cachedMailRetryProbeCalls ?? 0) + 1;
+        if (probe.cachedMailRetryProbeCalls === 1) throw new Error("SHOULD_NOT_LEAK private cached index detail");
+      }
       const rows = [fixture.alphaReply, fixture.bravoMessage, fixture.alphaMessage];
       const bodyById: Record<string, string> = {
         [fixture.alphaReply.id]: "Cached body needle belongs only to the Alpha reply.",
@@ -112,7 +118,7 @@ test("shows cached cross-account folders with attribution, shared regex search, 
         if (expression) { expression.lastIndex = 0; return expression.test(value); }
         return value.toLocaleLowerCase("en-US").includes(query.pattern.toLocaleLowerCase("en-US"));
       };
-      const matched = rows.filter(message => matches([
+      const matched = query.pattern === "retry sentinel" ? [fixture.bravoMessage] : rows.filter(message => matches([
         message.subject,
         message.preview,
         bodyById[message.id] ?? "",
@@ -149,7 +155,7 @@ test("shows cached cross-account folders with attribution, shared regex search, 
         remoteContentHtml: `<p>${message.subject} body</p>`,
         remoteContentSources: [],
         remoteContentAllowed: false,
-        cryptography: unsignedMessageCryptography(),
+        cryptography: fixture.cryptography,
         attachments: [],
         replyTo: message.from,
       } satisfies MessageDetail;
@@ -163,7 +169,7 @@ test("shows cached cross-account folders with attribution, shared regex search, 
       return preferences;
     });
     BrowserWindow.getAllWindows()[0]?.webContents.reload();
-  }, { bootstrap, alpha, bravo, alphaMessage, alphaReply, bravoMessage });
+  }, { bootstrap, alpha, bravo, alphaMessage, alphaReply, bravoMessage, cryptography: unsignedMessageCryptography() });
 
   const unified = page.getByTestId("unified-folder-list");
   await unified.getByRole("button", { name: /Unified Inbox/i }).click();
@@ -186,12 +192,36 @@ test("shows cached cross-account folders with attribution, shared regex search, 
   const mailSearch = page.locator('[data-search-anchor="mail"]');
   await mailSearch.locator("input").fill("bravo@example.test");
   await expect(list.locator(".message-row")).toHaveCount(1);
+  await expect(page.getByTestId("cached-mail-search-count")).toContainText("1 cached-mail result");
+  await expect(page.getByTestId("cached-mail-search-count")).toContainText("1 個快取郵件結果");
   await expect(page.getByTestId("cached-mail-search-truth")).toContainText(/Searched 3 cached summaries\/body snippets/i);
   await expect(list.locator(".message-row__account")).toContainText("Bravo Account · bravo@example.test · Inbox · single-message conversation");
+  await mailSearch.locator("input").press("ArrowDown");
+  await expect(list).toBeFocused();
+  await mailSearch.locator("input").focus();
+
+  await mailSearch.locator("input").fill("no cached result lives here");
+  const empty = page.getByTestId("cached-mail-search-empty");
+  await expect(empty).toContainText("No matching cached messages");
+  await expect(list).toHaveAttribute("tabindex", "-1");
+  await empty.getByRole("button", { name: /Edit search/i }).click();
+  await expect(mailSearch.locator("input")).toBeFocused();
+
+  await mailSearch.locator("input").fill("retry sentinel");
+  const failed = page.getByTestId("cached-mail-search-error");
+  await expect(failed).toContainText("The query and cached messages were unchanged");
+  await expect(page.getByTestId("toast-region")).toContainText("Cached mail search could not finish");
+  await expect(page.getByTestId("toast-region")).not.toContainText("SHOULD_NOT_LEAK");
+  await failed.getByRole("button", { name: /Retry cached search/i }).click();
+  await expect(mailSearch.locator("input")).toBeFocused();
+  await expect(list.locator(".message-row")).toHaveCount(1);
+  await expect(list).toContainText("Bravo starred inbox");
+  expect(await application.evaluate(() => (globalThis as typeof globalThis & { cachedMailRetryProbeCalls?: number }).cachedMailRetryProbeCalls)).toBe(2);
+
   await mailSearch.locator('[data-action="toggle-regex-builder"]').click();
   const builder = page.getByTestId("regex-popover");
   await expect(builder).toHaveAttribute("data-search-owner", "mail");
-  await builder.getByRole("button", { name: /^Regular expression$/i }).click();
+  await builder.getByRole("button", { name: /^Regular expression/i }).click();
   await builder.locator('textarea[data-regex-pattern="mail"]').fill("cached\\s+body\\s+needle");
   await builder.getByRole("button", { name: /Use in search/i }).click();
   await expect(list.locator(".message-row")).toHaveCount(1);
@@ -204,4 +234,30 @@ test("shows cached cross-account folders with attribution, shared regex search, 
   await unified.getByRole("button", { name: /^Unread/i }).click();
   await expect(list.locator(".message-row")).toHaveCount(1);
   await expect(list).toContainText("Alpha unread inbox");
+});
+
+test("persists only the cached-mail regex mode across a real Electron restart", async () => {
+  await page.getByRole("button", { name: /Use the local demo/i }).click();
+  const mailSearch = page.locator('[data-search-anchor="mail"]');
+  await expect(mailSearch.locator("input")).toBeVisible();
+  await mailSearch.locator('[data-action="toggle-regex-builder"]').click();
+  let builder = page.getByTestId("regex-popover");
+  await builder.getByRole("button", { name: /^Regular expression/i }).click();
+  await builder.locator('textarea[data-regex-pattern="mail"]').fill("restart-private-query");
+  await expect(builder.getByRole("button", { name: /^Regular expression/i })).toHaveAttribute("aria-pressed", "true");
+
+  await application.close();
+  application = await electron.launch({
+    args: [path.resolve(".")],
+    env: { ...process.env, MATERIAL_EMAIL_USER_DATA_DIR: userData, MATERIAL_EMAIL_HEADLESS: "1" },
+  });
+  page = await application.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  const restartedSearch = page.locator('[data-search-anchor="mail"]');
+  await expect(restartedSearch.locator("input")).toHaveValue("");
+  await restartedSearch.locator('[data-action="toggle-regex-builder"]').click();
+  builder = page.getByTestId("regex-popover");
+  await expect(builder.getByRole("button", { name: /^Regular expression/i })).toHaveAttribute("aria-pressed", "true");
+  await expect(builder.locator('textarea[data-regex-pattern="mail"]')).toHaveValue("");
 });

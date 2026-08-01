@@ -8,6 +8,10 @@
 
 Each valid query rebuilds at most 2,000 coherent cached documents. Fields include subject, addresses, preview, up to 4,096 cached body characters, account, folder, and local conversation subject. Plain search normalizes Unicode and whitespace; regex uses the shared ES2023 engine, `i/m/s/u` flags, 2,048-character pattern ceiling, and nested-quantifier rejection. Results sort newest first, report the bounded total, and return at most 200 hits (the renderer requests 100). Every hit includes a 500-character snippet plus account, folder, conversation, and matched-field attribution. There is no database file, crawler, background indexer, or server setting.
 
+The count beside the message-list heading identifies a complete result count or a localized “showing N of M” cap in English, Hong Kong Cantonese, and bilingual mode. It is a polite live status. Arrow Down from the mail search field moves keyboard focus into non-empty results. Invalid, no-match, and failed states keep the empty list out of the tab order and provide an explicit keyboard-reachable edit or retry action.
+
+The mail field persists only its validated `plain` or `regex` mode in renderer-local storage. Search text, regex samples, results, and failure details do not survive restart. A failed request leaves the query and cache unchanged, shows stable localized non-blocking copy without echoing raw IPC detail, and offers one explicit retry that issues one new bounded local request.
+
 ## Failure modes and limits
 
 - Rows beyond 2,000 are absent and trigger a visible warning.
@@ -16,14 +20,16 @@ Each valid query rebuilds at most 2,000 coherent cached documents. Fields includ
 - This query-time rebuild does not provide ranking, stemming, fuzzy search, incremental indexing, or large-store performance.
 - Regex rejection is heuristic rather than a hard-timeout sandbox.
 - Server-only mail, attachments, provider thread IDs, and remote content are not indexed.
+- Browser-storage denial leaves search usable but resets the mode to plain text at the next renderer start.
+- A retry repeats the same local query once; it does not contact a provider or widen the indexed cache.
 
 ## Security considerations
 
-Indexing stays in the main process. Strict IPC caps patterns, flags, and result counts. Queries, cached text, and hits are not logged, persisted, transmitted, or added to history. The renderer receives only capped existing metadata and snippets.
+Indexing stays in the main process. Strict IPC caps patterns, flags, and result counts. Queries, samples, cached text, hits, and raw search failures are not logged, persisted, transmitted, or added to history. Only the plain/regex mode is persisted. The renderer receives only capped existing metadata and snippets.
 
 ## Verification
 
-`tests/cached-mail-index.test.ts` covers normalized plain/body search, attribution, shared regex safety, result caps, orphan rejection, and the 2,000-document ceiling. `tests/ipc-validation.test.ts` covers request bounds. `tests/renderer/regex.test.ts` covers the shared matcher compatibility export. `tests/e2e/unified-folders.spec.ts` covers real Electron account search and regex body-snippet search with visible account/folder/conversation attribution.
+`tests/cached-mail-index.test.ts` covers normalized plain/body search, attribution, shared regex safety, result caps, orphan rejection, and the 2,000-document ceiling. `tests/ipc-validation.test.ts` covers request bounds. `tests/renderer/regex.test.ts` covers the shared matcher compatibility export. `tests/renderer/cached-mail-search.test.ts` covers validated mode persistence plus singular, empty, capped, localized, and malformed service counts. `tests/e2e/unified-folders.spec.ts` passes 2 / 2 real-Electron scenarios covering bilingual result counts, Arrow Down result focus, actionable no-match copy, redacted failure notification, exactly one retry, account/folder/conversation attribution, regex body-snippet search, and a full application restart that retains only regex mode while clearing the query and sample.
 
 ## Suggested articles
 
