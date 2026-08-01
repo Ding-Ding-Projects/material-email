@@ -1,5 +1,4 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { OAUTH_PROVIDER_IDS, type OAuthProviderId } from "../shared/oauth.js";
 
 const MOCK_ACCESS_TOKEN_LIMIT = 8_192;
 const MOCK_REFRESH_TOKEN_LIMIT = 8_192;
@@ -28,10 +27,6 @@ export type MockOAuthTokenFailure =
   | "revocation-failed"
   | "storage-failed";
 
-export type ProductionOAuthTokenRefusal =
-  | "provider-registration-required"
-  | "production-storage-adapter-required";
-
 export interface MockOAuthTokenSnapshot {
   mockOnly: true;
   phase: MockOAuthTokenPhase;
@@ -57,29 +52,11 @@ export interface MockOAuthTokenEndpoint {
 
 export interface EncryptedOAuthTokenStorage {
   readonly protection: "encrypted-at-rest";
-  readonly storageClass: "ephemeral-mock" | "production-stub";
+  readonly storageClass: "ephemeral-mock";
   save(storageKey: string, tokens: MockOAuthTokenSet): Promise<void>;
   load(storageKey: string): Promise<MockOAuthTokenSet | null>;
   remove(storageKey: string): Promise<void>;
   dispose?(): Promise<void>;
-}
-
-export interface OAuthProviderRegistration {
-  provider: OAuthProviderId;
-  clientId: string;
-  tokenEndpoint: string;
-}
-
-export class ProductionOAuthTokenStorageRefusal extends Error {
-  readonly code: ProductionOAuthTokenRefusal;
-
-  constructor(code: ProductionOAuthTokenRefusal) {
-    super(code === "provider-registration-required"
-      ? "Production OAuth token storage requires a reviewed provider registration."
-      : "Production OAuth token storage requires a reviewed Windows encrypted-storage adapter.");
-    this.name = "ProductionOAuthTokenStorageRefusal";
-    this.code = code;
-  }
 }
 
 export class MockOAuthTokenLifecycleError extends Error {
@@ -97,27 +74,6 @@ const hasControlCharacters = (value: string): boolean => /[\u0000-\u001f\u007f]/
 const validateStorageKey = (value: string): string => {
   if (!value || value.length > 256 || hasControlCharacters(value)) throw new MockOAuthTokenLifecycleError("storage-failed");
   return value;
-};
-
-const validateProviderRegistration = (registration: OAuthProviderRegistration): OAuthProviderRegistration => {
-  if (
-    !OAUTH_PROVIDER_IDS.includes(registration.provider)
-    || !registration.clientId
-    || registration.clientId.length > 512
-    || hasControlCharacters(registration.clientId)
-  ) {
-    throw new ProductionOAuthTokenStorageRefusal("provider-registration-required");
-  }
-  let endpoint: URL;
-  try {
-    endpoint = new URL(registration.tokenEndpoint);
-  } catch {
-    throw new ProductionOAuthTokenStorageRefusal("provider-registration-required");
-  }
-  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
-    throw new ProductionOAuthTokenStorageRefusal("provider-registration-required");
-  }
-  return { ...registration };
 };
 
 const validateTokenSet = (tokens: MockOAuthTokenSet): MockOAuthTokenSet => {
@@ -241,39 +197,6 @@ export class EphemeralAesGcmOAuthTokenStorage implements EncryptedOAuthTokenStor
 
   #assertAvailable(): void {
     if (this.#disposed) throw new MockOAuthTokenLifecycleError("storage-failed");
-  }
-}
-
-/**
- * Production-facing contract stub. It never stores tokens. Missing provider
- * registration is rejected first; a registered caller is then told that the
- * reviewed Windows encrypted-storage adapter has not been implemented.
- */
-export class ProductionEncryptedOAuthTokenStorageStub implements EncryptedOAuthTokenStorage {
-  readonly protection = "encrypted-at-rest" as const;
-  readonly storageClass = "production-stub" as const;
-  readonly #registration: OAuthProviderRegistration | null;
-
-  constructor(registration: OAuthProviderRegistration | null = null) {
-    this.#registration = registration ? validateProviderRegistration(registration) : null;
-  }
-
-  async save(_storageKey: string, _tokens: MockOAuthTokenSet): Promise<void> {
-    this.#refuse();
-  }
-
-  async load(_storageKey: string): Promise<MockOAuthTokenSet | null> {
-    this.#refuse();
-  }
-
-  async remove(_storageKey: string): Promise<void> {
-    this.#refuse();
-  }
-
-  #refuse(): never {
-    throw new ProductionOAuthTokenStorageRefusal(
-      this.#registration ? "production-storage-adapter-required" : "provider-registration-required",
-    );
   }
 }
 

@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EphemeralAesGcmOAuthTokenStorage,
-  LocalMockOAuthTokenEndpoint,
   LocalMockOAuthTokenLifecycle,
-  ProductionEncryptedOAuthTokenStorageStub,
   createDemoOAuthTokenLifecycle,
   type MockOAuthTokenEndpoint,
   type MockOAuthTokenSet,
@@ -137,31 +135,6 @@ describe("local mock OAuth token lifecycle", () => {
     });
     expect(second.endpoint.exchange).not.toHaveBeenCalled();
     await expect(second.storage.load(STORAGE_KEY)).resolves.toBeNull();
-  });
-
-  it("keeps production storage closed before registration and after registration until a reviewed adapter exists", async () => {
-    const tokens: MockOAuthTokenSet = {
-      accessToken: "must-not-store",
-      refreshToken: "must-not-store-either",
-      expiresInSeconds: 60,
-      scopes: ["mail.read"],
-    };
-    const unregistered = new ProductionEncryptedOAuthTokenStorageStub();
-    await expect(unregistered.save("account", tokens)).rejects.toMatchObject({ code: "provider-registration-required" });
-    await expect(unregistered.load("account")).rejects.toMatchObject({ code: "provider-registration-required" });
-    await expect(unregistered.remove("account")).rejects.toMatchObject({ code: "provider-registration-required" });
-
-    const registered = new ProductionEncryptedOAuthTokenStorageStub({
-      provider: "google",
-      clientId: "reviewed-public-client-id",
-      tokenEndpoint: "https://oauth.example.test/token",
-    });
-    await expect(registered.save("account", tokens)).rejects.toMatchObject({ code: "production-storage-adapter-required" });
-    expect(() => new LocalMockOAuthTokenLifecycle({
-      mode: "demo",
-      endpoint: new LocalMockOAuthTokenEndpoint(),
-      storage: registered,
-    })).toThrow(/mock OAuth token lifecycle stopped: invalid-input/i);
   });
 
   it("provides an explicit demo factory that completes a mock-only exchange, refresh, and revoke sequence", async () => {

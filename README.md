@@ -125,6 +125,6 @@ The complete operational mirror is in [`AGENTS.md`](AGENTS.md).
 <details>
 <summary><strong>Project limitations</strong></summary>
 
-The following remain explicitly **open or not fully verified**: live OAuth provider registration and connected accounts; live POP3 authentication, provider/TLS interoperability, durable UIDL tracking, polling, retention/deletion semantics, and synchronization; server-complete all-account synchronization/threading; scalable mail indexing; remote PIM; cryptographic message features; antivirus; clean-machine installer proof; CI releases; Pages; and live-site publication. The local POP3 fixture/state machine opens no network connection and is not provider evidence.
+The following remain explicitly **open or not fully verified**: live OAuth provider registration, code exchange, provider refresh/revocation, connected accounts, and interoperability (the provider-gated Windows vault is local adapter evidence only); live POP3 authentication, provider/TLS interoperability, durable UIDL tracking, polling, retention/deletion semantics, and synchronization; server-complete all-account synchronization/threading; scalable mail indexing; remote PIM; cryptographic message features; antivirus; clean-machine installer proof; CI releases; Pages; and live-site publication. The local POP3 fixture/state machine opens no network connection and is not provider evidence.
 
 </details>

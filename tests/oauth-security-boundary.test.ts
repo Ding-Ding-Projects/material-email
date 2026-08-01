@@ -33,18 +33,24 @@ describe("OAuth security boundary", () => {
     expect(`${contracts}\n${preload}\n${main}`).not.toMatch(/(?:OAuth|oauth).*(?:accessToken|refreshToken|authorizationCode|codeVerifier)/u);
   });
 
-  it("keeps the mock token lifecycle out of production initialization, IPC, networking, files, and logs", async () => {
-    const [mockLifecycle, main, appService, preload] = await Promise.all([
+  it("keeps mock token sources out of production while wiring only the reviewed Windows vault boundary", async () => {
+    const [mockLifecycle, vault, main, appService, preload] = await Promise.all([
       read("src/main/mock-oauth-token-lifecycle.ts"),
+      read("src/main/oauth-token-vault.ts"),
       read("src/main/index.ts"),
       read("src/main/app-service.ts"),
       read("src/preload/index.ts"),
     ]);
     expect(mockLifecycle).toContain("EphemeralAesGcmOAuthTokenStorage");
-    expect(mockLifecycle).toContain("ProductionEncryptedOAuthTokenStorageStub");
-    expect(mockLifecycle).toContain('storageClass = "production-stub"');
     expect(mockLifecycle).toContain('createCipheriv("aes-256-gcm"');
     expect(mockLifecycle).not.toMatch(/\b(?:console|fetch|writeFile|readFile|JsonStore|safeStorage|ipcMain|ipcRenderer|process\.env)\b/u);
+    expect(vault).toContain("class WindowsSafeStorageOAuthTokenVault");
+    expect(vault).toContain("safeStorage.encryptString");
+    expect(vault).toContain("safeStorage.decryptString");
+    expect(vault).not.toMatch(/\b(?:console|fetch|ipcMain|ipcRenderer|process\.env)\b/u);
+    expect(main).toContain("registrations: []");
+    expect(main).toContain("revokers: []");
+    expect(main).toContain('path.join(app.getPath("userData"), "oauth-token-vault.json")');
     expect(`${main}\n${appService}\n${preload}`).not.toContain("mock-oauth-token-lifecycle");
   });
 });

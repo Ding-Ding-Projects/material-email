@@ -17,7 +17,12 @@ import type {
 } from "../main/pim/types.js";
 import type { AttachmentRiskAssessment, AttachmentSaveReview } from "./attachment-safety.js";
 import type { ExternalLinkReason, ExternalLinkRisk } from "./external-link-safety.js";
-import type { OAuthAuthorizationSnapshot, OAuthProviderId } from "./oauth.js";
+import type {
+  OAuthAuthorizationSnapshot,
+  OAuthProviderId,
+  OAuthTokenVaultActionResult,
+  OAuthTokenVaultSnapshot,
+} from "./oauth.js";
 
 export type {
   CalendarEvent,
@@ -50,6 +55,12 @@ export type {
   OAuthAuthorizationSnapshot,
   OAuthProviderAvailability,
   OAuthProviderId,
+  OAuthRemoteRevocationOutcome,
+  OAuthTokenVaultActionResult,
+  OAuthTokenVaultFailure,
+  OAuthTokenVaultProviderSnapshot,
+  OAuthTokenVaultProviderState,
+  OAuthTokenVaultSnapshot,
 } from "./oauth.js";
 
 export type LanguageMode = "en" | "yue" | "bilingual";
@@ -540,6 +551,9 @@ export interface MaterialEmailApi {
   getOAuthAuthorizationStatus(): Promise<OAuthAuthorizationSnapshot>;
   startOAuthAuthorization(provider: OAuthProviderId): Promise<OAuthAuthorizationSnapshot>;
   cancelOAuthAuthorization(): Promise<OAuthAuthorizationSnapshot>;
+  getOAuthTokenVaultStatus(): Promise<OAuthTokenVaultSnapshot>;
+  clearOAuthTokenVault(provider: OAuthProviderId): Promise<OAuthTokenVaultActionResult>;
+  revokeOAuthTokenVault(provider: OAuthProviderId): Promise<OAuthTokenVaultActionResult>;
   inspectTlsCertificate(request: TlsCertificateInspectionRequest): Promise<TlsCertificateInspectionResult>;
   runPop3Foundation(options: Pop3AccountOptions): Promise<Pop3FoundationSnapshot>;
   addAccount(draft: AccountDraft): Promise<AccountSummary>;

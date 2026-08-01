@@ -38,3 +38,42 @@ export interface OAuthAuthorizationSnapshot {
   failure: OAuthAuthorizationFailure | null;
   providers: OAuthProviderAvailability[];
 }
+
+export type OAuthTokenVaultFailure = "windows-only" | "encryption-unavailable" | "storage-failed";
+
+export type OAuthTokenVaultProviderState = "unavailable" | "not-registered" | "empty" | "active" | "expired";
+
+/**
+ * Renderer-safe summary of one provider's Windows token-vault state. Token
+ * values, ciphertext, account keys, scopes, provider errors, and file paths are
+ * deliberately absent.
+ */
+export interface OAuthTokenVaultProviderSnapshot {
+  id: OAuthProviderId;
+  name: string;
+  registered: boolean;
+  state: OAuthTokenVaultProviderState;
+  recordCount: number;
+  generation: number;
+  expiresAt: string | null;
+  canClear: boolean;
+  canRevoke: boolean;
+}
+
+/** Renderer-safe Windows safeStorage vault state. */
+export interface OAuthTokenVaultSnapshot {
+  protection: "windows-safe-storage";
+  available: boolean;
+  failure: OAuthTokenVaultFailure | null;
+  providers: OAuthTokenVaultProviderSnapshot[];
+}
+
+export type OAuthRemoteRevocationOutcome = "not-needed" | "not-available" | "succeeded" | "failed";
+
+/** Result of a provider-level clear or revoke-and-clear request. */
+export interface OAuthTokenVaultActionResult {
+  provider: OAuthProviderId;
+  localRecordsCleared: number;
+  remoteRevocation: OAuthRemoteRevocationOutcome;
+  snapshot: OAuthTokenVaultSnapshot;
+}

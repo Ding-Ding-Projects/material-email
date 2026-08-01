@@ -124,3 +124,31 @@ test("shows a bilingual accessible OAuth foundation and cancellation without acc
   await expect(panel).toBeVisible();
   await page.setViewportSize({ width: 1500, height: 940 });
 });
+
+test("shows the production Windows vault boundary without renderer token material or enabled provider actions", async () => {
+  const closeSetup = page.getByRole("button", { name: /Close account setup/i });
+  if (await closeSetup.isVisible()) await closeSetup.click();
+  await page.getByRole("tab", { name: /^Settings/i }).click();
+  await page.locator('select[data-pref="language"]').selectOption("bilingual");
+  const vault = page.getByTestId("oauth-token-vault-settings");
+
+  await expect(vault).toBeVisible();
+  await expect(vault.locator('span[lang="zh-HK"]')).not.toHaveCount(0);
+  await expect(vault).toContainText(/Windows OAuth token vault/i);
+  await expect(vault).toContainText(/registers no OAuth provider/i);
+  await expect(vault).toContainText("呢個版本冇註冊 OAuth 供應商");
+  await expect(vault.getByRole("status")).toHaveAttribute("aria-live", "polite");
+  await expect(vault.getByTestId("oauth-vault-provider-google").getByRole("button", { name: /Clear local/i })).toBeDisabled();
+  await expect(vault.getByTestId("oauth-vault-provider-google").getByRole("button", { name: /Revoke and clear/i })).toBeDisabled();
+  await expect(vault).not.toContainText(/fixture-access|fixture-refresh|authorization-code-fixture/i);
+  await expect(vault.locator('input[type="password"], textarea[name*="token" i], input[name*="token" i]')).toHaveCount(0);
+
+  const bridgeKeys = await page.evaluate(() => Object.keys(window.materialEmail));
+  expect(bridgeKeys).toEqual(expect.arrayContaining(["getOAuthTokenVaultStatus", "clearOAuthTokenVault", "revokeOAuthTokenVault"]));
+  expect(bridgeKeys.some(key => /accessToken|refreshToken|authorizationCode|codeVerifier/i.test(key))).toBe(false);
+
+  await page.setViewportSize({ width: 760, height: 560 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await expect(vault).toBeVisible();
+  await page.setViewportSize({ width: 1500, height: 940 });
+});

@@ -26,6 +26,7 @@ import type {
   OutboxSummary,
   OAuthAuthorizationSnapshot,
   OAuthProviderId,
+  OAuthTokenVaultSnapshot,
   PendingOperationSummary,
   Pop3AccountOptions,
   Pop3FoundationSnapshot,
@@ -163,6 +164,8 @@ interface AppearanceEditorState {
 
 type ConfirmationState =
   | { kind: "remove-account"; accountId: string; label: string }
+  | { kind: "clear-oauth-token-vault"; provider: OAuthProviderId; label: string }
+  | { kind: "revoke-oauth-token-vault"; provider: OAuthProviderId; label: string }
   | { kind: "clear-notifications" }
   | { kind: "restore-local"; hash: string; label: string }
   | { kind: "prune-local-history"; preview: LocalHistoryPrunePreview }
@@ -229,6 +232,7 @@ interface RendererState {
   setupEmail: string;
   oauthAuthorization: OAuthAuthorizationSnapshot;
   oauthProvider: OAuthProviderId;
+  oauthTokenVault: OAuthTokenVaultSnapshot;
   localRevisions: LocalRevision[];
   localRevisionsLoaded: boolean;
   localRevisionsError: string;
@@ -324,6 +328,16 @@ const DEFAULT_OAUTH_AUTHORIZATION: OAuthAuthorizationSnapshot = {
   ],
 };
 
+const DEFAULT_OAUTH_TOKEN_VAULT: OAuthTokenVaultSnapshot = {
+  protection: "windows-safe-storage",
+  available: false,
+  failure: "encryption-unavailable",
+  providers: [
+    { id: "google", name: "Google", registered: false, state: "unavailable", recordCount: 0, generation: 0, expiresAt: null, canClear: false, canRevoke: false },
+    { id: "microsoft", name: "Microsoft", registered: false, state: "unavailable", recordCount: 0, generation: 0, expiresAt: null, canClear: false, canRevoke: false },
+  ],
+};
+
 const defaultTabs = (): TabPreferences<PageId> => ({
   order: [...ALL_TAB_IDS],
   pinned: ["mail"],
@@ -363,6 +377,7 @@ const state: RendererState = {
   setupEmail: "",
   oauthAuthorization: DEFAULT_OAUTH_AUTHORIZATION,
   oauthProvider: "google",
+  oauthTokenVault: DEFAULT_OAUTH_TOKEN_VAULT,
   localRevisions: [],
   localRevisionsLoaded: false,
   localRevisionsError: "",
@@ -1032,6 +1047,7 @@ const initialize = async (): Promise<void> => {
     if (!api || typeof api.bootstrap !== "function") throw new Error("The secure desktop bridge is unavailable. Restart the packaged application.");
     const bootstrap = await api.bootstrap();
     state.oauthAuthorization = await api.getOAuthAuthorizationStatus().catch(() => DEFAULT_OAUTH_AUTHORIZATION);
+    state.oauthTokenVault = await api.getOAuthTokenVaultStatus().catch(() => DEFAULT_OAUTH_TOKEN_VAULT);
     state.bootstrap = bootstrap;
     applyPreferences();
     state.setupOpen = bootstrap.isFirstRun || bootstrap.accounts.length === 0;
@@ -2528,7 +2544,8 @@ function renderSettingsPage(): string {
   const sections = [
     settingSectionMatches("appearance theme light dark system density compact comfortable relaxed accent color font family size weight") ? renderAppearanceSettings(prefs) : "",
     settingSectionMatches("language English Cantonese bilingual funny humour voice narrator warning error dim sum startup") ? renderLanguageSettings(prefs) : "",
-    settingSectionMatches("accounts email IMAP POP3 SMTP server local demo capability state machine remove add credentials") ? renderAccountSettings() : "",
+    settingSectionMatches("accounts email IMAP POP3 SMTP server local demo capability state machine remove add credentials OAuth") ? renderAccountSettings() : "",
+    settingSectionMatches("OAuth token vault Windows safeStorage encrypted access refresh rotation revoke clear provider registration credentials") ? renderOAuthTokenVaultSettings() : "",
     settingSectionMatches("external editor Visual Studio Code Cursor Notepad detect open") ? renderEditorSettings(prefs) : "",
     settingSectionMatches("tabs pin reorder overflow search restore appearance") ? renderTabSettings() : "",
   ].filter(Boolean);
@@ -2632,6 +2649,32 @@ function historyMatches(item: HistoryRecord): boolean {
   }
   const model = searchFor("history");
   return !model.pattern || createMatcher(model)(`${item.label}\n${item.kind}\n${item.entityType}\n${item.entityId}`);
+}
+
+function renderOAuthTokenVaultSettings(): string {
+  const vault = state.oauthTokenVault;
+  const unavailableCopy = vault.failure === "windows-only"
+    ? tx("This Windows-only vault is unavailable on the current platform.", "呢個只限 Windows 嘅保險庫喺目前平台不可用。")
+    : vault.failure === "encryption-unavailable"
+      ? tx("Windows credential encryption is unavailable, so token writes and provider revocation stay blocked.", "Windows 憑證加密不可用，所以權杖寫入同供應商撤銷會保持封鎖。")
+      : vault.failure === "storage-failed"
+        ? tx("The encrypted vault metadata could not be read safely. Token actions are withheld instead of guessing.", "加密保險庫中繼資料未能安全讀取。權杖操作會暫停，唔會靠估。")
+        : tx("Windows safeStorage protection is available. This build registers no OAuth provider and performs no token exchange.", "Windows safeStorage 保護可用。呢個版本冇註冊 OAuth 供應商，亦唔會做 token exchange。 ");
+  const providerStateCopy = (provider: OAuthTokenVaultSnapshot["providers"][number]): string => {
+    if (provider.state === "unavailable") return tx("Vault unavailable", "保險庫不可用");
+    if (provider.state === "not-registered") return tx("Provider registration required", "需要供應商註冊");
+    if (provider.state === "empty") return tx("Registered; no encrypted token record", "已註冊；冇加密權杖記錄");
+    const expiry = provider.expiresAt ? formatDate(provider.expiresAt) : tx("unknown expiry", "到期時間不明");
+    return provider.state === "active"
+      ? tx(`Encrypted generation ${provider.generation}; expires ${expiry}`, `加密第 ${provider.generation} 代；${expiry} 到期`)
+      : tx(`Encrypted generation ${provider.generation}; expired ${expiry}`, `加密第 ${provider.generation} 代；已於 ${expiry} 到期`);
+  };
+  return `<section class="settings-card settings-card--wide oauth-vault-settings" data-setting-section="oauth-vault" data-testid="oauth-token-vault-settings" aria-labelledby="oauth-vault-title" aria-describedby="oauth-vault-boundary">
+    <header><span class="settings-card__icon">${icon("account")}</span><div><h2 id="oauth-vault-title">${escapeHtml(tx("Windows OAuth token vault", "Windows OAuth 權杖保險庫"))}</h2><p>${escapeHtml(tx("Main-process safeStorage boundary and provider-gated lifecycle", "主程序 safeStorage 邊界同供應商閘門生命週期"))}</p></div><span class="action-spacer"></span><button class="button button--outlined" type="button" data-action="refresh-oauth-token-vault" data-focus-key="oauth-vault-refresh" ${isBusy("oauth-vault") ? "disabled" : ""}>${icon("refresh", isBusy("oauth-vault") ? "is-spinning" : "")}<span>${escapeHtml(tx("Refresh vault status", "重新整理保險庫狀態"))}</span></button></header>
+    <div class="inline-banner${vault.failure ? " inline-banner--error" : ""}" id="oauth-vault-boundary" role="status" aria-live="polite" aria-atomic="true">${icon(vault.failure ? "warning" : "info")}<span>${escapeHtml(unavailableCopy)}</span></div>
+    <p class="supporting-copy">${escapeHtml(tx("Access and refresh tokens never cross renderer IPC. Clear removes active local ciphertext; it is not a secure-erasure claim. Revoke is enabled only when a reviewed provider revoker is registered, and still clears the local record if that provider call fails.", "Access 同 refresh 權杖永遠唔會經過 renderer IPC。清除會移除目前本機密文；呢個唔係安全抹除聲明。只有註冊咗經審閱供應商 revoker 先會啟用撤銷，而且供應商呼叫失敗都仍然會清除本機記錄。"))}</p>
+    <div class="oauth-vault-provider-list">${vault.providers.map(provider => `<article class="oauth-vault-provider" data-testid="oauth-vault-provider-${provider.id}"><div><strong>${escapeHtml(provider.name)}</strong><p>${escapeHtml(providerStateCopy(provider))}</p><small>${escapeHtml(tx(`${provider.recordCount} encrypted local record${provider.recordCount === 1 ? "" : "s"}`, `${provider.recordCount} 個加密本機記錄`))}</small></div><div class="button-row"><button class="button button--outlined" type="button" data-action="request-clear-oauth-token-vault" data-oauth-provider="${provider.id}" data-focus-key="oauth-vault-clear-${provider.id}" ${!provider.canClear || isBusy("oauth-vault") ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Clear local", "清除本機記錄"))}</span></button><button class="button button--tonal" type="button" data-action="request-revoke-oauth-token-vault" data-oauth-provider="${provider.id}" data-focus-key="oauth-vault-revoke-${provider.id}" ${!provider.canRevoke || isBusy("oauth-vault") ? "disabled" : ""}>${icon("close")}<span>${escapeHtml(tx("Revoke and clear", "撤銷並清除"))}</span></button></div></article>`).join("")}</div>
+  </section>`;
 }
 
 function localRevisionMatches(revision: LocalRevision): boolean {
@@ -3088,6 +3131,14 @@ function renderConfirmation(): string {
     title = tx("Remove this account?", "移除呢個帳戶？");
     body = tx(`${confirmation.label}, its local cache, drafts, Outbox items, pending changes, and any open composer for this account will be removed from this computer. Server mail is not deleted.`, `${confirmation.label}、本機快取、草稿、寄件匣項目、待處理更改，同呢個帳戶已開啟嘅撰寫視窗，都會由呢部電腦移除。伺服器郵件唔會被刪除。`);
     confirmLabel = tx("Remove account", "移除帳戶");
+  } else if (confirmation.kind === "clear-oauth-token-vault") {
+    title = tx(`Clear ${confirmation.label} OAuth ciphertext from this computer?`, `由呢部電腦清除 ${confirmation.label} OAuth 密文？`);
+    body = tx("Every active encrypted access/refresh-token record for this provider will leave the vault. No provider endpoint will be contacted, the action cannot be undone in the app, and filesystem secure erasure is not claimed.", "呢個供應商所有目前加密 access／refresh 權杖記錄都會離開保險庫。唔會聯絡供應商端點；應用程式入面唔可以復原，而且唔聲稱檔案系統安全抹除。 ");
+    confirmLabel = tx("Clear local ciphertext", "清除本機密文");
+  } else if (confirmation.kind === "revoke-oauth-token-vault") {
+    title = tx(`Revoke ${confirmation.label} OAuth tokens and clear local ciphertext?`, `撤銷 ${confirmation.label} OAuth 權杖並清除本機密文？`);
+    body = tx("The registered provider revoker will receive the decrypted tokens inside the main process. Local encrypted records will then be cleared even if the provider rejects or cannot complete revocation. This build cannot prove provider interoperability.", "已註冊供應商 revoker 會喺主程序內收到解密權杖。之後即使供應商拒絕或者未能完成撤銷，本機加密記錄都會清除。呢個版本唔可以證明供應商互通性。 ");
+    confirmLabel = tx("Revoke and clear", "撤銷並清除");
   } else if (confirmation.kind === "clear-notifications") {
     title = tx("Clear notification history?", "清除通知記錄？");
     body = tx("All stored app notifications will be removed. Mail and local history are unchanged.", "所有已儲存應用程式通知會被移除。郵件同本機歷史唔會改變。 ");
@@ -4554,6 +4605,44 @@ const handleConfirmation = async (): Promise<void> => {
   state.confirmationReturnFocusKey = null;
   render();
   if (!confirmation) return;
+  if (confirmation.kind === "clear-oauth-token-vault" || confirmation.kind === "revoke-oauth-token-vault") {
+    await withBusy("oauth-vault", async () => {
+      const result = confirmation.kind === "clear-oauth-token-vault"
+        ? await api.clearOAuthTokenVault(confirmation.provider)
+        : await api.revokeOAuthTokenVault(confirmation.provider);
+      state.oauthTokenVault = result.snapshot;
+      pendingFocusKey = returnFocusKey;
+      if (confirmation.kind === "clear-oauth-token-vault") {
+        pushToast(
+          "success",
+          "Local OAuth ciphertext cleared",
+          `${result.localRecordsCleared} encrypted ${confirmation.label} record${result.localRecordsCleared === 1 ? "" : "s"} removed. No provider endpoint was contacted; secure filesystem erasure is not claimed.`,
+          "本機 OAuth 密文已清除",
+          `已移除 ${result.localRecordsCleared} 個 ${confirmation.label} 加密記錄。冇聯絡供應商端點；唔聲稱檔案系統安全抹除。`,
+        );
+      } else {
+        const kind: ToastKind = result.remoteRevocation === "succeeded" ? "success" : result.remoteRevocation === "failed" ? "warning" : "info";
+        const outcomeEnglish = result.remoteRevocation === "succeeded"
+          ? "The registered provider revoker completed."
+          : result.remoteRevocation === "failed"
+            ? "The provider revoker failed, but local ciphertext was still cleared."
+            : "No reviewed provider revoker was available; only local ciphertext was cleared.";
+        const outcomeCantonese = result.remoteRevocation === "succeeded"
+          ? "已註冊供應商 revoker 已完成。"
+          : result.remoteRevocation === "failed"
+            ? "供應商 revoker 失敗，但本機密文仍然已清除。"
+            : "冇可用嘅經審閱供應商 revoker；只清除咗本機密文。 ";
+        pushToast(
+          kind,
+          "OAuth revoke-and-clear finished",
+          `${result.localRecordsCleared} encrypted ${confirmation.label} record${result.localRecordsCleared === 1 ? "" : "s"} removed. ${outcomeEnglish}`,
+          "OAuth 撤銷並清除已完成",
+          `已移除 ${result.localRecordsCleared} 個 ${confirmation.label} 加密記錄。${outcomeCantonese}`,
+        );
+      }
+    });
+    return;
+  }
   if (confirmation.kind === "discard-compose") {
     state.compose = null;
     render();
@@ -5121,6 +5210,25 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       state.setupOpen = true; state.setupContext = state.bootstrap?.accounts.length ? "settings" : "first-run"; state.discoveries = []; state.selectedDiscovery = null; state.setupEmail = ""; render();
       await refreshOAuthAuthorizationStatus().catch(() => pushToast("error", "OAuth status unavailable", "Account setup remains in password mode. No OAuth provider or token state is claimed.", "OAuth 狀態不可用", "帳戶設定會維持密碼模式。唔會聲稱有 OAuth 供應商或者權杖狀態。"));
       break;
+    case "refresh-oauth-token-vault":
+      await withBusy("oauth-vault", async () => {
+        state.oauthTokenVault = await api.getOAuthTokenVaultStatus();
+        pushToast("info", "OAuth vault status refreshed", "Only provider registration, record counts, generation, and expiry metadata crossed renderer IPC.", "OAuth 保險庫狀態已重新整理", "只有供應商註冊、記錄數量、代數同到期中繼資料經過 renderer IPC。 ");
+      });
+      break;
+    case "request-clear-oauth-token-vault":
+    case "request-revoke-oauth-token-vault": {
+      const providerId = button.dataset.oauthProvider;
+      const provider = state.oauthTokenVault.providers.find(candidate => candidate.id === providerId);
+      if (!provider) break;
+      showConfirmation(
+        action === "request-clear-oauth-token-vault"
+          ? { kind: "clear-oauth-token-vault", provider: provider.id, label: provider.name }
+          : { kind: "revoke-oauth-token-vault", provider: provider.id, label: provider.name },
+        button.dataset.focusKey ?? null,
+      );
+      break;
+    }
     case "close-account-setup":
       if (state.bootstrap?.accounts.length) {
         if (oauthAuthorizationIsActive()) await cancelOAuthAuthorizationFromSetup();

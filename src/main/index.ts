@@ -1,6 +1,6 @@
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
-import { app, BrowserWindow, ipcMain, Notification, session, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell, type IpcMainInvokeEvent } from "electron";
 import type { z } from "zod";
 import { AppService } from "./app-service.js";
 import { nativeNotificationCopy } from "./native-notification-copy.js";
@@ -18,6 +18,7 @@ import type {
 import { ipcPayloadSchemas, parseIpcArgs } from "./ipc-validation.js";
 import { ExternalLinkReviewQueue } from "./external-link-review.js";
 import { OAuthAuthorizationService } from "./oauth-authorization.js";
+import { WindowsSafeStorageOAuthTokenVault } from "./oauth-token-vault.js";
 import { assessExternalLink } from "../shared/external-link-safety.js";
 import {
   assertTrustedRendererClaim,
@@ -30,6 +31,7 @@ let mainWindow: BrowserWindow | null = null;
 let activeTrustedRendererUrl: string | null = null;
 let service: AppService;
 let oauthAuthorization: OAuthAuthorizationService;
+let oauthTokenVault: WindowsSafeStorageOAuthTokenVault;
 const nativeNotificationLastShown = new Map<string, number>();
 const pendingMailto: string[] = [];
 const externalLinkReviews = new ExternalLinkReviewQueue();
@@ -76,6 +78,9 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("account:oauth-status", ipcPayloadSchemas.none, () => oauthAuthorization.status());
   handleValidated("account:oauth-start", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthAuthorization.start(provider));
   handleValidated("account:oauth-cancel", ipcPayloadSchemas.none, () => oauthAuthorization.cancel());
+  handleValidated("account:oauth-vault-status", ipcPayloadSchemas.none, () => oauthTokenVault.status());
+  handleValidated("account:oauth-vault-clear", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.clear(provider));
+  handleValidated("account:oauth-vault-revoke", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.revokeAndClear(provider));
   handleValidated("account:inspect-tls-certificate", ipcPayloadSchemas.tlsCertificateInspection, ([request]) => service.inspectTlsCertificate(request));
   handleValidated("account:pop3-foundation", ipcPayloadSchemas.pop3Foundation, ([options]) => service.runPop3Foundation(options));
   handleValidated("account:test", ipcPayloadSchemas.accountDraft, ([draft]) => service.testAccount(draft));
@@ -291,6 +296,12 @@ else {
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   service = new AppService(app.getPath("userData"));
   oauthAuthorization = new OAuthAuthorizationService({ openExternal: url => shell.openExternal(url) });
+  oauthTokenVault = new WindowsSafeStorageOAuthTokenVault({
+    filePath: path.join(app.getPath("userData"), "oauth-token-vault.json"),
+    safeStorage,
+    registrations: [],
+    revokers: [],
+  });
   const rendererTarget = resolveRendererLoadTarget({
     isPackaged: app.isPackaged,
     rendererPath,

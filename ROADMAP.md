@@ -13,7 +13,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Manual IMAP/SMTP account schema and connection tests
 - [x] Strict POP3 account/options schema, POP3-aware local port diagnostics, deterministic local fixture/capability state machine, and explicit pre-network test/add refusal
 - [x] Ephemeral main-process OAuth authorization-code/PKCE state machine with exact loopback callback validation, timeout/cancel/error cleanup, status-only IPC, and no token exchange/persistence/logging
-- [x] Mock-only local OAuth exchange/expiry/refresh/revoke state machine with ephemeral AES-256-GCM ciphertext, demo factory, and a production storage stub that refuses until registration and a reviewed Windows adapter exist
+- [x] Provider-gated Windows `safeStorage` OAuth vault with bounded encrypted access/refresh records, atomic rotation generations, metadata-only IPC, local clear, injectable revoke-and-clear, and accessible bilingual Settings controls; production provider/revoker lists remain empty
+- [x] Mock-only local OAuth exchange/expiry/refresh/revoke state machine with ephemeral AES-256-GCM ciphertext and an explicit demo factory isolated from production
 - [x] Bounded local certificate/hostname preflight with conventional TLS/STARTTLS port diagnostics, bilingual accessible errors, and a main-process no-connection guard
 - [x] IMAP folder/message listing, message retrieval, flags, and moves
 - [x] SMTP sending and local draft persistence
@@ -63,7 +64,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 
 ## Mail capabilities open
 
-- [ ] Register and verify live OAuth providers, then implement reviewed token exchange, Windows-backed durable encrypted token storage/refresh rotation, revocation, scope/consent handling, account connection, migration, and public-provider interoperability (the mock lifecycle is not completion evidence)
+- [ ] Register and verify live OAuth providers, then implement reviewed code exchange, provider refresh/revocation clients, scope/consent handling, account connection, vault migration/recovery matrices, and public-provider interoperability (the Windows vault and mock lifecycle are not completion evidence)
 - [ ] Live POP3 transport, authentication, TLS/provider interoperability, durable UIDL tracking, polling, retention/deletion semantics, and synchronization (the local fixture/state machine is not completion evidence)
 - [x] User-facing retry ceilings and conflict resolution for queued mail operations
 - [x] Local cached Unified Inbox, Starred, and Unread views with account attribution, shared regex search, and stable composite selection
