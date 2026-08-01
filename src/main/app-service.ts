@@ -48,6 +48,7 @@ import {
   type AttachmentRiskReviewItem,
 } from "../shared/attachment-safety.js";
 import { JsonStore } from "./storage.js";
+import { DEFAULT_APPEARANCE_PREFERENCES } from "../shared/appearance.js";
 import { HistoryRepository } from "./history-repository.js";
 import { AccountDiscoveryService } from "./account-discovery.js";
 import { PimService } from "./pim/index.js";
@@ -69,12 +70,7 @@ const defaultPreferences = (): Preferences => ({
   language: "en",
   funnyEnglish: 2,
   funnyCantonese: 3,
-  theme: "system",
-  density: "comfortable",
-  accent: "#6750A4",
-  fontFamily: "Segoe UI Variable",
-  fontScale: 1,
-  fontWeight: 400,
+  ...DEFAULT_APPEARANCE_PREFERENCES,
   dimSumEnabled: true,
   narratorEnabled: false,
   narratorLanguage: "en",
