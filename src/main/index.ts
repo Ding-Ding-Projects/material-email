@@ -77,11 +77,11 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("mail:message", ipcPayloadSchemas.accountFolderMessage, ([accountId, folderPath, uid]) =>
     service.getMessage(accountId, folderPath, uid),
   );
-  handleValidated("mail:save-attachment", ipcPayloadSchemas.saveAttachment, ([accountId, folderPath, uid, index]) =>
-    service.saveAttachment(accountId, folderPath, uid, index),
+  handleValidated("mail:save-attachment", ipcPayloadSchemas.saveAttachment, ([accountId, folderPath, uid, index, review]) =>
+    service.saveAttachment(accountId, folderPath, uid, index, review),
   );
-  handleValidated("mail:save-all-attachments", ipcPayloadSchemas.accountFolderMessage, ([accountId, folderPath, uid]) =>
-    service.saveAllAttachments(accountId, folderPath, uid),
+  handleValidated("mail:save-all-attachments", ipcPayloadSchemas.saveAllAttachments, ([accountId, folderPath, uid, review]) =>
+    service.saveAllAttachments(accountId, folderPath, uid, review),
   );
   handleValidated("mail:flags", ipcPayloadSchemas.messageFlags, ([accountId, folderPath, uid, patch]) =>
     service.setMessageFlags(accountId, folderPath, uid, patch),

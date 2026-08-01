@@ -15,6 +15,7 @@ import type {
   TransactionFilter,
   VCardImportResult,
 } from "../main/pim/types.js";
+import type { AttachmentRiskAssessment, AttachmentSaveReview } from "./attachment-safety.js";
 
 export type {
   CalendarEvent,
@@ -33,6 +34,13 @@ export type {
   TransactionFilter,
   VCardImportResult,
 };
+export type {
+  AttachmentRiskAssessment,
+  AttachmentRiskLevel,
+  AttachmentRiskReason,
+  AttachmentRiskReviewItem,
+  AttachmentSaveReview,
+} from "./attachment-safety.js";
 
 export type LanguageMode = "en" | "yue" | "bilingual";
 export type ThemeMode = "light" | "dark" | "system";
@@ -99,6 +107,7 @@ export interface AttachmentSummary {
   filename: string;
   contentType: string;
   size: number;
+  risk: AttachmentRiskAssessment;
   contentId?: string;
 }
 
@@ -274,8 +283,8 @@ export interface MaterialEmailApi {
   listFolders(accountId: string): Promise<FolderSummary[]>;
   listMessages(accountId: string, folderPath: string): Promise<MessageSummary[]>;
   getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail>;
-  saveAttachment(accountId: string, folderPath: string, uid: number, index: number): Promise<string | null>;
-  saveAllAttachments(accountId: string, folderPath: string, uid: number): Promise<string[]>;
+  saveAttachment(accountId: string, folderPath: string, uid: number, index: number, review?: AttachmentSaveReview): Promise<string | null>;
+  saveAllAttachments(accountId: string, folderPath: string, uid: number, review?: AttachmentSaveReview): Promise<string[]>;
   setMessageFlags(accountId: string, folderPath: string, uid: number, patch: { unread?: boolean; starred?: boolean }): Promise<void>;
   moveMessage(accountId: string, folderPath: string, uid: number, destination: string): Promise<void>;
   sendMessage(draft: ComposeDraft): Promise<SendResult>;

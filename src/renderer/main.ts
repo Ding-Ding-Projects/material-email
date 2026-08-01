@@ -2,6 +2,9 @@ import type {
   AccountDraft,
   AccountDiscoveryResult,
   AccountSummary,
+  AttachmentRiskReason,
+  AttachmentSaveReview,
+  AttachmentSummary,
   BootstrapState,
   CalendarEvent,
   CalendarEventPatch,
@@ -140,7 +143,8 @@ type ConfirmationState =
   | { kind: "send-empty-subject" }
   | { kind: "discard-pending-operation"; accountId: string; operationId: string; label: string }
   | { kind: "delete-pim"; entityKind: PimEntityKind; uid: string; label: string }
-  | { kind: "bulk-close-tabs"; tabIds: PageId[]; inverse: boolean };
+  | { kind: "bulk-close-tabs"; tabIds: PageId[]; inverse: boolean }
+  | { kind: "save-risky-attachments"; target: number | "all"; review: AttachmentSaveReview };
 
 interface FiltersState {
   historyFrom: string;
@@ -1840,6 +1844,49 @@ function safeMessageDocument(detail: MessageDetail): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light dark"><style>:root{font:15px/1.6 system-ui,sans-serif;color-scheme:light dark}body{margin:0;padding:4px;color:CanvasText;background:Canvas;overflow-wrap:anywhere}a{color:LinkText;text-underline-offset:3px}pre{white-space:pre-wrap;font:inherit}blockquote{margin-inline:0;padding-inline-start:16px;border-inline-start:3px solid GrayText}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid GrayText;padding:6px}</style></head><body>${content}</body></html>`;
 }
 
+const attachmentRiskReasonLabel = (reason: AttachmentRiskReason): string => {
+  switch (reason) {
+    case "windows-executable": return tx("Windows executable file", "Windows 可執行檔");
+    case "windows-script": return tx("Windows script file", "Windows 指令碼檔案");
+    case "windows-shortcut": return tx("Windows shortcut file", "Windows 捷徑檔案");
+    case "windows-installer": return tx("Windows installer package", "Windows 安裝套件");
+    case "macro-enabled-document": return tx("Macro-enabled document", "可執行巨集嘅文件");
+    case "double-extension": return tx("Deceptive double extension", "可能誤導嘅雙重副檔名");
+    case "trailing-dot-or-space": return tx("Trailing dot or space changes the Windows filename", "結尾句點或者空格會改變 Windows 檔名");
+    case "bidirectional-control": return tx("Bidirectional text control can disguise the filename", "雙向文字控制符可能偽裝檔名");
+    case "mime-extension-mismatch": return tx("Declared file type conflicts with the extension", "聲稱嘅檔案類型同副檔名不符");
+  }
+};
+
+const attachmentRiskLevelLabel = (attachment: AttachmentSummary): string =>
+  attachment.risk.level === "dangerous" ? tx("Dangerous", "危險") : tx("Caution", "小心");
+
+const renderAttachmentChip = (attachment: AttachmentSummary, index: number): string => {
+  const risky = attachment.risk.level !== "ordinary";
+  const riskId = `attachment-risk-${index}`;
+  const riskCopy = risky
+    ? `<small class="attachment-chip__risk" id="${riskId}"><span class="attachment-risk-badge attachment-risk-badge--${attachment.risk.level}">${escapeHtml(attachmentRiskLevelLabel(attachment))}</span><span>${escapeHtml(attachment.risk.reasons.map(attachmentRiskReasonLabel).join(" · "))}</span></small>`
+    : "";
+  return `<span class="attachment-chip attachment-chip--${attachment.risk.level}" data-testid="attachment-chip-${index}" role="group" aria-label="${escapeHtml(tx(`Attachment ${attachment.filename}`, `附件 ${attachment.filename}`))}"><span class="attachment-chip__copy"><strong><bdi>${escapeHtml(attachment.filename)}</bdi></strong><small>${escapeHtml(formatBytes(attachment.size))} · ${escapeHtml(attachment.contentType)}</small>${riskCopy}</span><button class="icon-button icon-button--small" type="button" data-action="save-attachment" data-attachment-index="${index}" data-focus-key="save-attachment-${index}" aria-label="${escapeHtml(tx(`Save ${attachment.filename}`, `儲存 ${attachment.filename}`))}" ${risky ? `aria-describedby="${riskId}"` : ""} ${isBusy("save-attachment") ? "disabled" : ""}>${icon("download")}</button></span>`;
+};
+
+const attachmentSaveReview = (detail: MessageDetail, target: number | "all"): AttachmentSaveReview => {
+  const selected = target === "all"
+    ? detail.attachments.map((attachment, index) => ({ attachment, index }))
+    : detail.attachments[target] ? [{ attachment: detail.attachments[target], index: target }] : [];
+  return {
+    riskyAttachments: selected
+      .filter(({ attachment }) => attachment.risk.level !== "ordinary")
+      .map(({ attachment, index }) => ({
+        index,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        level: attachment.risk.level as "caution" | "dangerous",
+        reasons: [...attachment.risk.reasons],
+      })),
+  };
+};
+
 function renderReaderPane(): string {
   const message = activeMessage();
   if (!message) return `<article class="reader-pane reader-pane--empty" aria-label="${escapeHtml(tx("Message reader", "郵件閱讀器"))}"><span class="hero-icon">${icon("mail")}</span><h2>${escapeHtml(tx("Choose a message", "揀一封郵件"))}</h2><p>${escapeHtml(tx("The message reader keeps remote content isolated from the app.", "郵件閱讀器會將遠端內容同應用程式隔離。"))}</p></article>`;
@@ -1864,7 +1911,7 @@ function renderReaderPane(): string {
       <div class="message-header__copy"><p class="eyebrow">${escapeHtml(tx("MESSAGE", "郵件"))}</p><h1>${escapeHtml(detail.subject)}</h1><p><strong>${escapeHtml(addressLine(detail.from) || tx("Unknown sender", "未知寄件人"))}</strong> <span>&lt;${escapeHtml(detail.from[0]?.address ?? "")}‌&gt;</span></p><p>${escapeHtml(tx("To", "寄給"))}: ${escapeHtml(addressLine(detail.to))}${detail.cc.length ? ` · ${escapeHtml(tx("Cc", "副本"))}: ${escapeHtml(addressLine(detail.cc))}` : ""}</p></div>
       <time datetime="${escapeHtml(detail.date)}">${escapeHtml(formatDate(detail.date))}</time>
     </header>
-    ${detail.attachments.length ? `<section class="attachment-strip" aria-label="${escapeHtml(tx("Attachments", "附件"))}"><div class="attachment-strip__heading"><strong>${icon("attach")} ${detail.attachments.length} ${escapeHtml(tx("attachments", "個附件"))}</strong><button class="button button--text" type="button" data-action="save-all-attachments" ${isBusy("save-attachment") ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Save all", "全部儲存"))}</span></button></div>${detail.attachments.map((item, index) => `<span class="attachment-chip"><span><strong>${escapeHtml(item.filename)}</strong><small>${escapeHtml(formatBytes(item.size))} · ${escapeHtml(item.contentType)}</small></span><button class="icon-button icon-button--small" type="button" data-action="save-attachment" data-attachment-index="${index}" aria-label="${escapeHtml(tx(`Save ${item.filename}`, `儲存 ${item.filename}`))}" ${isBusy("save-attachment") ? "disabled" : ""}>${icon("download")}</button></span>`).join("")}</section>` : ""}
+    ${detail.attachments.length ? `<section class="attachment-strip" aria-label="${escapeHtml(tx("Attachments", "附件"))}"><div class="attachment-strip__heading"><strong>${icon("attach")} ${detail.attachments.length} ${escapeHtml(tx("attachments", "個附件"))}</strong><button class="button button--text" type="button" data-action="save-all-attachments" data-focus-key="save-all-attachments" ${isBusy("save-attachment") ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Save all", "全部儲存"))}</span></button></div>${detail.attachments.map(renderAttachmentChip).join("")}</section>` : ""}
     <div class="reader-security-note">${icon("check")}<span>${escapeHtml(tx("Message HTML is isolated in a sandbox. Scripts, forms, remote images, and same-origin access are blocked.", "郵件 HTML 放喺沙盒隔離。指令碼、表單、遠端圖片同同源存取全部被封鎖。"))}</span></div>
     <iframe class="message-frame" data-testid="reader-iframe" data-reader-document="${readerDocumentRevision}" sandbox="allow-popups" referrerpolicy="no-referrer" title="${escapeHtml(tx(`Message body: ${detail.subject}`, `郵件內容：${detail.subject}`))}" srcdoc="${escapeHtml(safeMessageDocument(detail))}"></iframe>
   </article>`;
@@ -2351,6 +2398,7 @@ function renderConfirmation(): string {
   let body = "";
   let confirmLabel = tx("Continue", "繼續");
   let cancelLabel = tx("Cancel", "取消");
+  let detailsMarkup = "";
   if (confirmation.kind === "remove-account") {
     title = tx("Remove this account?", "移除呢個帳戶？");
     body = tx(`${confirmation.label}, its local cache, drafts, Outbox items, pending changes, and any open composer for this account will be removed from this computer. Server mail is not deleted.`, `${confirmation.label}、本機快取、草稿、寄件匣項目、待處理更改，同呢個帳戶已開啟嘅撰寫視窗，都會由呢部電腦移除。伺服器郵件唔會被刪除。`);
@@ -2398,12 +2446,24 @@ function renderConfirmation(): string {
     body = tx("The current local form has not been saved. Opening the requested editor will discard those changes.", "目前本機表格仲未儲存。開啟要求嘅編輯器會放棄呢啲更改。 ");
     confirmLabel = tx("Discard and open", "放棄並開啟");
     cancelLabel = tx("Keep editing", "繼續編輯");
+  } else if (confirmation.kind === "save-risky-attachments") {
+    const riskyCount = confirmation.review.riskyAttachments.length;
+    title = confirmation.target === "all"
+      ? tx(`Review ${riskyCount} risky attachment${riskyCount === 1 ? "" : "s"} before saving the batch`, `儲存整批之前，審閱 ${riskyCount} 個有風險嘅附件`)
+      : tx("Review this risky attachment before saving", "儲存之前，審閱呢個有風險嘅附件");
+    body = tx(
+      "Material Email found filename or declared-type warning signs. These files have not been scanned or quarantined. Continuing opens the native destination chooser for the original save request.",
+      "Material Email 發現檔名或者聲稱類型有警號。呢啲檔案未經掃描，亦冇隔離。繼續會為原本嘅儲存要求開啟原生目的地選擇器。",
+    );
+    confirmLabel = confirmation.target === "all" ? tx("Save reviewed batch", "儲存已審閱批次") : tx("Save reviewed attachment", "儲存已審閱附件");
+    cancelLabel = tx("Cancel save", "取消儲存");
+    detailsMarkup = `<ul class="attachment-review-list" id="confirmation-details" aria-label="${escapeHtml(tx("Risky attachments to review", "要審閱嘅有風險附件"))}">${confirmation.review.riskyAttachments.map(item => `<li><div><strong><bdi>${escapeHtml(item.filename)}</bdi></strong><span class="attachment-risk-badge attachment-risk-badge--${item.level}">${escapeHtml(item.level === "dangerous" ? tx("Dangerous", "危險") : tx("Caution", "小心"))}</span></div><small>${escapeHtml(item.reasons.map(attachmentRiskReasonLabel).join(" · "))}</small></li>`).join("")}</ul>`;
   } else {
     title = tx("Send without a subject?", "冇主旨都寄出？");
     body = tx("Recipients and body are present, but the subject is empty. The message will still be sent or queued if you continue.", "收件人同內容都有，但主旨係空白。繼續之後，郵件仍然會寄出或者排入寄件匣。 ");
     confirmLabel = tx("Send without subject", "冇主旨都寄出");
   }
-  return `<div class="modal-layer confirmation-layer"><section class="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-body"><span class="hero-icon hero-icon--warning">${icon("warning")}</span><h2 id="confirmation-title">${escapeHtml(title)}</h2><p id="confirmation-body">${escapeHtml(body)}</p><div class="button-row"><button class="button button--text" type="button" data-action="cancel-confirmation" data-confirmation-initial>${escapeHtml(cancelLabel)}</button><button class="button button--danger" type="button" data-action="confirm-action">${escapeHtml(confirmLabel)}</button></div></section></div>`;
+  return `<div class="modal-layer confirmation-layer"><section class="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-body${detailsMarkup ? " confirmation-details" : ""}"><span class="hero-icon hero-icon--warning">${icon("warning")}</span><h2 id="confirmation-title">${escapeHtml(title)}</h2><p id="confirmation-body">${escapeHtml(body)}</p>${detailsMarkup}<div class="button-row"><button class="button button--text" type="button" data-action="cancel-confirmation" data-confirmation-initial>${escapeHtml(cancelLabel)}</button><button class="button button--danger" type="button" data-action="confirm-action">${escapeHtml(confirmLabel)}</button></div></section></div>`;
 }
 
 const splitRecipients = (value: string): string[] => value
@@ -3216,17 +3276,27 @@ const chooseComposeAttachments = async (): Promise<void> => {
   });
 };
 
-const saveReaderAttachment = async (index: number | "all"): Promise<void> => {
+const saveReaderAttachment = async (index: number | "all", reviewed?: AttachmentSaveReview): Promise<void> => {
   const detail = state.detail;
   if (!detail) return;
+  if (!reviewed) {
+    const review = attachmentSaveReview(detail, index);
+    if (review.riskyAttachments.length) {
+      showConfirmation(
+        { kind: "save-risky-attachments", target: index, review },
+        index === "all" ? "save-all-attachments" : `save-attachment-${index}`,
+      );
+      return;
+    }
+  }
   await withBusy("save-attachment", async () => {
     if (index === "all") {
-      const paths = await api.saveAllAttachments(detail.accountId, detail.folderPath, detail.uid);
+      const paths = await api.saveAllAttachments(detail.accountId, detail.folderPath, detail.uid, reviewed);
       if (paths.length) pushToast("success", "Attachments saved", `${paths.length} attachment${paths.length === 1 ? "" : "s"} written to the chosen folder.`, "附件已儲存", `${paths.length} 個附件已寫入所選資料夾。`);
       else pushToast("info", "No attachments saved", "The folder chooser was cancelled or no attachment could be written.", "冇儲存附件", "資料夾選擇已取消，或者冇附件可以寫入。 ");
       return;
     }
-    const destination = await api.saveAttachment(detail.accountId, detail.folderPath, detail.uid, index);
+    const destination = await api.saveAttachment(detail.accountId, detail.folderPath, detail.uid, index, reviewed);
     if (destination) pushToast("success", "Attachment saved", `${detail.attachments[index]?.filename ?? "Attachment"} was written to the chosen destination.`, "附件已儲存", `${detail.attachments[index]?.filename ?? "附件"} 已寫入所選位置。`);
     else pushToast("info", "Attachment save cancelled", "No file was written.", "已取消附件儲存", "冇寫入任何檔案。 ");
   });
@@ -3262,6 +3332,10 @@ const handleConfirmation = async (): Promise<void> => {
   }
   if (confirmation.kind === "send-empty-subject") {
     await sendComposer(true);
+    return;
+  }
+  if (confirmation.kind === "save-risky-attachments") {
+    await saveReaderAttachment(confirmation.target, confirmation.review);
     return;
   }
   if (confirmation.kind === "bulk-close-tabs") {
@@ -3326,6 +3400,7 @@ const handleConfirmation = async (): Promise<void> => {
     render();
     return;
   }
+  if (confirmation.kind !== "restore-local") return;
   await withBusy("restore-local", async () => {
     beginMailNavigation();
     const restored = await api.restoreLocalRevision(confirmation.hash);

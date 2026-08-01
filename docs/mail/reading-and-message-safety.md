@@ -19,7 +19,7 @@ Allowed message structures include common text blocks, emphasis, lists, quotatio
 - Aggressive sanitization can remove legitimate styling, inline media, complex tables, and embedded content.
 - A message deleted or changed on the server between list and open may no longer be retrievable.
 - Attachment metadata can disagree with bytes or filename.
-- Saving does not currently perform antivirus scanning, quarantine tagging, dangerous-extension warnings, or content-type validation.
+- Saving does not perform antivirus scanning or quarantine tagging. It now classifies risky filenames and MIME/extension conflicts, shows factual warnings, and requires an explicit review before saving risky attachments.
 - The renderer's link activation and focus behavior are not fully verified.
 
 ## Security considerations
@@ -35,4 +35,3 @@ Focused tests prove active elements, remote images, event handlers, and JavaScri
 - [Security boundaries](../architecture/security-boundaries.md)
 - [Synchronization and folders](synchronization-and-folders.md)
 - [Compose, drafts, and sending](compose-drafts-and-sending.md)
-

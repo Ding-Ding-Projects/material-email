@@ -18,8 +18,12 @@ const api: MaterialEmailApi = {
   listFolders: accountId => ipcRenderer.invoke("mail:folders", accountId),
   listMessages: (accountId, folderPath) => ipcRenderer.invoke("mail:messages", accountId, folderPath),
   getMessage: (accountId, folderPath, uid) => ipcRenderer.invoke("mail:message", accountId, folderPath, uid),
-  saveAttachment: (accountId, folderPath, uid, index) => ipcRenderer.invoke("mail:save-attachment", accountId, folderPath, uid, index),
-  saveAllAttachments: (accountId, folderPath, uid) => ipcRenderer.invoke("mail:save-all-attachments", accountId, folderPath, uid),
+  saveAttachment: (accountId, folderPath, uid, index, review) => review
+    ? ipcRenderer.invoke("mail:save-attachment", accountId, folderPath, uid, index, review)
+    : ipcRenderer.invoke("mail:save-attachment", accountId, folderPath, uid, index),
+  saveAllAttachments: (accountId, folderPath, uid, review) => review
+    ? ipcRenderer.invoke("mail:save-all-attachments", accountId, folderPath, uid, review)
+    : ipcRenderer.invoke("mail:save-all-attachments", accountId, folderPath, uid),
   setMessageFlags: (accountId, folderPath, uid, patch) => ipcRenderer.invoke("mail:flags", accountId, folderPath, uid, patch),
   moveMessage: (accountId, folderPath, uid, destination) => ipcRenderer.invoke("mail:move", accountId, folderPath, uid, destination),
   sendMessage: draft => ipcRenderer.invoke("mail:send", draft),

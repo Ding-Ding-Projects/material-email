@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AccountDraft, ComposeDraft } from "../src/shared/contracts";
+import type { AccountDraft, AttachmentSaveReview, ComposeDraft } from "../src/shared/contracts";
 import { ipcPayloadSchemas, parseIpcArgs } from "../src/main/ipc-validation";
 
 const accountDraft = (): AccountDraft => ({
@@ -19,6 +19,16 @@ const composeDraft = (): ComposeDraft => ({
   subject: "Hello",
   text: "A bounded message body.",
   attachments: [],
+});
+
+const riskyAttachmentReview = (): AttachmentSaveReview => ({
+  riskyAttachments: [{
+    index: 2,
+    filename: "invoice.pdf.exe",
+    contentType: "application/pdf",
+    level: "dangerous",
+    reasons: ["windows-executable", "double-extension", "mime-extension-mismatch"],
+  }],
 });
 
 describe("non-PIM IPC validation", () => {
@@ -46,6 +56,35 @@ describe("non-PIM IPC validation", () => {
     expect(() => parseIpcArgs("account:remove", ipcPayloadSchemas.accountId, ["account-1", "smuggled"])).toThrow(
       "Invalid account:remove IPC payload",
     );
+  });
+
+  it("strictly validates risky attachment review acknowledgements", () => {
+    expect(ipcPayloadSchemas.saveAttachment.parse(["account-1", "Inbox", 8, 2, riskyAttachmentReview()])).toHaveLength(5);
+    expect(ipcPayloadSchemas.saveAllAttachments.parse(["account-1", "Inbox", 8, riskyAttachmentReview()])).toHaveLength(4);
+    expect(ipcPayloadSchemas.saveAttachment.parse(["account-1", "Inbox", 8, 2])).toHaveLength(4);
+    expect(() => ipcPayloadSchemas.saveAttachment.parse([
+      "account-1",
+      "Inbox",
+      8,
+      2,
+      { riskyAttachments: [{ ...riskyAttachmentReview().riskyAttachments[0], reasons: [] }] },
+    ])).toThrow();
+    expect(() => ipcPayloadSchemas.saveAttachment.parse([
+      "account-1",
+      "Inbox",
+      8,
+      2,
+      { riskyAttachments: [{ ...riskyAttachmentReview().riskyAttachments[0], level: "ordinary" }] },
+    ])).toThrow();
+    expect(() => ipcPayloadSchemas.saveAttachment.parse([
+      "account-1",
+      "Inbox",
+      8,
+      2,
+      { ...riskyAttachmentReview(), unreviewed: true },
+    ])).toThrow();
+    expect(() => ipcPayloadSchemas.saveAllAttachments.parse(["account-1", "Inbox", 8, { riskyAttachments: [] }])).toThrow();
+    expect(() => ipcPayloadSchemas.saveAttachment.parse(["account-1", "Inbox", 8, 2, riskyAttachmentReview(), "surplus"])).toThrow();
   });
 
   it("strictly validates preference names, values, and native editor paths", () => {

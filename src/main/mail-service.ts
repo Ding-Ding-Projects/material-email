@@ -3,6 +3,7 @@ import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
 import nodemailer from "nodemailer";
 import sanitizeHtml from "sanitize-html";
 import { randomUUID } from "node:crypto";
+import { classifyAttachment } from "../shared/attachment-safety.js";
 import type {
   AccountSummary,
   Address,
@@ -116,6 +117,7 @@ const parsedMessageToDetail = (
       filename: item.filename ?? "attachment",
       contentType: item.contentType,
       size: item.size,
+      risk: classifyAttachment(item.filename ?? "attachment", item.contentType),
       ...(item.cid ? { contentId: item.cid } : {}),
     })),
   };

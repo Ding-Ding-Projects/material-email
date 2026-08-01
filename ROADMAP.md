@@ -58,7 +58,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] User-facing retry ceilings and conflict resolution for queued mail operations
 - [ ] Unified folders and cross-account views
 - [ ] Conversation threading and complete search indexing
-- [ ] Attachment quarantine/scanner integration and unsafe-file warnings
+- [x] Attachment risk classification and review-before-save warnings
+- [ ] Attachment quarantine/scanner integration
 - [x] Native Windows notifications with privacy controls (opt-in generic summaries)
 - [x] Renderer/preload/IPC integration for contacts, mailing lists, calendars, tasks, vCard actions, and transaction recovery
 - [ ] CardDAV/CalDAV/ICS/task-provider synchronization and broad interoperability

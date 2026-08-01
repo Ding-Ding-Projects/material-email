@@ -1,6 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
-import type { AccountDraft, ComposeDraft, Preferences } from "../shared/contracts.js";
+import type { AccountDraft, AttachmentSaveReview, ComposeDraft, Preferences } from "../shared/contracts.js";
 
 const noControlCharacters = (value: string): boolean => !/[\u0000-\u001f\u007f]/u.test(value);
 const noHeaderBreaks = (value: string): boolean => !/[\r\n\u0000]/u.test(value);
@@ -110,6 +110,28 @@ const suggestedFilenameSchema = z
     "A plain filename is required.",
   );
 
+const attachmentRiskReasonSchema = z.enum([
+  "windows-executable",
+  "windows-script",
+  "windows-shortcut",
+  "windows-installer",
+  "macro-enabled-document",
+  "double-extension",
+  "trailing-dot-or-space",
+  "bidirectional-control",
+  "mime-extension-mismatch",
+]);
+const attachmentRiskReviewItemSchema = z.strictObject({
+  index: attachmentIndexSchema,
+  filename: z.string().min(1).max(4_096).refine(noHeaderBreaks, "Attachment filenames cannot contain line breaks or NUL."),
+  contentType: z.string().min(1).max(1_024).refine(noHeaderBreaks, "Attachment content types cannot contain line breaks or NUL."),
+  level: z.enum(["caution", "dangerous"]),
+  reasons: z.array(attachmentRiskReasonSchema).min(1).max(9),
+});
+const attachmentSaveReviewSchema = z.strictObject({
+  riskyAttachments: z.array(attachmentRiskReviewItemSchema).min(1).max(100),
+}) as z.ZodType<AttachmentSaveReview>;
+
 export const ipcPayloadSchemas = {
   none: z.tuple([]),
   accountDiscover: z.tuple([emailSchema]),
@@ -117,7 +139,14 @@ export const ipcPayloadSchemas = {
   accountId: z.tuple([identifierSchema]),
   accountFolder: z.tuple([identifierSchema, folderPathSchema]),
   accountFolderMessage: z.tuple([identifierSchema, folderPathSchema, messageUidSchema]),
-  saveAttachment: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, attachmentIndexSchema]),
+  saveAttachment: z.union([
+    z.tuple([identifierSchema, folderPathSchema, messageUidSchema, attachmentIndexSchema]),
+    z.tuple([identifierSchema, folderPathSchema, messageUidSchema, attachmentIndexSchema, attachmentSaveReviewSchema]),
+  ]),
+  saveAllAttachments: z.union([
+    z.tuple([identifierSchema, folderPathSchema, messageUidSchema]),
+    z.tuple([identifierSchema, folderPathSchema, messageUidSchema, attachmentSaveReviewSchema]),
+  ]),
   messageFlags: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, flagPatchSchema]),
   moveMessage: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, folderPathSchema]),
   composeDraft: z.tuple([composeDraftSchema]),

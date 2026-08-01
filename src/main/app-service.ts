@@ -38,8 +38,15 @@ import type {
   LocalDraftSummary,
   OutboxSummary,
   PendingOperationSummary,
+  AttachmentSaveReview,
 } from "../shared/contracts.js";
 import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts.js";
+import {
+  attachmentSaveReviewMatches,
+  createAttachmentRiskReviewItem,
+  createAttachmentSaveReview,
+  type AttachmentRiskReviewItem,
+} from "../shared/attachment-safety.js";
 import { JsonStore } from "./storage.js";
 import { HistoryRepository } from "./history-repository.js";
 import { AccountDiscoveryService } from "./account-discovery.js";
@@ -96,6 +103,20 @@ const sameDraftSnapshot = (left: ComposeDraft | undefined, right: ComposeDraft |
 
 const isMailboxGenerationMismatch = (error: unknown): boolean =>
   Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "MAILBOX_GENERATION_MISMATCH");
+
+const requireAttachmentSaveReview = (
+  riskyAttachments: AttachmentRiskReviewItem[],
+  review: AttachmentSaveReview | undefined,
+): void => {
+  const expected = { riskyAttachments };
+  if (!riskyAttachments.length) {
+    if (review) throw new Error("The attachment safety review is stale. Review the current attachment metadata before saving.");
+    return;
+  }
+  if (!attachmentSaveReviewMatches(expected, review)) {
+    throw new Error("Review the current risky attachment warning before choosing a save destination.");
+  }
+};
 
 const demoAccount = (): AccountSummary => ({
   id: "demo",
@@ -452,7 +473,13 @@ export class AppService {
     return detail;
   }
 
-  async saveAttachment(accountId: string, folderPath: string, uid: number, index: number): Promise<string | null> {
+  async saveAttachment(
+    accountId: string,
+    folderPath: string,
+    uid: number,
+    index: number,
+    review?: AttachmentSaveReview,
+  ): Promise<string | null> {
     const state = await this.#store.read();
     const account = this.#requireAccount(state, accountId);
     if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
@@ -460,6 +487,8 @@ export class AppService {
     const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
     const attachment = attachments[index];
     if (!attachment) throw new Error("That attachment no longer exists.");
+    const currentRisk = createAttachmentRiskReviewItem(attachment, index);
+    requireAttachmentSaveReview(currentRisk.level === "ordinary" ? [] : [currentRisk], review);
     const filename = this.#safeFilename(attachment.filename);
     const result = await dialog.showSaveDialog({ defaultPath: filename, title: "Save attachment" });
     if (result.canceled || !result.filePath) return null;
@@ -477,16 +506,23 @@ export class AppService {
     return result.filePath;
   }
 
-  async saveAllAttachments(accountId: string, folderPath: string, uid: number): Promise<string[]> {
+  async saveAllAttachments(
+    accountId: string,
+    folderPath: string,
+    uid: number,
+    review?: AttachmentSaveReview,
+  ): Promise<string[]> {
     const state = await this.#store.read();
     const account = this.#requireAccount(state, accountId);
     if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
     const { uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+    const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
+    const currentReview = createAttachmentSaveReview(attachments);
+    requireAttachmentSaveReview(currentReview.riskyAttachments, review);
     const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"], title: "Save all attachments" });
     if (result.canceled || !result.filePaths[0]) return [];
     const directory = result.filePaths[0];
     await mkdir(directory, { recursive: true });
-    const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
     const saved: string[] = [];
     for (const [index, attachment] of attachments.entries()) {
       const base = this.#safeFilename(attachment.filename || `attachment-${index + 1}`);

@@ -17,6 +17,7 @@ import {
   nativePathSchema,
   preferencesSchema,
 } from "./ipc-validation.js";
+import { classifyAttachment } from "../shared/attachment-safety.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -101,12 +102,33 @@ const folderSchema = z.strictObject({
   total: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   uidValidity: z.string().min(1).max(128).optional(),
 });
-const attachmentSummarySchema = z.strictObject({
-  filename: z.string().min(1).max(4_096),
-  contentType: z.string().min(1).max(1_024),
-  size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  contentId: z.string().max(4_096).optional(),
+const attachmentRiskReasonSchema = z.enum([
+  "windows-executable",
+  "windows-script",
+  "windows-shortcut",
+  "windows-installer",
+  "macro-enabled-document",
+  "double-extension",
+  "trailing-dot-or-space",
+  "bidirectional-control",
+  "mime-extension-mismatch",
+]);
+const attachmentRiskSchema = z.strictObject({
+  level: z.enum(["ordinary", "caution", "dangerous"]),
+  reasons: z.array(attachmentRiskReasonSchema).max(9),
 });
+const attachmentSummarySchema = z
+  .strictObject({
+    filename: z.string().min(1).max(4_096),
+    contentType: z.string().min(1).max(1_024),
+    size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    risk: attachmentRiskSchema.optional(),
+    contentId: z.string().max(4_096).optional(),
+  })
+  .transform(attachment => ({
+    ...attachment,
+    risk: classifyAttachment(attachment.filename, attachment.contentType),
+  }));
 const messageSummaryShape = {
   id: z.string().min(1).max(4_096),
   accountId: identifierSchema,
