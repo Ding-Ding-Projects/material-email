@@ -194,12 +194,18 @@ const inspectComponents = (lines: readonly string[], allowedComponents: Readonly
   const stack: string[] = [];
   const counts = new Map<string, number>();
   const properties = new Map<string, string[]>();
+  let previousWasProperty = false;
 
   for (const rawLine of lines) {
-    if (!rawLine || /^[ \t]/u.test(rawLine)) continue;
+    if (!rawLine) { previousWasProperty = false; continue; }
+    if (/^[ \t]/u.test(rawLine)) {
+      if (!previousWasProperty) throw new PimInterchangeBoundaryError("A folded interchange line must follow a property line.");
+      continue;
+    }
     const colon = rawLine.indexOf(":");
     if (colon < 1) throw new PimInterchangeBoundaryError("Every non-folded interchange line must contain a property separator.");
     const rawName = rawLine.slice(0, colon);
+    if (!/^[A-Za-z][A-Za-z0-9-]*(?:;[^:]+)*$/u.test(rawName)) throw new PimInterchangeBoundaryError("An interchange property name or parameter is malformed.");
     const name = rawName.split(";", 1)[0]?.toUpperCase() ?? "";
     const value = rawLine.slice(colon + 1).trim();
 
@@ -208,17 +214,20 @@ const inspectComponents = (lines: readonly string[], allowedComponents: Readonly
       if (!allowedComponents.has(component)) throw new PimInterchangeBoundaryError(`Unsupported ${component || "unnamed"} component.`);
       stack.push(component);
       counts.set(component, (counts.get(component) ?? 0) + 1);
+      previousWasProperty = true;
       continue;
     }
     if (name === "END") {
       const component = value.toUpperCase();
       if (stack.pop() !== component) throw new PimInterchangeBoundaryError(`The ${component || "unnamed"} component is not balanced.`);
+      previousWasProperty = true;
       continue;
     }
     if (!stack.length) throw new PimInterchangeBoundaryError("Interchange properties must be inside a component.");
     const values = properties.get(name) ?? [];
     values.push(value);
     properties.set(name, values);
+    previousWasProperty = true;
   }
 
   if (stack.length) throw new PimInterchangeBoundaryError(`The ${stack.at(-1)} component is not closed.`);
