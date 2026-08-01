@@ -114,7 +114,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Deepen per-tab colors with persisted accent/background/text overrides, continuous native selection, synchronized HEX/HEX8/RGB/HSL entry, live preview, and contrast readouts
 - [x] Add bilingual built-in and persisted user-named per-tab presets plus reviewed, versioned, strictly validated native-dialog JSON theme export/import
 - [ ] Complete appearance editing for every element, including picker self-customization, Word-depth typography, complete color translation, and every-element preset/transfer coverage
-- [x] Add persisted tab pinning, fixed grouping, overflow, reviewed bulk close, and four independent discovery searches with restart-persistent matcher models and semantic localized recovery
+- [x] Add persisted tab pinning, fixed grouping, overflow, four independent discovery searches, and reviewed bulk close with restart-persistent bounded matcher/options, semantic localized preview, pinned-policy disclosure, and focus return
 - [x] Expand the factual in-app changelog to every audited published version (eleven versions through `v0.45.1` on 2026-08-01)
 - [x] Add an anchored bilingual changelog calendar with typed locale dates, range selection, month/year navigation, named presets, keyboard focus, and composed search
 - [x] Add the off-by-default serialized TTS narrator foundation

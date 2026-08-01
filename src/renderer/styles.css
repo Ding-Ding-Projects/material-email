@@ -1068,7 +1068,8 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .bulk-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .bulk-options .switch-row { font-size: 0.75rem; }
 .bulk-preview { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; padding: 9px; border-radius: var(--radius-sm); background: var(--surface-container); font-size: 0.73rem; }
-.bulk-preview span { color: var(--on-surface-variant); }
+.bulk-preview span, .bulk-preview small { color: var(--on-surface-variant); line-height: 1.4; }
+.bulk-preview[data-bulk-status="invalid"] { outline: 1px solid var(--error); }
 .closed-tabs { padding: 14px 0; }
 .closed-tabs h3 { margin-bottom: 8px; }
 .closed-tabs > div { display: flex; flex-wrap: wrap; gap: 5px; }

@@ -135,6 +135,12 @@ import {
   serializeTabDiscoverySearches,
   type TabDiscoverySearchKey,
 } from "./lib/tab-discovery-search";
+import {
+  BULK_TAB_CLOSE_STORAGE_KEY,
+  evaluateBulkTabClose,
+  parseBulkTabCloseReview,
+  serializeBulkTabCloseReview,
+} from "./lib/bulk-tab-close";
 import { selectStableMessageId } from "../shared/unified-folders";
 import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
 import {
@@ -241,7 +247,14 @@ type ConfirmationState =
   | { kind: "send-empty-subject" }
   | { kind: "discard-pending-operation"; accountId: string; operationId: string; label: string }
   | { kind: "delete-pim"; entityKind: PimEntityKind; uid: string; label: string }
-  | { kind: "bulk-close-tabs"; tabIds: PageId[]; inverse: boolean }
+  | {
+    kind: "bulk-close-tabs";
+    tabIds: PageId[];
+    inverse: boolean;
+    mode: MatchMode;
+    includePinned: boolean;
+    pinnedTabIds: PageId[];
+  }
   | { kind: "delete-appearance-preset"; presetId: string; label: string }
   | { kind: "clear-appearance-presets"; count: number }
   | { kind: "import-tab-appearance-theme"; fileName: string; theme: TabAppearanceThemeDocument }
@@ -421,6 +434,16 @@ const readTabDiscoverySearches = () => {
 
 const restoredTabDiscoverySearches = readTabDiscoverySearches();
 
+const readBulkTabCloseReview = () => {
+  try {
+    return parseBulkTabCloseReview(localStorage.getItem(BULK_TAB_CLOSE_STORAGE_KEY));
+  } catch {
+    return parseBulkTabCloseReview(null);
+  }
+};
+
+const restoredBulkTabCloseReview = readBulkTabCloseReview();
+
 const DEFAULT_PREFERENCES: Preferences = {
   language: "en",
   funnyEnglish: 2,
@@ -535,8 +558,8 @@ const state: RendererState = {
     focusDate: localIsoDate(),
     selecting: "start",
   },
-  bulkInverse: false,
-  bulkIncludePinned: false,
+  bulkInverse: restoredBulkTabCloseReview.inverse,
+  bulkIncludePinned: restoredBulkTabCloseReview.includePinned,
   selectedTabGroup: "workspace",
   dimSumVisible: false,
   dimSumDish: null,
@@ -713,6 +736,8 @@ const searchFor = (key: string): SearchModel => {
   if (existing) return existing;
   const persisted = key === "settings"
     ? readSettingsSearch()
+    : key === "bulk-tabs"
+      ? restoredBulkTabCloseReview.search
     : isTabDiscoverySearchKey(key)
       ? restoredTabDiscoverySearches[key]
       : null;
@@ -733,6 +758,22 @@ const persistSearch = (key: string): void => {
       localStorage.setItem(SETTINGS_SEARCH_STORAGE_KEY, serializeSettingsSearch(searchFor(key)));
     } catch {
       // The Settings search remains usable when browser storage is unavailable.
+    }
+    return;
+  }
+  if (key === "bulk-tabs") {
+    const model = searchFor(key);
+    restoredBulkTabCloseReview.search = {
+      mode: model.mode,
+      pattern: model.pattern,
+      flags: model.flags,
+    };
+    restoredBulkTabCloseReview.inverse = state.bulkInverse;
+    restoredBulkTabCloseReview.includePinned = state.bulkIncludePinned;
+    try {
+      localStorage.setItem(BULK_TAB_CLOSE_STORAGE_KEY, serializeBulkTabCloseReview(restoredBulkTabCloseReview));
+    } catch {
+      // Bulk-close review remains safe and usable when browser storage is unavailable.
     }
     return;
   }
@@ -1734,6 +1775,8 @@ function renderRegexBuilder(key: string): string {
     </header>
     <p class="supporting-copy">${escapeHtml(key === "settings"
       ? tx("This builder is attached only to this search field. Its Settings pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢一個搜尋欄。設定模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
+      : key === "bulk-tabs"
+        ? tx("This builder is attached only to this bulk-close review. Its pattern, mode, flags, direction, and pinned-tab choice are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢個批量關閉審閱。模式、配對方式、旗標、方向同釘選分頁選擇會儲喺你部電腦；範例會喺重開時清除。")
       : isTabDiscoverySearchKey(key)
         ? tx("This builder is attached only to this tab-discovery field. Its pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢一個分頁探索搜尋欄。模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
         : tx("This builder is attached only to this search field. Patterns and samples stay on this computer.", "呢個建立器只連住呢一個搜尋欄。模式同範例都留喺你部電腦。"))}</p>
@@ -3640,24 +3683,52 @@ function renderTabGroupSearchResults(): string {
   return `<div class="group-result-list"${groups.length ? ` role="list"` : ""}>${groups.length ? groups.map(group => `<button type="button" role="listitem" data-action="select-group-result" data-group="${group}"><span class="group-swatch group-swatch--${group}"></span><span><strong>${escapeHtml(groupLabel(group))}</strong><small>${TAB_DEFINITIONS.filter(tab => tab.group === group).length} ${escapeHtml(tx("tabs", "個分頁"))}</small></span>${icon("chevron")}</button>`).join("") : model.pattern && validation.valid ? renderTabSearchEmpty(key) : ""}</div>`;
 }
 
-function bulkClosePreview(): PageId[] {
+function bulkCloseEvaluation() {
   const model = searchFor("bulk-tabs");
-  if (!model.pattern || !validatePattern(model).valid) return [];
-  const matches = createMatcher(model);
-  return visibleTabIds().filter(id => {
-    if (!state.bulkIncludePinned && state.tabPreferences.pinned.includes(id)) return false;
-    const tab = tabDefinition(id);
-    const hit = matches(tx(tab.en, tab.yue));
-    return state.bulkInverse ? !hit : hit;
+  return evaluateBulkTabClose(visibleTabIds().map(id => ({
+    id,
+    label: tx(tabDefinition(id).en, tabDefinition(id).yue),
+    pinned: state.tabPreferences.pinned.includes(id),
+  })), {
+    search: model,
+    inverse: state.bulkInverse,
+    includePinned: state.bulkIncludePinned,
   });
+}
+
+function bulkClosePreviewDetails(excludedPinnedCount: number, includedPinnedCount: number): string {
+  const mode = searchFor("bulk-tabs").mode === "regex"
+    ? tx("Regular expression", "正規表達式")
+    : tx("Plain text", "純文字");
+  const direction = state.bulkInverse
+    ? tx("close visible labels that do not match", "關閉唔符合嘅可見標籤")
+    : tx("close visible labels that match", "關閉符合嘅可見標籤");
+  const pinned = state.bulkIncludePinned
+    ? tx(`pinned tabs included by saved explicit choice (${includedPinnedCount} in preview)`, `已按儲存嘅明確選擇包括釘選分頁（預覽有 ${includedPinnedCount} 個）`)
+    : tx(`pinned tabs excluded (${excludedPinnedCount} matching protected)`, `已排除釘選分頁（保護 ${excludedPinnedCount} 個符合項目）`);
+  return `${mode} · ${direction} · ${pinned}`;
 }
 
 function renderTabManager(): string {
   const current = TAB_DEFINITIONS.filter(tab => visibleTabIds().includes(tab.id));
   const groupTabs = TAB_DEFINITIONS.filter(tab => tab.group === state.selectedTabGroup);
-  const preview = bulkClosePreview();
-  const bulk = searchFor("bulk-tabs");
-  const bulkValidation = validatePattern(bulk);
+  const evaluation = bulkCloseEvaluation();
+  const preview = evaluation.tabIds;
+  const includedPinnedCount = preview.filter(id => state.tabPreferences.pinned.includes(id)).length;
+  const previewTitle = evaluation.status === "empty"
+    ? tx("Bulk-close preview unavailable", "批量關閉預覽未可用")
+    : evaluation.status === "invalid"
+      ? tx("Bulk-close preview blocked", "批量關閉預覽已截停")
+      : tx(`${preview.length} tab${preview.length === 1 ? "" : "s"} would close`, `${preview.length} 個分頁將會關閉`);
+  const previewMessage = evaluation.status === "empty"
+    ? tx("Enter a non-empty query. Whitespace alone never enables bulk close.", "輸入非空白搜尋。淨係空格永遠唔會啟用批量關閉。")
+    : evaluation.status === "invalid"
+      ? tx("Correct the regular expression before reviewing tabs.", "修正正規表達式先可以審閱分頁。")
+      : preview.length
+        ? preview.map(id => tx(tabDefinition(id).en, tabDefinition(id).yue)).join(" · ")
+        : evaluation.excludedPinnedIds.length
+          ? tx(`${evaluation.excludedPinnedIds.length} matching pinned tab${evaluation.excludedPinnedIds.length === 1 ? " stays" : "s stay"} open.`, `${evaluation.excludedPinnedIds.length} 個符合嘅釘選分頁會保持開啟。`)
+          : tx("No visible tabs match this review.", "冇可見分頁符合呢次審閱。 ");
   return `<section class="anchored-popover tab-manager" role="dialog" aria-modal="false" aria-labelledby="tab-manager-title">
     <header class="popover-header"><div><p class="eyebrow">${escapeHtml(tx("TAB DISCOVERY", "分頁探索"))}</p><h2 id="tab-manager-title">${escapeHtml(tx("Search and manage tabs", "搜尋同管理分頁"))}</h2></div><button class="icon-button" type="button" data-action="close-tab-manager" aria-label="${escapeHtml(tx("Close tab manager", "關閉分頁管理器"))}">${icon("close")}</button></header>
     <div class="tab-manager__scroll">
@@ -3665,7 +3736,19 @@ function renderTabManager(): string {
       <section class="tab-search-section"><div class="section-title-row"><h3>${escapeHtml(tx("2. Tabs inside a group", "2. 群組入面嘅分頁"))}</h3><label><span class="visually-hidden">${escapeHtml(tx("Tab group", "分頁群組"))}</span><select data-action-change="select-tab-group">${TAB_GROUPS.map(group => `<option value="${group}" ${group === state.selectedTabGroup ? "selected" : ""}>${escapeHtml(groupLabel(group))}</option>`).join("")}</select></label></div>${renderSearchField("tabs-group", tx("Search this group", "搜尋呢個群組"), true)}${renderTabSearchResults("tabs-group", groupTabs)}</section>
       <section class="tab-search-section"><h3>${escapeHtml(tx("3. Tab groups", "3. 分頁群組"))}</h3>${renderSearchField("tab-groups", tx("Search group names", "搜尋群組名稱"), true)}${renderTabGroupSearchResults()}</section>
       <section class="tab-search-section"><h3>${escapeHtml(tx("4. Master tab search", "4. 全部分頁搜尋"))}</h3>${renderSearchField("tabs-master", tx("Search all app tabs", "搜尋所有應用程式分頁"), true)}${renderTabSearchResults("tabs-master", [...TAB_DEFINITIONS])}</section>
-      <section class="bulk-close-card"><header><span>${icon("trash")}</span><div><h3>${escapeHtml(state.bulkInverse ? tx("Close tabs not containing text", "關閉唔包含文字嘅分頁") : tx("Close tabs containing text", "關閉包含文字嘅分頁"))}</h3><p>${escapeHtml(tx("Matching uses visible tab labels only. Empty or invalid patterns never close anything.", "配對只使用可見分頁標籤。空白或者無效模式永遠唔會關閉任何嘢。"))}</p></div></header>${renderSearchField("bulk-tabs", tx("Text to review before closing", "關閉前要審閱嘅文字"), true)}<div class="bulk-options"><label class="switch-row"><span>${escapeHtml(tx("Inverse: close non-matches", "反向：關閉唔符合項目"))}</span><input type="checkbox" role="switch" data-bulk-option="inverse" ${state.bulkInverse ? "checked" : ""}/></label><label class="switch-row"><span>${escapeHtml(tx("Include pinned tabs", "包括釘選分頁"))}</span><input type="checkbox" role="switch" data-bulk-option="pinned" ${state.bulkIncludePinned ? "checked" : ""}/></label></div><div class="bulk-preview"><strong>${preview.length} ${escapeHtml(tx("tabs would close", "個分頁將會關閉"))}</strong>${preview.length ? `<span>${preview.map(id => escapeHtml(tx(tabDefinition(id).en, tabDefinition(id).yue))).join(" · ")}</span>` : `<span>${escapeHtml(!bulk.pattern ? tx("Enter a non-empty query.", "輸入非空白搜尋。") : !bulkValidation.valid ? bulkValidation.message : tx("No tabs match this scope.", "呢個範圍冇符合分頁。"))}</span>`}</div><button class="button button--danger" type="button" data-action="request-bulk-close" ${preview.length === 0 ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Review and close…", "審閱並關閉……"))}</span></button></section>
+      <section class="bulk-close-card" data-testid="bulk-tab-close"><header><span>${icon("trash")}</span><div><h3>${escapeHtml(state.bulkInverse ? tx("Close tabs not matching", "關閉唔符合嘅分頁") : tx("Close matching tabs", "關閉符合嘅分頁"))}</h3><p>${escapeHtml(tx("Matching uses visible tab labels only. Whitespace-only or invalid patterns never reach confirmation.", "配對只使用可見分頁標籤。淨係空格或者無效模式永遠去唔到確認步驟。"))}</p></div></header>
+        ${renderSearchField("bulk-tabs", tx("Text to review before closing", "關閉前要審閱嘅文字"), true)}
+        <div class="bulk-options">
+          <label class="switch-row"><span><strong>${escapeHtml(tx("Inverse: close non-matches", "反向：關閉唔符合項目"))}</strong><small id="bulk-inverse-option-copy">${escapeHtml(state.bulkInverse ? tx("On and saved across restarts; this review closes labels that do not match.", "已開啟並會重開後保留；呢次審閱會關閉唔符合嘅標籤。") : tx("Off and saved across restarts; this review closes matching labels.", "已關閉並會重開後保留；呢次審閱會關閉符合嘅標籤。"))}</small></span><input type="checkbox" role="switch" data-bulk-option="inverse" aria-describedby="bulk-inverse-option-copy" ${state.bulkInverse ? "checked" : ""}/></label>
+          <label class="switch-row"><span><strong>${escapeHtml(tx("Include pinned tabs", "包括釘選分頁"))}</strong><small id="bulk-pinned-option-copy">${escapeHtml(state.bulkIncludePinned ? tx("On by your explicit saved choice; pinned matches can enter confirmation.", "已按你儲存嘅明確選擇開啟；符合嘅釘選分頁可以進入確認。") : tx("Off by default and currently saved off; pinned matches stay open.", "預設關閉，而家亦儲存為關閉；符合嘅釘選分頁會保持開啟。"))}</small></span><input type="checkbox" role="switch" data-bulk-option="pinned" aria-describedby="bulk-pinned-option-copy" ${state.bulkIncludePinned ? "checked" : ""}/></label>
+        </div>
+        <div class="bulk-preview" role="status" aria-live="polite" aria-labelledby="bulk-close-preview-title" aria-describedby="bulk-close-preview-message bulk-close-preview-details" data-testid="bulk-close-preview" data-bulk-status="${evaluation.status}">
+          <strong id="bulk-close-preview-title">${escapeHtml(previewTitle)}</strong>
+          <span id="bulk-close-preview-message">${escapeHtml(previewMessage)}</span>
+          <small id="bulk-close-preview-details">${escapeHtml(bulkClosePreviewDetails(evaluation.excludedPinnedIds.length, includedPinnedCount))}</small>
+        </div>
+        <button class="button button--danger" type="button" data-action="request-bulk-close" data-focus-key="bulk-tabs-review" aria-describedby="bulk-close-preview-title bulk-close-preview-details" ${evaluation.status !== "ready" || preview.length === 0 ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Review and close…", "審閱並關閉……"))}</span></button>
+      </section>
       ${state.tabPreferences.closed.length ? `<section class="closed-tabs"><h3>${escapeHtml(tx("Recently closed app tabs", "最近關閉嘅應用程式分頁"))}</h3><div>${state.tabPreferences.closed.slice(-10).reverse().map(id => `<button class="assist-chip" type="button" data-action="reopen-tab" data-tab-id="${id}">${icon(tabDefinition(id).icon)}<span>${escapeHtml(tx(tabDefinition(id).en, tabDefinition(id).yue))}</span></button>`).join("")}</div></section>` : ""}
     </div>
   </section>`;
@@ -3965,7 +4048,16 @@ function renderConfirmation(): string {
     confirmLabel = tx("Import reviewed theme", "匯入已審閱主題");
   } else if (confirmation.kind === "bulk-close-tabs") {
     title = tx(`Close ${confirmation.tabIds.length} reviewed tabs?`, `關閉已審閱嘅 ${confirmation.tabIds.length} 個分頁？`);
-    body = `${confirmation.tabIds.map(id => tx(tabDefinition(id).en, tabDefinition(id).yue)).join(" · ")}. ${tx("Pinned tabs were included only if you explicitly enabled that option.", "釘選分頁只會喺你明確啟用嗰個選項時包括。")}`;
+    const mode = confirmation.mode === "regex"
+      ? tx("Regular-expression review", "正規表達式審閱")
+      : tx("Plain-text review", "純文字審閱");
+    const direction = confirmation.inverse
+      ? tx("close labels that do not match", "關閉唔符合嘅標籤")
+      : tx("close labels that match", "關閉符合嘅標籤");
+    const pinned = confirmation.includePinned
+      ? tx(`Pinned inclusion was explicitly enabled; this exact set contains ${confirmation.pinnedTabIds.length} pinned tab${confirmation.pinnedTabIds.length === 1 ? "" : "s"}.`, `已明確啟用包括釘選分頁；呢個確切清單有 ${confirmation.pinnedTabIds.length} 個釘選分頁。`)
+      : tx("Pinned tabs are excluded from this exact set.", "釘選分頁已由呢個確切清單排除。 ");
+    body = `${confirmation.tabIds.map(id => tx(tabDefinition(id).en, tabDefinition(id).yue)).join(" · ")}. ${mode} · ${direction}. ${pinned}`;
     confirmLabel = tx("Close reviewed tabs", "關閉已審閱分頁");
   } else if (confirmation.kind === "restore-local") {
     title = tx("Restore this workspace version?", "還原呢個工作空間版本？");
@@ -5668,6 +5760,7 @@ const handleConfirmation = async (): Promise<void> => {
     const remaining = visibleTabIds();
     if (!remaining.includes(state.activeTab)) state.activeTab = remaining[0] ?? "mail";
     persistTabs();
+    pendingFocusKey = returnFocusKey ?? "search-bulk-tabs";
     pushToast("success", "Reviewed tabs closed", `${confirmation.tabIds.length} tab${confirmation.tabIds.length === 1 ? "" : "s"} closed.`, "已關閉審閱分頁", `已關閉 ${confirmation.tabIds.length} 個分頁。`);
     render();
     return;
@@ -6600,7 +6693,18 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "request-restore-local": if (button.dataset.revisionHash) showConfirmation({ kind: "restore-local", hash: button.dataset.revisionHash, label: button.dataset.revisionLabel ?? button.dataset.revisionHash }); break;
     case "dismiss-dim-sum": state.dimSumVisible = false; render(); break;
     case "request-bulk-close": {
-      const ids = bulkClosePreview(); if (ids.length) showConfirmation({ kind: "bulk-close-tabs", tabIds: ids, inverse: state.bulkInverse }); break;
+      const evaluation = bulkCloseEvaluation();
+      if (evaluation.status === "ready" && evaluation.tabIds.length) {
+        showConfirmation({
+          kind: "bulk-close-tabs",
+          tabIds: evaluation.tabIds,
+          inverse: state.bulkInverse,
+          mode: searchFor("bulk-tabs").mode,
+          includePinned: state.bulkIncludePinned,
+          pinnedTabIds: evaluation.tabIds.filter(id => state.tabPreferences.pinned.includes(id)),
+        }, "search-bulk-tabs");
+      }
+      break;
     }
     case "close-tab": if (pageId) closeTab(pageId); break;
     case "reopen-tab": if (pageId) activateTab(pageId); break;
@@ -6937,8 +7041,8 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
     if (control.checked) state.filters.historyActions.add(action); else state.filters.historyActions.delete(action);
     render(); return;
   }
-  if (control.dataset.bulkOption === "inverse" && control instanceof HTMLInputElement) { state.bulkInverse = control.checked; render(); return; }
-  if (control.dataset.bulkOption === "pinned" && control instanceof HTMLInputElement) { state.bulkIncludePinned = control.checked; render(); return; }
+  if (control.dataset.bulkOption === "inverse" && control instanceof HTMLInputElement) { state.bulkInverse = control.checked; persistSearch("bulk-tabs"); render(); return; }
+  if (control.dataset.bulkOption === "pinned" && control instanceof HTMLInputElement) { state.bulkIncludePinned = control.checked; persistSearch("bulk-tabs"); render(); return; }
   if (control instanceof HTMLInputElement && control.dataset.tabColorProperty) {
     if (updateTabColorControl(control, true)) render();
     return;
