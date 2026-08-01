@@ -78,7 +78,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Complete a validated per-workspace-tab appearance slice with anchored context/keyboard access, restart persistence, per-property reset, and focus return
 - [ ] Complete appearance editing for every element, including picker self-customization and import/export
 - [x] Add persisted tab pinning, fixed grouping, overflow, reviewed bulk close, and four independent discovery searches
-- [ ] Expand the factual in-app changelog from its three bundled entries to every published version (eleven audited through `v0.44.1` on 2026-08-01)
+- [x] Expand the factual in-app changelog to every audited published version (eleven versions through `v0.45.1` on 2026-08-01)
 - [x] Add the off-by-default serialized TTS narrator foundation
 - [ ] Prove narrator coexistence with screen readers, quiet settings, and natural Hong Kong Cantonese voices
 - [x] Add the 1% startup dim-sum draw using a bundled verified local catalog

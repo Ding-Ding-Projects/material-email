@@ -2,13 +2,13 @@
 
 ## Status
 
-The release audit on 2026-08-01 found **eleven published versions** from `v0.8.1` through installer-only `v0.44.1`. The current viewer still bundles only `v0.8.1`, `v0.10.1`, and `v0.11.1`; generated ledger coverage for the other published versions remains open and is no longer described as complete.
+The release audit on 2026-08-01 found **eleven published versions** from `v0.8.1` through installer-only `v0.45.1`. The viewer now lists every audited published version; the two installer-only releases intentionally carry no borrowed code name or photo.
 
 ## Behavior
 
 The Changelog tab is intended to show every released version with exact version, release date, categorized changes, and the release's dim-sum code name only when a verified catalog asset exists. Search and date filters compose. Users can copy or export the currently filtered view.
 
-The current viewer composes its bounded plain-text or regex search with typed release-date bounds. It preserves the raw date fields for the current app session, reports incomplete, impossible, and reversed ranges inline, and uses one shared filtered Markdown selection for both copy and export. A release without a catalog decoration must show neither a borrowed code name nor a fallback photo. Generated release-ledger validation remains open.
+The current viewer composes its bounded plain-text or regex search with typed release-date bounds. It preserves the raw date fields for the current app session, reports incomplete, impossible, and reversed ranges inline, and uses one shared filtered Markdown selection for both copy and export. A release without a catalog decoration shows neither a borrowed code name nor a fallback photo. The audited release ledger is covered by renderer and release-contract tests.
 
 ## Configuration
 

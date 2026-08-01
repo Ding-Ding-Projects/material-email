@@ -2131,7 +2131,26 @@ function renderHistoryPage(): string {
 }
 
 function changelogEntries(): ChangelogEntry[] {
+  const published = (version: string, codeName?: string, image?: string): ChangelogEntry => ({
+    version,
+    date: "2026-08-01",
+    title: tx("Published Windows release", "已發佈 Windows 版本"),
+    ...(codeName && image ? { codeName, image } : {}),
+    changes: [{
+      category: tx("Release", "發佈"),
+      detail: tx("Published a Windows installer and immutable release assets for this version.", "已發佈呢個版本嘅 Windows 安裝程式同不可變版本資產。"),
+    }],
+  });
   const entries: ChangelogEntry[] = [
+    published("0.45.1"),
+    published("0.44.1"),
+    published("0.19.1", "Cuttlefish Shrimp Dumpling · 墨魚蝦餃", "hk-dish-0010-cuttlefish-shrimp-dumpling.png"),
+    published("0.18.1", "Dried Scallop Shrimp Dumpling · 瑤柱蝦餃", "hk-dish-0009-dried-scallop-shrimp-dumpling.png"),
+    published("0.17.1", "Lobster Dumpling · 龍蝦餃", "hk-dish-0008-lobster-dumpling.png"),
+    published("0.16.1", "Pea Shoot Shrimp Dumpling · 豆苗蝦餃", "hk-dish-0007-pea-shoot-shrimp-dumpling.png"),
+    published("0.14.1", "Spinach Shrimp Dumpling · 菠菜蝦餃", "hk-dish-0006-spinach-shrimp-dumpling.png"),
+    published("0.13.1", "Chive Shrimp Dumpling · 韭菜蝦餃", "hk-dish-0005-chive-shrimp-dumpling.png"),
+    published("0.12.1", "Crab Roe Har Gow · 蟹籽蝦餃", "hk-dish-0004-crab-roe-har-gow.png"),
     { version: "0.8.1", date: "2026-08-01", title: tx("Windows desktop foundation", "Windows 桌面基礎"), codeName: "Classic Har Gow · 蝦餃", image: "hk-dish-0001-classic-har-gow.png", changes: [{ category: tx("Mail", "郵件"), detail: tx("Secure account setup, three-pane mail, isolated reading, compose, and attachment saving.", "安全帳戶設定、三欄郵件、隔離閱讀、撰寫同附件儲存。") }, { category: tx("Workspace", "工作空間"), detail: tx("Persistent tabs, search, pinning, and reviewed bulk close.", "持久分頁、搜尋、釘選同經審閱批量關閉。") }] },
     { version: "0.10.1", date: "2026-08-01", title: tx("Drafts and reading continuity", "草稿同閱讀連貫性"), codeName: "Scallop Har Gow · 帶子蝦餃", image: "hk-dish-0002-scallop-har-gow.png", changes: [{ category: tx("Mail", "郵件"), detail: tx("Drafts and Outbox became visible workspaces with retry, cancel, and delete actions.", "草稿同寄件匣變成可見工作空間，有重試、取消同刪除操作。") }, { category: tx("Reading", "閱讀"), detail: tx("Reader documents stay alive while message chrome updates.", "郵件介面更新嗰陣，閱讀文件保持連貫。") }] },
     { version: "0.11.1", date: "2026-08-01", title: tx("Queue recovery and privacy-safe notifications", "佇列復原同保障私隱通知"), codeName: "Bamboo Shoot Har Gow · 筍尖蝦餃", image: "hk-dish-0003-bamboo-shoot-har-gow.png", changes: [{ category: tx("Reliability", "可靠性"), detail: tx("Queued mail operations have retry ceilings, queue-head ordering, conflict visibility, and explicit discard.", "排隊郵件操作有重試上限、隊頭排序、衝突顯示同明確丟棄。") }, { category: tx("Privacy", "私隱"), detail: tx("Native Windows notifications are opt-in and contain only generic summaries.", "原生 Windows 通知要主動開啟，而且只包含通用摘要。") }] },
