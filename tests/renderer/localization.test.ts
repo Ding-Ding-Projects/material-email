@@ -50,6 +50,11 @@ describe("renderer language and humor selection", () => {
       funnyEnglish: 5,
       funnyCantonese: 1,
     })).toBe(`${SURFACE_TONE_COPY.notifications.english[4]} · ${SURFACE_TONE_COPY.notifications.cantonese[0]}`);
+    expect(localizedSurfaceTone("settingsNoMatch", {
+      language: "bilingual",
+      funnyEnglish: 1,
+      funnyCantonese: 5,
+    })).toBe(`${SURFACE_TONE_COPY.settingsNoMatch.english[0]} · ${SURFACE_TONE_COPY.settingsNoMatch.cantonese[4]}`);
   });
 
   it("falls back to the nearest lower level and then the other language instead of rendering blank copy", () => {

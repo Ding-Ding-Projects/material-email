@@ -45,6 +45,22 @@ export const localizedTone = (
 };
 
 export const SURFACE_TONE_COPY = {
+  settingsNoMatch: {
+    english: [
+      "No setting label, description, or current value matched. Edit or clear this local search.",
+      "No setting label, description, or current value matched. Edit or clear this local search and try again.",
+      "No setting label, description, or current value matched; adjust the local search and the settings will step back into view.",
+      "No setting label, description, or current value matched. Tune the local search—the settings have not wandered off.",
+      "No setting label, description, or current value matched. Tune the local search; the settings are backstage, not on holiday.",
+    ],
+    cantonese: [
+      "設定標籤、說明同目前值都冇配對。請修改或者清除呢個本機搜尋。",
+      "設定標籤、說明同目前值都冇配對。修改或者清除呢個本機搜尋再試。",
+      "設定標籤、說明同目前值都冇配對；調整本機搜尋，設定就會再行返出嚟。",
+      "設定標籤、說明同目前值都冇配對。調校一下本機搜尋——啲設定冇走失。",
+      "設定標籤、說明同目前值都冇配對。調校一下本機搜尋；啲設定只係喺後台，未去放假。",
+    ],
+  },
   appearance: {
     english: [
       "Changes preview immediately and remain local to this tab.",

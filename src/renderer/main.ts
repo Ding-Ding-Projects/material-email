@@ -123,6 +123,11 @@ import {
   parseCachedMailSearchMode,
   serializeCachedMailSearchMode,
 } from "./lib/cached-mail-search";
+import {
+  SETTINGS_SEARCH_STORAGE_KEY,
+  parseSettingsSearch,
+  serializeSettingsSearch,
+} from "./lib/settings-search";
 import { selectStableMessageId } from "../shared/unified-folders";
 import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
 import {
@@ -388,6 +393,14 @@ const persistCachedMailSearchMode = (mode: MatchMode): void => {
     localStorage.setItem(CACHED_MAIL_SEARCH_MODE_STORAGE_KEY, serializeCachedMailSearchMode(mode));
   } catch {
     // Search remains usable when browser storage is unavailable; the mode simply cannot survive restart.
+  }
+};
+
+const readSettingsSearch = (): Pick<SearchModel, "mode" | "pattern" | "flags"> => {
+  try {
+    return parseSettingsSearch(localStorage.getItem(SETTINGS_SEARCH_STORAGE_KEY));
+  } catch {
+    return parseSettingsSearch(null);
   }
 };
 
@@ -681,9 +694,25 @@ const tabDefinition = (id: PageId): TabDefinition => TAB_DEFINITIONS.find(tab =>
 const searchFor = (key: string): SearchModel => {
   const existing = state.searches[key];
   if (existing) return existing;
-  const created: SearchModel = { mode: key === "mail" ? readCachedMailSearchMode() : "plain", pattern: "", flags: "i", sample: "", builderOpen: false };
+  const persisted = key === "settings" ? readSettingsSearch() : null;
+  const created: SearchModel = {
+    mode: persisted?.mode ?? (key === "mail" ? readCachedMailSearchMode() : "plain"),
+    pattern: persisted?.pattern ?? "",
+    flags: persisted?.flags ?? "i",
+    sample: "",
+    builderOpen: false,
+  };
   state.searches[key] = created;
   return created;
+};
+
+const persistSearch = (key: string): void => {
+  if (key !== "settings") return;
+  try {
+    localStorage.setItem(SETTINGS_SEARCH_STORAGE_KEY, serializeSettingsSearch(searchFor(key)));
+  } catch {
+    // The Settings search remains usable when browser storage is unavailable.
+  }
 };
 
 const persistTabs = (): void => {
@@ -1668,7 +1697,9 @@ function renderRegexBuilder(key: string): string {
       <div><p class="eyebrow">${escapeHtml(tx("JAVASCRIPT REGEXP", "JAVASCRIPT 正規表達式"))}</p><h2 id="regex-title-${escapeHtml(key)}">${escapeHtml(tx("Regular expression builder", "正規表達式建立器"))}</h2></div>
       <button class="icon-button" type="button" data-action="close-regex-builder" data-search-key="${escapeHtml(key)}" aria-label="${escapeHtml(tx("Close regex builder", "關閉正規表達式建立器"))}">${icon("close")}</button>
     </header>
-    <p class="supporting-copy">${escapeHtml(tx("This builder is attached only to this search field. Patterns and samples stay on this computer.", "呢個建立器只連住呢一個搜尋欄。模式同範例都留喺你部電腦。"))}</p>
+    <p class="supporting-copy">${escapeHtml(key === "settings"
+      ? tx("This builder is attached only to this search field. Its Settings pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢一個搜尋欄。設定模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
+      : tx("This builder is attached only to this search field. Patterns and samples stay on this computer.", "呢個建立器只連住呢一個搜尋欄。模式同範例都留喺你部電腦。"))}</p>
     <div class="segmented-control" role="group" aria-label="${escapeHtml(tx("Match mode", "配對模式"))}">
       <button type="button" class="segment${model.mode === "plain" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="plain" data-focus-key="regex-mode-${escapeHtml(key)}-plain" aria-pressed="${model.mode === "plain"}">${escapeHtml(tx("Plain text", "純文字"))}</button>
       <button type="button" class="segment${model.mode === "regex" ? " is-selected" : ""}" data-action="set-regex-mode" data-search-key="${escapeHtml(key)}" data-mode="regex" data-focus-key="regex-mode-${escapeHtml(key)}-regex" aria-pressed="${model.mode === "regex"}">${escapeHtml(tx("Regular expression", "正規表達式"))}</button>
@@ -2817,6 +2848,7 @@ function settingSectionMatches(keywords: string): boolean {
 
 function renderSettingsPage(): string {
   const prefs = preferences();
+  const model = searchFor("settings");
   const sections = [
     settingSectionMatches("appearance theme light dark system density compact comfortable relaxed accent color font family size weight") ? renderAppearanceSettings(prefs) : "",
     settingSectionMatches("language English Cantonese bilingual funny humour voice narrator warning error dim sum startup") ? renderLanguageSettings(prefs) : "",
@@ -2826,12 +2858,13 @@ function renderSettingsPage(): string {
     settingSectionMatches("external editor Visual Studio Code Cursor Notepad detect open") ? renderEditorSettings(prefs) : "",
     settingSectionMatches("tabs pin reorder overflow search restore appearance") ? renderTabSettings() : "",
   ].filter(Boolean);
-  const validation = validatePattern(searchFor("settings"));
+  const validation = validatePattern(model);
+  const noMatch = model.pattern.length > 0 && validation.valid && sections.length === 0;
   return `<section class="standard-page settings-page" data-testid="settings-page" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings">
     ${renderPageHeader("PERSONALIZE", tx("Settings", "設定"), tx("Change the app without restarting it. Every preference here is stored locally.", "唔使重新啟動就可以改個應用程式。呢度每項偏好都儲喺本機。"), "settings")}
     <div class="page-search">${renderSearchField("settings", tx("Search settings and current values", "搜尋設定同目前值"))}</div>
-    ${!validation.valid && searchFor("settings").mode === "regex" ? `<div class="inline-banner inline-banner--error">${icon("warning")}<span>${escapeHtml(validation.message)}</span></div>` : ""}
-    <div class="settings-grid">${sections.length ? sections.join("") : `<div class="empty-card">${icon("search")}<h2>${escapeHtml(tx("No settings match", "冇符合嘅設定"))}</h2><p>${escapeHtml(tx("Try a different query or clear the regex filter.", "試吓其他搜尋字，或者清除正規表達式篩選。"))}</p></div>`}</div>
+    ${!validation.valid && model.mode === "regex" ? `<div class="inline-banner inline-banner--error">${icon("warning")}<span>${escapeHtml(validation.message)}</span></div>` : ""}
+    <div class="settings-grid">${sections.length ? sections.join("") : noMatch ? `<div class="empty-card empty-card--action" role="status" aria-labelledby="settings-search-empty-title" data-testid="settings-search-empty">${icon("search")}<h2 id="settings-search-empty-title">${escapeHtml(tx("No settings match", "冇符合嘅設定"))}</h2><p>${escapeHtml(surfaceTone("settingsNoMatch"))}</p><button class="button button--tonal" type="button" data-action="focus-settings-search">${icon("search")}<span>${escapeHtml(tx("Edit settings search", "修改設定搜尋"))}</span></button></div>` : ""}</div>
   </section>`;
 }
 
@@ -5940,6 +5973,9 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "focus-mail-search":
       focusByKey("search-mail");
       break;
+    case "focus-settings-search":
+      focusByKey("search-settings");
+      break;
     case "edit-mail-search": {
       const model = searchFor("mail");
       model.builderOpen = true;
@@ -5960,6 +5996,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       const key = button.dataset.searchKey;
       if (key) {
         searchFor(key).pattern = "";
+        persistSearch(key);
         pendingFocusKey = `search-${key}`;
         if (key === "contacts") scheduleContactSearch();
         if (key === "mail") scheduleMailSearch(0);
@@ -5987,6 +6024,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (key && (button.dataset.mode === "plain" || button.dataset.mode === "regex")) {
         searchFor(key).mode = button.dataset.mode;
         if (key === "mail") persistCachedMailSearchMode(button.dataset.mode);
+        persistSearch(key);
         if (key === "contacts") scheduleContactSearch();
         if (key === "mail") scheduleMailSearch(0);
         render();
@@ -5999,6 +6037,7 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (!key || !guide) break;
       const snippets: Record<string, string> = { literal: "literal", class: "[A-Za-z0-9]", anchors: "^…$", group: "(group)", alternation: "one|two", quantifier: "{1,3}" };
       searchFor(key).pattern += snippets[guide] ?? "";
+      persistSearch(key);
       if (key === "mail") scheduleMailSearch();
       render();
       break;
@@ -6751,6 +6790,7 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
     const model = searchFor(control.dataset.regexFlag);
     const flag = control.value;
     model.flags = control.checked ? `${model.flags}${flag}` : model.flags.replaceAll(flag, "");
+    persistSearch(control.dataset.regexFlag);
     if (control.dataset.regexFlag === "mail") scheduleMailSearch(0);
     render(); return;
   }
@@ -6848,6 +6888,7 @@ app.addEventListener("input", event => {
   const searchKey = control.dataset.searchKey;
   if (searchKey) {
     searchFor(searchKey).pattern = control.value;
+    persistSearch(searchKey);
     if (searchKey === "contacts") scheduleContactSearch();
     if (searchKey === "mail") scheduleMailSearch();
     render(); return;
@@ -6855,6 +6896,7 @@ app.addEventListener("input", event => {
   const patternKey = control.dataset.regexPattern;
   if (patternKey) {
     searchFor(patternKey).pattern = control.value;
+    persistSearch(patternKey);
     if (patternKey === "contacts") scheduleContactSearch();
     if (patternKey === "mail") scheduleMailSearch();
     render(); return;
