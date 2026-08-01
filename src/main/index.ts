@@ -26,6 +26,7 @@ import {
 let mainWindow: BrowserWindow | null = null;
 let activeTrustedRendererUrl: string | null = null;
 let service: AppService;
+const nativeNotificationLastShown = new Map<string, number>();
 const pendingMailto: string[] = [];
 const isCiSmoke = process.argv.includes("--ci-smoke");
 const isHeadlessHarness = process.env.MATERIAL_EMAIL_HEADLESS === "1";
@@ -108,6 +109,10 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("notifications:clear", ipcPayloadSchemas.none, () => service.clearNotifications());
   handleValidated("notifications:native", ipcPayloadSchemas.nativeNotification, async ([kind]) => {
     if (!(await service.getPreferences()).nativeNotificationsEnabled || !Notification.isSupported()) return false;
+    const now = Date.now();
+    const previous = nativeNotificationLastShown.get(kind) ?? 0;
+    if (now - previous < 2_000) return false;
+    nativeNotificationLastShown.set(kind, now);
     const title = "Material Email";
     const prefs = await service.getPreferences();
     const body = nativeNotificationCopy(kind, prefs);
