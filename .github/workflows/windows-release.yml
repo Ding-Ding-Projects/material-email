@@ -68,7 +68,14 @@ jobs:
           }
           $candidate = $catalog | Where-Object { $used -notcontains $_.file } | Select-Object -First 1
           if (-not $candidate) {
-            throw "No unused verified dim-sum image remains in the bundled release catalog."
+            Write-Host "No unused verified dim-sum image remains; shipping this version without a code name or photo."
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "code_name="
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "photo_file="
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "photo_path="
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "photo_sha256="
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "catalog_commit="
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "dish_id="
+            exit 0
           }
           $photoPath = Join-Path "src/renderer/assets/dim-sum" $candidate.file
           if (-not (Test-Path -LiteralPath $photoPath)) {
@@ -258,12 +265,14 @@ jobs:
           '@
           $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
           Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8
-          gh release create '${{ steps.release.outputs.tag }}' `
-            '${{ steps.package.outputs.installer }}' `
-            '${{ steps.dish.outputs.photo_path }}' `
+          $assets = @('${{ steps.package.outputs.installer }}')
+          if ('${{ steps.dish.outputs.photo_path }}') { $assets += '${{ steps.dish.outputs.photo_path }}' }
+          $title = "Material Email ${{ steps.release.outputs.version }}"
+          if ('${{ steps.dish.outputs.code_name }}') { $title += " · ${{ steps.dish.outputs.code_name }}" }
+          gh release create '${{ steps.release.outputs.tag }}' @assets `
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
-            --title "Material Email ${{ steps.release.outputs.version }} · ${{ steps.dish.outputs.code_name }}" `
+            --title $title `
             --notes-file $notesPath `
             --latest
 
