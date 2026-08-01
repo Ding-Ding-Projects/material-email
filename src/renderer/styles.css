@@ -451,6 +451,14 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .message-row__account { width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: 999px; background: var(--secondary-container); color: var(--on-secondary-container); font-size: 0.66rem; font-weight: 700; }
 .message-row__preview { color: var(--on-surface-variant); font-size: 0.72rem; }
 .unified-folder-note, .reader-unified-note { margin: 8px 10px; }
+.conversation-limit-note { margin: 8px 10px; }
+.conversation-group { margin: 6px 7px 10px; border: 1px solid var(--outline-variant); border-radius: 18px; overflow: hidden; background: var(--surface); }
+.conversation-group__header { min-height: 48px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 7px 11px; background: var(--surface-container-high); color: var(--on-surface); }
+.conversation-group__header > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.conversation-group__header strong, .conversation-group__header small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-group__header small { color: var(--on-surface-variant); font-size: 0.7rem; }
+.conversation-group__messages .message-row { border-radius: 0; border-inline: 0; }
+.conversation-group__messages .message-row:last-child { border-bottom: 0; }
 .attachment-indicator { color: var(--on-surface-variant); }
 .attachment-indicator .icon { width: 15px; height: 15px; }
 .star-button { align-self: center; width: 34px; height: 34px; display: grid; place-items: center; margin-right: 5px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--on-surface-variant); }

@@ -57,6 +57,8 @@ describe("mail content boundary", () => {
       "To: Demo User <demo@example.test>",
       "Subject: MIME fixture",
       "Message-ID: <fixture@example.test>",
+      "In-Reply-To: <parent@example.test>",
+      "References: <root@example.test> <parent@example.test>",
       "Date: Fri, 31 Jul 2026 12:30:00 -0400",
       "MIME-Version: 1.0",
       'Content-Type: multipart/mixed; boundary="fixture"',
@@ -77,6 +79,8 @@ describe("mail content boundary", () => {
     const parsed = await parseMessageSource("account", "Inbox", 42, source, new Set(["\\Seen", "\\Flagged"]));
 
     expect(parsed.subject).toBe("MIME fixture");
+    expect(parsed.inReplyTo).toBe("<parent@example.test>");
+    expect(parsed.references).toEqual(["<root@example.test>", "<parent@example.test>"]);
     expect(parsed.from[0]).toEqual({ name: "Nadia Chan", address: "nadia@example.test" });
     expect(parsed.unread).toBe(false);
     expect(parsed.starred).toBe(true);

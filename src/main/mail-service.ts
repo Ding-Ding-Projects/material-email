@@ -131,6 +131,16 @@ const addressList = (value?: AddressObject | AddressObject[] | null): Address[] 
   );
 };
 
+const boundedMessageReference = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length <= 4_096 ? trimmed : undefined;
+};
+
+const boundedMessageReferences = (value: ParsedMail["references"]): string[] => {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return [...new Set(values.map(item => item.trim()).filter(item => item.length > 0 && item.length <= 4_096))].slice(0, 100);
+};
+
 const envelopeAddresses = (value?: Array<{ name?: string; address?: string }> | null): Address[] =>
   (value ?? []).map(entry => ({ name: entry.name ?? "", address: entry.address ?? "" })).filter(entry => entry.address);
 
@@ -244,6 +254,8 @@ const parsedMessageToDetail = (
   const text = parsed.text?.trim() ?? "";
   const htmlSource = typeof parsed.html === "string" ? parsed.html : text.replace(/\n/g, "<br>");
   const sanitized = sanitizeMessageContent(htmlSource);
+  const inReplyTo = boundedMessageReference(parsed.inReplyTo);
+  const references = boundedMessageReferences(parsed.references);
   return {
     id: `${accountId}:${folderPath}:${uid}`,
     accountId,
@@ -251,6 +263,8 @@ const parsedMessageToDetail = (
     uid,
     ...(uidValidity ? { uidValidity } : {}),
     ...(parsed.messageId ? { messageId: parsed.messageId } : {}),
+    ...(inReplyTo ? { inReplyTo } : {}),
+    ...(references.length ? { references } : {}),
     from: addressList(parsed.from),
     to: addressList(parsed.to),
     cc: addressList(parsed.cc),
@@ -326,6 +340,7 @@ export class MailService {
         })) {
           const envelope = message.envelope;
           const flags = message.flags ?? new Set<string>();
+          const inReplyTo = boundedMessageReference(envelope?.inReplyTo);
           rows.push({
             id: `${account.id}:${folderPath}:${message.uid}`,
             accountId: account.id,
@@ -333,6 +348,7 @@ export class MailService {
             uid: message.uid,
             ...(client.mailbox && client.mailbox.uidValidity ? { uidValidity: client.mailbox.uidValidity.toString() } : {}),
             ...(envelope?.messageId ? { messageId: envelope.messageId } : {}),
+            ...(inReplyTo ? { inReplyTo } : {}),
             from: envelopeAddresses(envelope?.from),
             to: envelopeAddresses(envelope?.to),
             cc: envelopeAddresses(envelope?.cc),

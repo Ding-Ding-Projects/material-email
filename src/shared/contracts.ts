@@ -156,6 +156,8 @@ export interface MessageSummary {
   uid: number;
   uidValidity?: string;
   messageId?: string;
+  inReplyTo?: string;
+  references?: string[];
   from: Address[];
   to: Address[];
   cc: Address[];

@@ -2,7 +2,7 @@
 
 ## Current status
 
-**Verified bounded slice.** Material Email can show local cross-account **Unified Inbox**, **Starred**, and **Unread** views from message summaries already present in its persisted cache. This is not server-complete synchronization, conversation threading, or a new mail index.
+**Verified bounded slice.** Material Email can show local cross-account **Unified Inbox**, **Starred**, and **Unread** views from message summaries already present in its persisted cache. Visible cached rows can use the separate bounded [conversation-grouping helper](conversation-grouping.md); this is not server-complete synchronization/threading or a new mail index.
 
 ## Behavior
 
@@ -22,7 +22,7 @@ There is no separate index or synchronization setting. Add accounts normally, sy
 - A message or folder that has never been cached cannot appear.
 - Automatic synchronization still refreshes only the selected account's Inbox and selected folder. Other accounts may remain stale until synchronized individually.
 - Read/star membership is evaluated from cached summary flags. A late server change is not known until that account refreshes.
-- The views do not group related messages, search message bodies, expand threads, or claim all-mail coverage.
+- The views do not search message bodies, expand server-complete threads, or claim all-mail coverage. Local subject/reference grouping remains bounded to the visible cache.
 - If local aggregation fails, the app keeps the failure non-blocking and does not contact another server as a fallback.
 
 ## Security and privacy
@@ -33,7 +33,7 @@ Aggregation runs in the main process over validated local state and returns the 
 
 - `tests/unified-folders.test.ts` covers account/folder filtering, orphan and inconsistent-row rejection, deduplication, deterministic sorting, and stable selection.
 - `tests/ipc-validation.test.ts` limits the IPC input to `inbox`, `starred`, or `unread`.
-- `tests/e2e/unified-folders.spec.ts` exercises two accounts in Electron, visible attribution, account-label search, the shared anchored regex builder, selection across reordered refreshes, and all three virtual folders.
+- `tests/e2e/unified-folders.spec.ts` exercises two accounts in Electron, visible attribution, a bounded conversation group, account-label search, the shared anchored regex builder, selection across reordered refreshes, and all three virtual folders.
 
 ## Suggested articles
 

@@ -79,6 +79,7 @@ import {
 import { deletionEvidenceDescription, diffLineDescription, filterLocalRevisions, retentionPreviewDescription } from "./lib/local-history";
 import { filterPaletteCommands } from "./lib/command-search";
 import { selectStableMessageId } from "../shared/unified-folders";
+import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
 
 type PageId = "mail" | "drafts" | "outbox" | "contacts" | "calendar" | "tasks" | "settings" | "changelog" | "history" | "notifications" | "tools";
 type ToastKind = NotificationRecord["kind"];
@@ -1913,13 +1914,28 @@ function renderMessagePane(current: FolderSummary | undefined, messages: Message
   const totalUnread = messages.filter(message => message.unread).length;
   const unified = state.unifiedFolder;
   const title = unified ? unifiedFolderLabel(unified) : current?.name ?? tx("Messages", "郵件");
+  const grouping = groupCachedConversations(messages);
   return `<section class="message-pane" aria-label="${escapeHtml(tx("Message list", "郵件清單"))}">
     <header class="pane-heading message-pane__heading"><div><span class="overline">${escapeHtml(unified ? tx("LOCAL UNIFIED VIEW", "本機統一檢視") : tx("FOLDER", "資料夾"))}</span><h2>${escapeHtml(title)}</h2></div><span class="count-pill">${messages.length}${totalUnread ? ` · ${totalUnread} ${escapeHtml(tx("unread", "未讀"))}` : ""}</span></header>
-    ${unified ? `<p class="local-truth-note unified-folder-note" data-testid="unified-folder-truth">${icon("info")}<span>${escapeHtml(tx("Built only from summaries already cached on this computer. Synchronize each account to refresh its cache; server-wide coverage, threading, and a new search index are not implied.", "只會使用呢部電腦已有嘅郵件摘要快取。逐個帳戶同步先會更新各自快取；唔代表全伺服器覆蓋、threading 或者新搜尋索引。"))}</span></p>` : ""}
+    ${unified ? `<p class="local-truth-note unified-folder-note" data-testid="unified-folder-truth">${icon("info")}<span>${escapeHtml(tx("Built only from summaries already cached on this computer. Subject/reference grouping is local and bounded; server-wide coverage and a scalable search index are not implied.", "只會使用呢部電腦已有嘅郵件摘要快取。主旨／reference 分組只係本機有限處理；唔代表全伺服器覆蓋或者可擴展搜尋索引。"))}</span></p>` : ""}
+    ${grouping.limited ? `<p class="local-truth-note conversation-limit-note" data-testid="conversation-limit-note">${icon("warning")}<span>${escapeHtml(tx(`Conversation grouping is paused above ${CACHED_CONVERSATION_MESSAGE_LIMIT.toLocaleString()} visible cached messages; every message remains available as its own row.`, `畫面已快取郵件超過 ${CACHED_CONVERSATION_MESSAGE_LIMIT.toLocaleString()} 封，所以 conversation grouping 暫停；每封郵件仍然會獨立顯示。`))}</span></p>` : ""}
     ${isBusy("folder") ? `<div class="linear-progress" role="progressbar" aria-label="${escapeHtml(tx("Loading messages", "載入郵件"))}"></div>` : ""}
     <div class="message-list" data-testid="message-list" role="listbox" aria-label="${escapeHtml(tx("Messages", "郵件"))}" tabindex="0">
-      ${!searchValid ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(tx("Correct the regular expression to search messages.", "修正正規表達式先可以搜尋郵件。"))}</p></div>` : messages.length ? messages.map(renderMessageRow).join("") : `<div class="pane-empty"><span>${icon(searchFor("mail").pattern ? "search" : "inbox")}</span><h3>${escapeHtml(searchFor("mail").pattern ? tx("No matching messages", "冇符合嘅郵件") : unified ? tx("No cached messages in this view", "呢個檢視冇已快取郵件") : tx("This folder is clear", "呢個資料夾好乾淨"))}</h3><p>${escapeHtml(searchFor("mail").pattern ? tx("Try different words or adjust the regex builder.", "試吓其他字，或者調整正規表達式建立器。") : unified ? tx("Synchronize individual accounts, then refresh this local view.", "逐個帳戶同步，再重新整理呢個本機檢視。") : tx("Synchronize to check the server for anything new.", "同步一下，睇吓伺服器有冇新嘢。"))}</p></div>`}
+      ${!searchValid ? `<div class="pane-empty">${icon("warning")}<p>${escapeHtml(tx("Correct the regular expression to search messages.", "修正正規表達式先可以搜尋郵件。"))}</p></div>` : messages.length ? grouping.conversations.map(renderConversation).join("") : `<div class="pane-empty"><span>${icon(searchFor("mail").pattern ? "search" : "inbox")}</span><h3>${escapeHtml(searchFor("mail").pattern ? tx("No matching messages", "冇符合嘅郵件") : unified ? tx("No cached messages in this view", "呢個檢視冇已快取郵件") : tx("This folder is clear", "呢個資料夾好乾淨"))}</h3><p>${escapeHtml(searchFor("mail").pattern ? tx("Try different words or adjust the regex builder.", "試吓其他字，或者調整正規表達式建立器。") : unified ? tx("Synchronize individual accounts, then refresh this local view.", "逐個帳戶同步，再重新整理呢個本機檢視。") : tx("Synchronize to check the server for anything new.", "同步一下，睇吓伺服器有冇新嘢。"))}</p></div>`}
     </div>
+  </section>`;
+}
+
+function renderConversation(conversation: CachedConversation): string {
+  if (conversation.messages.length === 1) return renderMessageRow(conversation.messages[0]!);
+  const accountCount = conversation.accountIds.length;
+  const summary = tx(
+    `${conversation.messages.length} messages${conversation.unreadCount ? ` · ${conversation.unreadCount} unread` : ""}${accountCount > 1 ? ` · ${accountCount} accounts` : ""}`,
+    `${conversation.messages.length} 封郵件${conversation.unreadCount ? ` · ${conversation.unreadCount} 封未讀` : ""}${accountCount > 1 ? ` · ${accountCount} 個帳戶` : ""}`,
+  );
+  return `<section class="conversation-group" data-testid="conversation-group" data-conversation-id="${escapeHtml(conversation.id)}" role="group" aria-label="${escapeHtml(tx(`Conversation: ${conversation.subject}`, `對話：${conversation.subject}`))}">
+    <header class="conversation-group__header">${icon("mail")}<span><strong>${escapeHtml(conversation.subject)}</strong><small>${escapeHtml(summary)}</small></span><span class="count-pill">${conversation.messages.length}</span></header>
+    <div class="conversation-group__messages">${conversation.messages.map(renderMessageRow).join("")}</div>
   </section>`;
 }
 
@@ -4814,7 +4830,8 @@ document.addEventListener("keydown", event => {
   const list = target instanceof HTMLElement ? target.closest<HTMLElement>(".message-list") : null;
   if (list && (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End")) {
     event.preventDefault();
-    const messages = filteredMessages(); const current = messages.findIndex(message => message.id === state.selectedMessageId);
+    const messages = groupCachedConversations(filteredMessages()).conversations.flatMap(conversation => conversation.messages);
+    const current = messages.findIndex(message => message.id === state.selectedMessageId);
     const index = event.key === "Home" ? 0 : event.key === "End" ? messages.length - 1 : Math.min(messages.length - 1, Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)));
     const message = messages[index]; if (message) void loadMessage(message); return;
   }

@@ -30,7 +30,8 @@ The current foundation provides:
 
 - a sandboxed Electron renderer with context isolation, disabled Node integration, denied permission requests, blocked in-app navigation, and a narrow preload API whose handlers authenticate the current main window, top frame, and exact trusted renderer location;
 - manual IMAP and SMTP settings, connection tests, account persistence, folder/message synchronization, message reading, read/star flags, moving, sending, and local draft storage;
-- local cached Unified Inbox, Starred, and Unread views with source-account labels, shared literal/regex mail search, and stable composite selection (not server-complete synchronization, threading, or indexing);
+- local cached Unified Inbox, Starred, and Unread views with source-account labels, shared literal/regex mail search, and stable composite selection (not server-complete synchronization or indexing);
+- bounded local conversation grouping over visible cached summaries using normalized subjects and cached reference identifiers, with a 2,000-row fail-open ceiling (not server-complete threading or scalable indexing);
 - bounded MIME parsing and a conservative HTML sanitizer that removes active and remotely loaded content;
 - Windows-backed credential encryption through Electron `safeStorage` before account secrets reach the JSON state file;
 - serialized, temporary-file-backed JSON state writes; demo mail data; notification history; append-only-style history records; export hooks; and external-editor discovery;
@@ -123,6 +124,6 @@ The complete operational mirror is in [`AGENTS.md`](AGENTS.md).
 <details>
 <summary><strong>Project limitations</strong></summary>
 
-The following remain explicitly **open or not fully verified**: interactive OAuth, POP, server-complete all-account synchronization, conversation threading, native Windows notifications, SQLite mail indexing, remote CardDAV/CalDAV/task-provider synchronization, broad vCard/ICS interoperability, recurrence expansion and alarm delivery, cryptographic message features, antivirus/content scanning, clean-machine installer proof, CI releases, GitHub Pages, and live-site publication. Cached local unified folders, autoconfiguration, queued mail actions/outbox, attachment saving/quarantine, Git-backed snapshots, and the local organizer pass focused local checks; their documented live-provider, scale, screen-reader, and packaging matrices remain open.
+The following remain explicitly **open or not fully verified**: interactive OAuth, POP, server-complete all-account synchronization/threading, native Windows notifications, SQLite mail indexing, remote CardDAV/CalDAV/task-provider synchronization, broad vCard/ICS interoperability, recurrence expansion and alarm delivery, cryptographic message features, antivirus/content scanning, clean-machine installer proof, CI releases, GitHub Pages, and live-site publication. Cached local unified folders and bounded conversation grouping, autoconfiguration, queued mail actions/outbox, attachment saving/quarantine, Git-backed snapshots, and the local organizer pass focused local checks; their documented live-provider, scale, screen-reader, and packaging matrices remain open.
 
 </details>

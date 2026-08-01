@@ -168,6 +168,8 @@ const messageSummaryShape = {
   uid: messageUidSchema,
   uidValidity: z.string().min(1).max(128).optional(),
   messageId: z.string().max(4_096).optional(),
+  inReplyTo: z.string().max(4_096).optional(),
+  references: z.array(z.string().min(1).max(4_096)).max(100).optional(),
   from: z.array(addressSchema).max(1_000),
   to: z.array(addressSchema).max(1_000),
   cc: z.array(addressSchema).max(1_000),

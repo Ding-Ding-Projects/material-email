@@ -507,7 +507,13 @@ export class AppService {
       this.#requireCurrentMessage(draft, accountId, folderPath, uid, uidValidity);
       draft.details[id] = detail;
       const message = draft.messages[folderKey(accountId, folderPath)]?.find(item => item.uid === uid);
-      if (message) message.preview = detail.preview;
+      if (message) {
+        message.preview = detail.preview;
+        if (detail.inReplyTo) message.inReplyTo = detail.inReplyTo;
+        else delete message.inReplyTo;
+        if (detail.references?.length) message.references = [...detail.references];
+        else delete message.references;
+      }
     });
     return detail;
   }
