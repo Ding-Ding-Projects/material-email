@@ -7,7 +7,7 @@ describe("catalog-exhausted release contract", () => {
   it("keeps build decoration all-or-none and does not reuse the development dish for a dated release", async () => {
     const build = await read("scripts/build.mjs");
     expect(build).toContain("Release decoration metadata must provide code name, dish ID, image asset, and catalog commit together.");
-    expect(build).toContain('releaseDate\n    ? { codeName: "", dishId: "", imageAsset: "", catalogCommit: "" }');
+    expect(build).toMatch(/releaseDate\s*\?\s*\{\s*codeName:\s*""\s*,\s*dishId:\s*""\s*,\s*imageAsset:\s*""\s*,\s*catalogCommit:\s*""/);
   });
 
   it("verifies exactly one installer asset when no catalog photo is assigned", async () => {
