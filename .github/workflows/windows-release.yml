@@ -108,7 +108,7 @@ jobs:
           MATERIAL_EMAIL_DISH_ID: ${{ steps.dish.outputs.dish_id }}
           MATERIAL_EMAIL_DISH_ASSET: ${{ steps.dish.outputs.photo_file }}
           MATERIAL_EMAIL_CATALOG_COMMIT: ${{ steps.dish.outputs.catalog_commit }}
-        run: npx playwright test --grep-invert "distinguishes a saved composer|guards dirty PIM editors|a saved PIM mutation with a failed refresh"
+        run: npx playwright test tests/e2e/app.spec.ts:235
 
       - name: Test and build the Windows installer
         env:
