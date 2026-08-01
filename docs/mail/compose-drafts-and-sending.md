@@ -14,6 +14,8 @@ Closing or replacing a dirty composer uses an accessible discard decision instea
 
 If submission fails before a recipient verdict is available, the message is placed in a local outbox with the exact draft, failure text, timestamp, and attempt count. The next account sync retries it in order. If that retry receives a permanent zero-acceptance result, it leaves the outbox and returns to drafts instead of looping; partial acceptance is recorded without retrying already accepted recipients. Demo-account sending is local simulation and never contacts a server.
 
+The Outbox recovery card keeps the attempt count, automatic ceiling, queue-head position, and last factual error visible across restart. Its localized action labels follow the active language and independent English/Cantonese humor levels without changing the facts: **Retry once** makes one attempt only and is available only for the queue head; **Undo queued send** returns the unchanged snapshot to Drafts without contacting a server; and **Open delivery history** opens History with unrelated date/action filters cleared and the exact queue identifier applied. Each action's accessible name includes the queued subject, and retry/undo reference the visible stored error through `aria-describedby`.
+
 ## Configuration
 
 SMTP uses TLS, required STARTTLS, or explicit plain mode according to account settings. Connection, greeting, and socket timeouts are bounded. Newly configured accounts use password authentication; the OAuth browser foundation deliberately stops before token exchange and cannot currently create a sending account. Previously persisted OAuth-labeled accounts remain a migration boundary rather than evidence of a reviewed token lifecycle.
@@ -23,7 +25,7 @@ SMTP uses TLS, required STARTTLS, or explicit plain mode according to account se
 - The current body is plain text; rich composition is not implemented.
 - No address-completion, recipient-domain warning, public-recipient/Bcc check, attachment reminder, spell check, scheduled send, templates, or send-later choice is proven.
 - Partial acceptance cannot automatically create a remaining-recipient draft without a deliberate duplicate-prevention design; the exact rejected list is reported for manual review.
-- Queued mail has no user-edit/cancel interface documented yet.
+- A queued snapshot cannot be edited in place; undo it to Drafts before changing recipients or content.
 - Attachment files can change or disappear between selection and send.
 - A transport timeout after server acceptance can create duplicate-send ambiguity.
 
@@ -33,11 +35,11 @@ Bcc recipients must never appear in visible recipient lists or history exports n
 
 ## Verification
 
-The current local gate covers bounded compose IPC, attachment authorization, saved dirty baselines, guarded replacement, edits made during in-flight save/send, compare-and-swap draft preservation, accessible discard/focus return, and full/partial/permanent-zero/queued recipient classification. The Electron suite proves save-then-close, save/send mutual exclusion, and preservation of later edits; unit races cover accepted, partial, queued, and rejected delivery. No live-provider delivery, duplicate-ambiguity, oversized-attachment, clean-machine, or screen-reader matrix has completed.
+The current local gate covers bounded compose IPC, attachment authorization, saved dirty baselines, guarded replacement, edits made during in-flight save/send, compare-and-swap draft preservation, accessible discard/focus return, and full/partial/permanent-zero/queued recipient classification. Focused recovery evidence passes 2 unit/service files / 21 tests and 1 / 1 offline real-Electron scenario: a paused attempt count and last error survive restart, actions render with inverse bilingual humor levels and subject-specific names, queue-ID History navigation finds one exact record, undo returns the snapshot to Drafts without transport, and a remaining row survives a second restart. No live-provider delivery, duplicate-ambiguity, oversized-attachment, clean-machine, packaged screen-reader, or display-scale matrix has completed.
 
 ## Drafts and Outbox workspace
 
-Saved drafts remain addressable after the composer closes. The Drafts surface lists local drafts with recipient counts and previews; users can reopen, edit, or delete them. The Outbox surface lists queued deliveries, exposes retry and move-back-to-draft actions, and keeps attempt counts and the last factual error visible. Both surfaces are account-scoped and use the same validated IPC boundary as sending.
+Saved drafts remain addressable after the composer closes. The Drafts surface lists local drafts with recipient counts and previews; users can reopen, edit, or delete them. The Outbox surface lists queued deliveries, exposes retry-once, undo-to-Drafts, and exact History actions, and keeps attempt counts and the last factual error visible. Both surfaces are account-scoped and use the same validated IPC boundary as sending.
 
 Failure modes are explicit: a missing or removed draft/outbox item is rejected without mutating another account, cancellation preserves the queued message as a local draft, and retry delegates through the normal attachment authorization and send path.
 

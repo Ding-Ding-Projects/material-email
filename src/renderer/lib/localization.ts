@@ -3,6 +3,7 @@ import type { NotificationAction, NotificationCategory, Preferences } from "../.
 export type LocalizedTonePreferences = Pick<Preferences, "language" | "funnyEnglish" | "funnyCantonese">;
 export type ToneScale = readonly (string | null | undefined)[];
 export type WindowControlAction = "minimize" | "maximize" | "restore" | "close";
+export type QueueRecoveryAction = "retry" | "undo" | "open-history";
 
 export interface LocalizedToneScale {
   english: ToneScale;
@@ -108,6 +109,22 @@ export const SURFACE_TONE_COPY = {
       "已儲存嘅 App 通知仍然可以翻查；角落提示行個迷你謝幕禮，通知中心就一張收據都唔漏。",
     ],
   },
+  queueRecovery: {
+    english: [
+      "Each action affects only this queued item. Retry makes one delivery attempt; undo returns it to Drafts.",
+      "Each action affects only this queued item. Retry makes one delivery attempt, undo returns it to Drafts, and History keeps the local record.",
+      "Recovery stays item-specific: one retry attempt, one safe return to Drafts, and one local History trail.",
+      "Recovery stays item-specific: knock once on the server door, bring the message back to Drafts, or inspect its local History receipt.",
+      "Recovery stays item-specific: ring the server doorbell once, bring the tiny envelope back to Drafts, or inspect its local History receipt.",
+    ],
+    cantonese: [
+      "每個操作只影響呢個排隊項目。重試只會傳送一次；撤回會將佢移返草稿。",
+      "每個操作只影響呢個排隊項目。重試只會傳送一次，撤回會移返草稿，History 會保留本機記錄。",
+      "復原只針對呢個項目：重試一次、安全移返草稿，同埋保留一條本機 History 記錄。",
+      "復原只針對呢個項目：敲伺服器門一次、將郵件拎返草稿，或者檢查本機 History 收據。",
+      "復原只針對呢個項目：撳伺服器門鐘一次、將迷你信封拎返草稿，或者檢查本機 History 收據。",
+    ],
+  },
 } as const satisfies Record<string, LocalizedToneScale>;
 
 export type SurfaceTone = keyof typeof SURFACE_TONE_COPY;
@@ -190,6 +207,27 @@ export const localizedWindowControl = (
   preferences: LocalizedTonePreferences,
   combineBilingual?: (english: string, cantonese: string) => string,
 ): string => localizedTone(preferences, WINDOW_CONTROL_COPY[action], combineBilingual);
+
+const QUEUE_RECOVERY_ACTION_COPY = {
+  retry: {
+    english: ["Retry once", "Retry once safely", "Retry one delivery attempt", "Retry once — one server-door knock", "Retry once — one tiny server-doorbell ring"],
+    cantonese: ["重試一次", "安全重試一次", "重試一次傳送", "重試一次——只敲伺服器門一次", "重試一次——只撳一下迷你伺服器門鐘"],
+  },
+  undo: {
+    english: ["Undo queued send", "Undo queued send to Drafts", "Undo send — return it to Drafts", "Undo send — bring the envelope back to Drafts", "Undo send — bring the tiny envelope back to Drafts"],
+    cantonese: ["撤回排隊傳送", "撤回排隊傳送並移返草稿", "撤回傳送——移返草稿", "撤回傳送——將信封拎返草稿", "撤回傳送——將迷你信封拎返草稿"],
+  },
+  "open-history": {
+    english: ["Open delivery history", "Open this delivery history", "Open this item's local History", "Open the local History receipt", "Open the local History receipt — no detective hat required"],
+    cantonese: ["開啟傳送歷史", "開啟呢次傳送歷史", "開啟呢個項目嘅本機 History", "開啟本機 History 收據", "開啟本機 History 收據——唔使戴偵探帽"],
+  },
+} as const satisfies Record<QueueRecoveryAction, LocalizedToneScale>;
+
+export const localizedQueueRecoveryAction = (
+  action: QueueRecoveryAction,
+  preferences: LocalizedTonePreferences,
+  combineBilingual?: (english: string, cantonese: string) => string,
+): string => localizedTone(preferences, QUEUE_RECOVERY_ACTION_COPY[action], combineBilingual);
 
 export const notificationToastToneScale = (englishBody: string, cantoneseBody: string): LocalizedToneScale => ({
   english: [

@@ -68,6 +68,7 @@ import {
   localizedNotificationAction,
   localizedNotificationCategory,
   localizedNotificationKind,
+  localizedQueueRecoveryAction,
   localizedSurfaceTone,
   localizedTone,
   localizedWindowControl,
@@ -599,6 +600,9 @@ const tone = (english: readonly [string, string, string, string, string], canton
 
 const surfaceTone = (surface: SurfaceTone): string =>
   localizedSurfaceTone(surface, preferences(), bilingualText);
+
+const queueRecoveryActionCopy = (action: "retry" | "undo" | "open-history"): string =>
+  localizedQueueRecoveryAction(action, preferences(), bilingualText);
 
 const windowControlCopy = (action: "minimize" | "maximize" | "restore" | "close"): string =>
   localizedWindowControl(action, preferences(), bilingualText);
@@ -1742,9 +1746,32 @@ function renderOutboxPage(): string {
       <div class="button-row"><button class="button button--text" type="button" data-action="retry-pending-operation" data-operation-id="${escapeHtml(item.id)}" ${retryDisabled ? "disabled" : ""}>${escapeHtml(tx("Retry once", "重試一次"))}</button><button class="button button--text button--danger" type="button" data-action="request-discard-pending-operation" data-operation-id="${escapeHtml(item.id)}" data-operation-label="${escapeHtml(title)}" ${queueBusy ? "disabled" : ""}>${escapeHtml(tx("Discard change", "捨棄更改"))}</button></div>
     </article>`;
   }).join("");
-  const outboxRows = state.outboxItems.map(item => `<article class="history-card queue-card" data-testid="outbox-card"><span class="history-card__icon">${icon("send")}</span><div class="queue-card__body"><div class="record-meta"><span class="kind-badge">${escapeHtml(tx("Queued delivery", "排隊傳送"))}</span><span>${escapeHtml(tx(`${item.attempts} failed attempts · automatic ceiling ${item.automaticAttemptLimit}`, `${item.attempts} 次失敗 · 自動上限 ${item.automaticAttemptLimit}`))}</span>${item.isQueueHead ? `<span class="queue-head-badge">${escapeHtml(tx("Queue head", "隊首先處理"))}</span>` : `<span>${escapeHtml(tx("Waiting behind an earlier item", "等緊前面項目"))}</span>`}</div><h2>${escapeHtml(item.subject || tx("(No subject)", "（冇主旨）"))}</h2>${item.automaticRetryPaused ? `<p class="queue-status queue-status--paused" role="status">${icon("warning")}<span><strong>${escapeHtml(tx("Automatic retries paused", "自動重試已暫停"))}</strong>${escapeHtml(tx("Retry the queue head once or move this message back to drafts.", "重試隊首一次，或者將呢封郵件移返草稿。"))}</span></p>` : ""}<p class="queue-error">${escapeHtml(item.lastError || item.preview || tx("Waiting for delivery.", "等緊傳送。"))}</p><small>${escapeHtml(tx(`Queue ID ${item.id}`, `隊列 ID ${item.id}`))}</small></div><div class="button-row"><button class="button button--text" type="button" data-action="retry-outbox" data-outbox-id="${escapeHtml(item.id)}" ${queueBusy || !item.isQueueHead ? "disabled" : ""}>${escapeHtml(tx("Retry once", "重試一次"))}</button><button class="button button--text" type="button" data-action="cancel-outbox" data-outbox-id="${escapeHtml(item.id)}" ${queueBusy ? "disabled" : ""}>${escapeHtml(tx("Move to drafts", "移返草稿"))}</button></div></article>`).join("");
+  const outboxRows = state.outboxItems.map((item, index) => {
+    const subject = item.subject || tx("(No subject)", "（冇主旨）");
+    const titleId = `outbox-title-${index}`;
+    const statusId = `outbox-status-${index}`;
+    const retryLabel = queueRecoveryActionCopy("retry");
+    const undoLabel = queueRecoveryActionCopy("undo");
+    const historyLabel = queueRecoveryActionCopy("open-history");
+    return `<article class="history-card queue-card" data-testid="outbox-card" aria-labelledby="${titleId}" aria-describedby="${statusId}">
+      <span class="history-card__icon">${icon("send")}</span>
+      <div class="queue-card__body">
+        <div class="record-meta"><span class="kind-badge">${escapeHtml(tx("Queued delivery", "排隊傳送"))}</span><span>${escapeHtml(tx(`${item.attempts} failed attempts · automatic ceiling ${item.automaticAttemptLimit}`, `${item.attempts} 次失敗 · 自動上限 ${item.automaticAttemptLimit}`))}</span>${item.isQueueHead ? `<span class="queue-head-badge">${escapeHtml(tx("Queue head", "隊首先處理"))}</span>` : `<span>${escapeHtml(tx("Waiting behind an earlier item", "等緊前面項目"))}</span>`}</div>
+        <h2 id="${titleId}">${escapeHtml(subject)}</h2>
+        ${item.automaticRetryPaused ? `<p class="queue-status queue-status--paused" role="status">${icon("warning")}<span><strong>${escapeHtml(tx("Automatic retries paused", "自動重試已暫停"))}</strong>${escapeHtml(tx("Retry the queue head once or undo this queued send back to Drafts.", "重試隊首一次，或者撤回呢次排隊傳送並移返草稿。"))}</span></p>` : ""}
+        <p class="queue-error" id="${statusId}">${escapeHtml(item.lastError || item.preview || tx("Waiting for delivery.", "等緊傳送。"))}</p>
+        <small>${escapeHtml(tx(`Queue ID ${item.id}`, `隊列 ID ${item.id}`))}</small>
+      </div>
+      <div class="button-row">
+        <button class="button button--text" type="button" data-action="retry-outbox" data-outbox-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(tx(`${selectBilingualText(retryLabel, "en")}: ${selectBilingualText(subject, "en")}`, `${selectBilingualText(retryLabel, "yue")}：${selectBilingualText(subject, "yue")}`))}" aria-describedby="${statusId}" ${queueBusy || !item.isQueueHead ? "disabled" : ""}>${escapeHtml(retryLabel)}</button>
+        <button class="button button--text" type="button" data-action="cancel-outbox" data-outbox-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(tx(`${selectBilingualText(undoLabel, "en")}: ${selectBilingualText(subject, "en")}`, `${selectBilingualText(undoLabel, "yue")}：${selectBilingualText(subject, "yue")}`))}" aria-describedby="${statusId}" ${queueBusy ? "disabled" : ""}>${escapeHtml(undoLabel)}</button>
+        <button class="button button--text" type="button" data-action="open-queue-history" data-queue-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(tx(`${selectBilingualText(historyLabel, "en")}: ${selectBilingualText(subject, "en")}`, `${selectBilingualText(historyLabel, "yue")}：${selectBilingualText(subject, "yue")}`))}">${icon("history")}<span>${escapeHtml(historyLabel)}</span></button>
+      </div>
+    </article>`;
+  }).join("");
   return `<section class="standard-page" id="panel-outbox" role="tabpanel" aria-labelledby="tab-outbox">
     ${renderPageHeader("MAIL OPERATION QUEUE", tx("Outbox and pending changes", "寄件匣同待處理更改"), tx(`Automatic processing stops after ${AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT} failed attempts. Only the account queue head can be retried, and each manual action makes exactly one attempt.`, `自動處理失敗 ${AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT} 次就會停。只可以重試帳戶隊首，而且每次手動操作只試一次。`), "send")}
+    <p class="supporting-copy" data-testid="queue-recovery-tone">${escapeHtml(surfaceTone("queueRecovery"))}</p>
     <div class="page-tools"><button class="button button--outlined" type="button" data-action="refresh-outbox">${icon("refresh")}<span>${escapeHtml(tx("Refresh", "重新整理"))}</span></button></div>
     ${state.pendingOperations.length ? `<section class="queue-section" aria-labelledby="pending-change-title"><h2 id="pending-change-title">${escapeHtml(tx("Pending flag and move changes", "待處理旗標同搬移更改"))} <span class="count-pill">${state.pendingOperations.length}</span></h2><div class="record-list">${pendingRows}</div></section>` : ""}
     ${state.outboxItems.length ? `<section class="queue-section" aria-labelledby="queued-delivery-title"><h2 id="queued-delivery-title">${escapeHtml(tx("Queued deliveries", "排隊傳送"))} <span class="count-pill">${state.outboxItems.length}</span></h2><div class="record-list">${outboxRows}</div></section>` : ""}
@@ -6013,6 +6040,20 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "compose": openComposer(); break;
     case "refresh-drafts": await refreshDraftAndOutbox(); break;
     case "refresh-outbox": await refreshDraftAndOutbox(); break;
+    case "open-queue-history": {
+      const queueId = button.dataset.queueId;
+      if (!queueId) break;
+      const historySearch = searchFor("history");
+      historySearch.mode = "plain";
+      historySearch.pattern = queueId;
+      historySearch.flags = "i";
+      historySearch.builderOpen = false;
+      state.filters.historyActions.clear();
+      saveHistoryDates({ from: "", to: "" });
+      activateTab("history");
+      announce(tx(`Showing local History for queue item ${queueId}.`, `正在顯示隊列項目 ${queueId} 嘅本機 History。`));
+      break;
+    }
     case "open-draft": {
       const accountId = button.dataset.accountId ?? activeAccount()?.id; const id = button.dataset.draftId;
       if (!accountId || !id) break;

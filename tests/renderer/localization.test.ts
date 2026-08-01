@@ -4,6 +4,7 @@ import {
   localizedNotificationAction,
   localizedNotificationCategory,
   localizedNotificationKind,
+  localizedQueueRecoveryAction,
   localizedSurfaceTone,
   localizedTone,
   localizedWindowControl,
@@ -106,5 +107,29 @@ describe("renderer language and humor selection", () => {
       funnyEnglish: 1,
       funnyCantonese: 5,
     })).toBe("Close window · 關閉視窗——未完成更改要先見迷你寫字板督察");
+  });
+
+  it("keeps queued-mail recovery actions factual while applying independent humor levels", () => {
+    for (const action of ["retry", "undo", "open-history"] as const) {
+      const english = localizedQueueRecoveryAction(action, { language: "en", funnyEnglish: 5, funnyCantonese: 1 });
+      const cantonese = localizedQueueRecoveryAction(action, { language: "yue", funnyEnglish: 1, funnyCantonese: 5 });
+      expect(english).not.toBe("");
+      expect(cantonese).not.toBe("");
+    }
+    expect(localizedQueueRecoveryAction("retry", {
+      language: "bilingual",
+      funnyEnglish: 1,
+      funnyCantonese: 5,
+    })).toBe("Retry once · 重試一次——只撳一下迷你伺服器門鐘");
+    expect(localizedQueueRecoveryAction("undo", {
+      language: "en",
+      funnyEnglish: 1,
+      funnyCantonese: 5,
+    })).toContain("Undo queued send");
+    expect(localizedQueueRecoveryAction("open-history", {
+      language: "yue",
+      funnyEnglish: 5,
+      funnyCantonese: 1,
+    })).toBe("開啟傳送歷史");
   });
 });

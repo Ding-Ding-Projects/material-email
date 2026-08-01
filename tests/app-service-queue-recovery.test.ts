@@ -274,8 +274,19 @@ describe("AppService queued-operation recovery", () => {
     expect(rows[0]).toMatchObject({ id: first!.id, attempts: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT, automaticRetryPaused: true, isQueueHead: true });
     expect(rows[1]).toMatchObject({ id: second!.id, attempts: 0, isQueueHead: false });
 
-    await expect(service.retryOutbox(accountId, first!.id)).rejects.toThrow("Fixture SMTP offline");
-    rows = await service.listOutbox(accountId);
+    const restarted = new AppService(directory);
+    rows = await restarted.listOutbox(accountId);
+    expect(rows[0]).toMatchObject({
+      id: first!.id,
+      attempts: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
+      lastError: "Fixture SMTP offline",
+      automaticRetryPaused: true,
+      isQueueHead: true,
+    });
+    expect(rows[1]).toMatchObject({ id: second!.id, attempts: 0, isQueueHead: false });
+
+    await expect(restarted.retryOutbox(accountId, first!.id)).rejects.toThrow("Fixture SMTP offline");
+    rows = await restarted.listOutbox(accountId);
     expect(rows[0]).toMatchObject({ id: first!.id, attempts: AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT + 1, automaticRetryPaused: true });
     expect(serviceMocks.sendMessage).toHaveBeenCalledTimes(AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT + 1);
   });
