@@ -834,6 +834,7 @@ const loadAccount = async (accountId: string, synchronizeWhenEmpty = false): Pro
     const saved = await api.savePreferences({ selectedAccountId: accountId, ...(selected ? { selectedFolderPath: selected.path } : {}) });
     if (!ownsRequest()) return;
     if (state.bootstrap) state.bootstrap.preferences = saved;
+    await refreshDraftAndOutbox();
   } catch (error) {
     if (ownsRequest()) pushToast("error", "Could not open account", errorMessage(error), "開唔到帳戶", errorMessage(error));
   } finally {
@@ -894,6 +895,8 @@ const syncCurrentAccount = async (): Promise<void> => {
     if (selected) await loadFolder(selected.path, false, { navigationSequence, accountId });
     if (!ownsRequest()) return;
     if (!(await refreshMetadata(ownsRequest))) return;
+    await refreshDraftAndOutbox();
+    if (!ownsRequest()) return;
     pushToast(
       "success",
       "Mail synchronized",
@@ -2066,19 +2069,12 @@ interface ChangelogEntry {
 }
 
 function changelogEntries(): ChangelogEntry[] {
-  const release = state.bootstrap?.release;
-  return [{
-    version: release?.version ?? state.bootstrap?.version ?? "Unknown",
-    date: release?.releaseDate ?? "",
-    title: tx("Original Windows desktop foundation", "原創 Windows 桌面基礎"),
-    changes: [
-      { category: tx("Mail", "郵件"), detail: tx("Added secure account setup, three-pane mail, isolated reading, compose, drafts, flags, moves, and attachment saving.", "加入安全帳戶設定、三欄郵件、隔離閱讀、撰寫、草稿、旗標、移動同附件儲存。") },
-      { category: tx("Workspace", "工作空間"), detail: tx("Added persistent tabs, tab search, pinning, reordering, overflow management, and reviewed bulk close.", "加入持久分頁、分頁搜尋、釘選、排序、溢出管理同經審閱批量關閉。") },
-      { category: tx("Personalization", "個人化"), detail: tx("Added three language modes, independent funny levels, runtime theme, density, color, font, narrator, and dim-sum controls.", "加入三種語言模式、獨立搞笑程度、即時主題、密度、顏色、字款、旁白同點心控制。") },
-      { category: tx("Safety", "安全"), detail: tx("Message HTML is sandboxed; renderer actions use the selected message’s account, folder, and UID.", "郵件 HTML 放喺沙盒；介面操作會使用所選郵件嘅帳戶、資料夾同 UID。") },
-      { category: tx("Local organizer", "本機整理工具"), detail: tx("Added local contacts, mailing lists, calendar events, tasks, vCard transfer, and append-only PIM transaction restores.", "加入本機聯絡人、郵件群組、日曆事件、工作、vCard 傳輸同只追加 PIM 交易還原。") },
-    ],
-  }];
+  const entries: ChangelogEntry[] = [
+    { version: "0.8.1", date: "2026-08-01", title: tx("Windows desktop foundation", "Windows 桌面基礎"), changes: [{ category: tx("Mail", "郵件"), detail: tx("Secure account setup, three-pane mail, isolated reading, compose, and attachment saving.", "安全帳戶設定、三欄郵件、隔離閱讀、撰寫同附件儲存。") }, { category: tx("Workspace", "工作空間"), detail: tx("Persistent tabs, search, pinning, and reviewed bulk close.", "持久分頁、搜尋、釘選同經審閱批量關閉。") }] },
+    { version: "0.10.1", date: "2026-08-01", title: tx("Drafts and reading continuity", "草稿同閱讀連貫性"), changes: [{ category: tx("Mail", "郵件"), detail: tx("Drafts and Outbox became visible workspaces with retry, cancel, and delete actions.", "草稿同寄件匣變成可見工作空間，有重試、取消同刪除操作。") }, { category: tx("Reading", "閱讀"), detail: tx("Reader documents stay alive while message chrome updates.", "郵件介面更新嗰陣，閱讀文件保持連貫。") }] },
+    { version: "0.11.1", date: "2026-08-01", title: tx("Queue recovery and privacy-safe notifications", "佇列復原同保障私隱通知"), changes: [{ category: tx("Reliability", "可靠性"), detail: tx("Queued mail operations have retry ceilings, queue-head ordering, conflict visibility, and explicit discard.", "排隊郵件操作有重試上限、隊頭排序、衝突顯示同明確丟棄。") }, { category: tx("Privacy", "私隱"), detail: tx("Native Windows notifications are opt-in and contain only generic summaries.", "原生 Windows 通知要主動開啟，而且只包含通用摘要。") }] },
+  ];
+  return entries;
 }
 
 function renderChangelogPage(): string {
@@ -2509,6 +2505,9 @@ const activateTab = (id: PageId): void => {
   document.querySelector<HTMLElement>("#main-content")?.focus({ preventScroll: true });
   if (id === "history" && !state.localRevisionsLoaded) void loadLocalRevisions();
   if (id === "contacts" || id === "calendar" || id === "tasks") void ensurePimData();
+  if (id === "drafts" || id === "outbox") {
+    void refreshDraftAndOutbox().catch(error => pushToast("error", "Queue refresh failed", errorMessage(error), "隊列重新整理失敗", errorMessage(error)));
+  }
 };
 
 const loadLocalRevisions = async (): Promise<void> => {

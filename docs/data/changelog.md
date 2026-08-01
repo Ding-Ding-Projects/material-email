@@ -2,13 +2,13 @@
 
 ## Status
 
-**UI foundation; no released versions exist.** The viewer must not invent entries to fill an empty release history.
+**Three verified releases are bundled.** The viewer renders the factual release ledger for `v0.8.1`, `v0.10.1`, and `v0.11.1`; it does not fetch release data at runtime.
 
 ## Behavior
 
 The Changelog tab is intended to show every released version with exact version, release date, categorized changes, and the release's dim-sum code name only when a verified catalog asset exists. Search and date filters compose. Users can copy or export the currently filtered view.
 
-Because Material Email has no verified release yet, the truthful state is an empty/no-release message. Development milestones belong in the handoff and roadmap, not a fictional release entry.
+The current viewer supports regex search and filtered Markdown export. Date-range filtering, copy, and generated release-ledger validation remain open.
 
 ## Configuration
 
@@ -35,4 +35,3 @@ The renderer contains a Changelog route and shared search/export foundations. No
 - [Development and packaging](../delivery/development-and-packaging.md)
 - [Verification matrix](../delivery/verification.md)
 - [Search and regex builder](../experience/search-and-regex-builder.md)
-
