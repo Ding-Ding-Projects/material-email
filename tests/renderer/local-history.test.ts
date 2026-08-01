@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { LocalRevision } from "../../src/shared/contracts";
-import { deletionEvidenceDescription, diffLineDescription, filterLocalRevisions, localRevisionSearchText, retentionPreviewDescription } from "../../src/renderer/lib/local-history";
+import type { HistoryRecord, LocalRevision } from "../../src/shared/contracts";
+import { deletionEvidenceDescription, diffLineDescription, filterHistoryRecords, filterLocalRevisions, localRevisionSearchText, retentionPreviewDescription } from "../../src/renderer/lib/local-history";
+import { changelogDateRangeForPreset } from "../../src/renderer/lib/changelog";
 
 const revisions: LocalRevision[] = [
   { hash: "a".repeat(40), createdAt: "2026-08-01T10:00:00.000Z", subject: "Snapshot application state", label: "Before account cleanup", isLabeled: true },
@@ -8,6 +9,21 @@ const revisions: LocalRevision[] = [
 ];
 
 describe("local revision view model", () => {
+  it("composes history date ranges with action and regex predicates", () => {
+    const records: HistoryRecord[] = [
+      { id: "one", kind: "created", entityType: "account", entityId: "account-1", label: "Created account", createdAt: "2026-07-25T12:00:00.000Z", snapshot: {} },
+      { id: "two", kind: "settings-changed", entityType: "settings", entityId: "preferences", label: "Changed appearance", createdAt: "2026-07-29T12:00:00.000Z", snapshot: {} },
+      { id: "three", kind: "settings-changed", entityType: "settings", entityId: "preferences", label: "Changed language", createdAt: "2026-08-01T12:00:00.000Z", snapshot: {} },
+    ];
+    const actions = new Set<HistoryRecord["kind"]>(["settings-changed"]);
+    const matches = (value: string): boolean => /appearance|language/iu.test(value);
+
+    expect(filterHistoryRecords(records, "appearance|language", matches, actions, "2026-07-28", "2026-07-31")).toEqual([records[1]]);
+    expect(filterHistoryRecords(records, "appearance|language", matches, actions, "2026-08-02", null)).toEqual([]);
+    expect(filterHistoryRecords(records, "", () => false, new Set(), null, null)).toEqual(records);
+    expect(changelogDateRangeForPreset("last-7-days", "2026-08-01")).toEqual({ from: "2026-07-26", to: "2026-08-01" });
+  });
+
   it("searches labels, hashes, subjects, and timestamps through the supplied matcher", () => {
     const matches = (value: string): boolean => /before|a{40}/iu.test(value);
     expect(filterLocalRevisions(revisions, "before|a{40}", matches)).toEqual([revisions[0]]);

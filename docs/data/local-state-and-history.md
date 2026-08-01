@@ -2,7 +2,7 @@
 
 ## Status
 
-**Validated atomic JSON, corruption recovery, isolated Git snapshots, revision diff/label/restore, and a bounded retention/pruning slice are tested.** Secure deletion, encryption migration, storage-reclamation proof, and every-record restore remain open.
+**Validated atomic JSON, corruption recovery, isolated Git snapshots, advanced semantic-history date filtering, revision diff/label/restore, and a bounded retention/pruning slice are tested.** Secure deletion, encryption migration, storage-reclamation proof, and every-record restore remain open.
 
 ## Behavior
 
@@ -13,6 +13,8 @@ Startup distinguishes absence from corruption. Defaults are written only when ne
 After state writes, the application attempts to snapshot the full state file into an isolated local Git repository under its own data directory. It uses a fixed local identity, creates no commit for unchanged state, and never places `.git` inside a user-owned mail or project folder. Snapshot failures are logged without failing the user's primary operation.
 
 The application also keeps semantic history records. Settings history can be restored, and the restore appends a new record. Removing an account purges that account's live cache, drafts, outbox records, and pending operations in the primary state, while prior semantic records and already-created local revisions remain append-only. A whole-state local revision is accepted only when it is a compatible validated state from a commit in the current local-history lineage. The live state is snapshotted before replacement, and the restore creates another snapshot and semantic record, keeping time travel append-only.
+
+The semantic-history list composes its independent plain-text/JavaScript-regex search, derived action checkboxes, and date range. Its anchored non-modal calendar accepts two-click ranges, direct month/year jumps, keyboard day navigation, and last-seven-days, last-thirty-days, current-month, current-year, or all-history presets. The two text fields accept ISO dates and the active English or Hong Kong Chinese locale order. Partial, malformed, impossible, and inverted text stays visible with inline bilingual feedback rather than being discarded. Raw date text is session-persisted separately from Changelog, while valid canonical bounds drive both the visible rows and JSON export; invalid search or date state disables export.
 
 The History page lists all returned whole-workspace revisions instead of an eight-row teaser. Its independent plain-text-first search and anchored JavaScript regex builder match revision labels, immutable hashes, commit subjects, and timestamps. Expanding a revision loads a bounded, line-classified diff against its parent; the first revision is compared with an empty workspace. Encrypted-secret values are redacted before the preview crosses the typed preload boundary. A user label is stored in a dedicated local Git notes ref, so labeling does not rewrite the snapshot commit. Restore remains behind a reviewed blocking decision and returns focus when cancelled.
 
@@ -25,6 +27,8 @@ The same surface persists a retention age from 30 through 3,650 days, defaulting
 - Stable recovery copy: `material-email-state-v1.json.backup`
 - Notification retention: newest 500 records
 - Semantic history retention: newest 2,000 records
+- Semantic-history date input: 32 characters per bound; raw text is session-persisted under a history-only key
+- Semantic-history presets: last 7 days, last 30 days, current month, current year, and all history
 - Local revision listing: default 200, hard maximum 2,000
 - Local revision retention: default 365 days; configurable from 30 through 3,650 whole days
 - Automatic pruning: maximum 2,000 revisions in one complete preview; current, labeled, and recent revisions are protected
@@ -40,6 +44,7 @@ The same surface persists a retention age from 30 through 3,650 days, defaulting
 - Whole-state schema changes can make older revisions incompatible.
 - Restoring server-backed cache can present stale data until the next sync.
 - Semantic non-settings records are view-only to avoid unsafe server-side rewrites.
+- Partial, malformed, impossible, or inverted semantic-history dates intentionally produce no filtered/exportable result until corrected; the typed text is retained.
 - Revision preview truncation can omit later changed lines; restore still reads and validates the complete snapshot.
 - Labels are local annotations and are not a retention, pruning, or export policy.
 - A stale preview, unexpected head, dirty history worktree, non-linear lineage, non-app-owned commit, or history above the 2,000-revision preview ceiling blocks automatic pruning.
@@ -47,11 +52,11 @@ The same surface persists a retention age from 30 through 3,650 days, defaulting
 
 ## Security considerations
 
-Snapshots contain the same sensitive metadata as live state. Stored account secrets remain `safeStorage` ciphertext, and diff previews replace encrypted-secret values with an omission marker before renderer delivery. Message and account metadata can still appear in a local diff. File permissions, backup software, stable encryption binding, exported history, object reclamation, and secure deletion require review. Git commands use argument arrays; revision input is restricted to hashes, labels are bounded and reject control characters, and prune application is tied to the exact validated dry run.
+Snapshots contain the same sensitive metadata as live state. Stored account secrets remain `safeStorage` ciphertext, and diff previews replace encrypted-secret values with an omission marker before renderer delivery. Message and account metadata can still appear in a local diff. History date text and regex evaluation remain local, bounded, and untransmitted. File permissions, backup software, stable encryption binding, exported history, object reclamation, and secure deletion require review. Git commands use argument arrays; revision input is restricted to hashes, labels are bounded and reject control characters, and prune application is tied to the exact validated dry run.
 
 ## Verification
 
-Focused tests exercise immutable snapshots, Git-note label persistence, parent diffs, encrypted-secret redaction, bounded label validation, exact dry-run candidates, stale-head refusal, non-app-owned blocking, current-tree and label preservation, bilingual retention semantics, persisted preference migration, and the real Electron diff/label/restore-review/retention-preview workflow. Missing Git, disk-full, real power-loss, antivirus-lock timing, DPAPI account changes, crash injection during the ref move, object-reclamation measurement, secure deletion, and complete every-record restore remain open.
+Focused tests exercise immutable snapshots, Git-note label persistence, parent diffs, encrypted-secret redaction, bounded label validation, exact dry-run candidates, stale-head refusal, non-app-owned blocking, current-tree and label preservation, bilingual retention semantics, persisted preference migration, and composed semantic-history action/text/date filtering. Real Electron covers diff/label/restore review, retention preview, invalid and partial typed dates, month/year navigation, keyboard day focus, named presets, two-click range selection, focus return, and date+action+regex composition. Missing Git, disk-full, real power-loss, antivirus-lock timing, DPAPI account changes, crash injection during the ref move, object-reclamation measurement, secure deletion, and complete every-record restore remain open.
 
 ## Suggested articles
 

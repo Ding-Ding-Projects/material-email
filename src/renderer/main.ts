@@ -98,7 +98,7 @@ import {
   validatePattern,
   type MatchMode,
 } from "./lib/regex";
-import { deletionEvidenceDescription, diffLineDescription, filterLocalRevisions, retentionPreviewDescription } from "./lib/local-history";
+import { deletionEvidenceDescription, diffLineDescription, filterHistoryRecords, filterLocalRevisions, retentionPreviewDescription } from "./lib/local-history";
 import { filterPaletteCommands } from "./lib/command-search";
 import { selectStableMessageId } from "../shared/unified-folders";
 import { CACHED_CONVERSATION_MESSAGE_LIMIT, groupCachedConversations, type CachedConversation } from "../shared/conversations";
@@ -276,6 +276,7 @@ interface RendererState {
   commandPaletteOpen: boolean;
   confirmation: ConfirmationState | null;
   filters: FiltersState;
+  historyCalendar: ChangelogCalendarState;
   changelogDates: ChangelogDateInputs;
   changelogCalendar: ChangelogCalendarState;
   bulkInverse: boolean;
@@ -331,6 +332,7 @@ const TAB_DEFINITIONS: readonly TabDefinition[] = [
 
 const ALL_TAB_IDS = TAB_DEFINITIONS.map(tab => tab.id);
 const TAB_STORAGE_KEY = "material-email.renderer-tabs.v1";
+const HISTORY_DATE_SESSION_KEY = "material-email.history-date-range.v1";
 
 const DEFAULT_PREFERENCES: Preferences = {
   language: "en",
@@ -381,6 +383,8 @@ const readTabPreferences = (): TabPreferences<PageId> => {
   return parseTabPreferences(localStorage.getItem(TAB_STORAGE_KEY), ALL_TAB_IDS, defaultTabs());
 };
 
+const initialHistoryDates = readChangelogDateInputs(sessionStorage, HISTORY_DATE_SESSION_KEY);
+
 const state: RendererState = {
   phase: "loading",
   fatalError: "",
@@ -426,7 +430,13 @@ const state: RendererState = {
   appearanceEditor: null,
   commandPaletteOpen: false,
   confirmation: null,
-  filters: { historyFrom: "", historyTo: "", historyActions: new Set() },
+  filters: { historyFrom: initialHistoryDates.from, historyTo: initialHistoryDates.to, historyActions: new Set() },
+  historyCalendar: {
+    open: false,
+    visibleMonth: localIsoDate().slice(0, 7),
+    focusDate: localIsoDate(),
+    selecting: "start",
+  },
   changelogDates: readChangelogDateInputs(sessionStorage),
   changelogCalendar: {
     open: false,
@@ -2839,19 +2849,26 @@ function renderNotificationsPage(): string {
   </section>`;
 }
 
-function historyMatches(item: HistoryRecord): boolean {
-  if (state.filters.historyActions.size && !state.filters.historyActions.has(item.kind)) return false;
-  const timestamp = Date.parse(item.createdAt);
-  if (state.filters.historyFrom) {
-    const start = Date.parse(`${state.filters.historyFrom}T00:00:00`);
-    if (Number.isFinite(start) && timestamp < start) return false;
-  }
-  if (state.filters.historyTo) {
-    const end = Date.parse(`${state.filters.historyTo}T23:59:59.999`);
-    if (Number.isFinite(end) && timestamp > end) return false;
-  }
+function currentHistorySelection(): {
+  records: HistoryRecord[];
+  range: ReturnType<typeof validateDateRange>;
+  valid: boolean;
+} {
   const model = searchFor("history");
-  return !model.pattern || createMatcher(model)(`${item.label}\n${item.kind}\n${item.entityType}\n${item.entityId}`);
+  const range = validateDateRange(state.filters.historyFrom, state.filters.historyTo, historyDateLocale());
+  const valid = range.valid && (!model.pattern || validatePattern(model).valid);
+  return {
+    records: valid ? filterHistoryRecords(
+      state.bootstrap?.history ?? [],
+      model.pattern,
+      createMatcher(model),
+      state.filters.historyActions,
+      range.from.isoDate,
+      range.to.isoDate,
+    ) : [],
+    range,
+    valid,
+  };
 }
 
 function renderOAuthTokenVaultSettings(): string {
@@ -2975,18 +2992,119 @@ function renderLocalVersions(): string {
   </section>`;
 }
 
+const historyDateLocale = (): string => preferences().language === "yue" ? "zh-HK" : "en-CA";
+
+const historyCalendarFocusDate = (): string => {
+  const { visibleMonth, focusDate } = state.historyCalendar;
+  return focusDate.startsWith(`${visibleMonth}-`) ? focusDate : `${visibleMonth}-01`;
+};
+
+function renderHistoryCalendar(range: ReturnType<typeof validateDateRange>): string {
+  const { visibleMonth, selecting } = state.historyCalendar;
+  const [year, month] = visibleMonth.split("-").map(Number) as [number, number];
+  const today = localIsoDate();
+  const focusDate = historyCalendarFocusDate();
+  const monthLabel = tx(
+    new Intl.DateTimeFormat("en-CA", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1))),
+    new Intl.DateTimeFormat("zh-HK", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1))),
+  );
+  const monthOptions = Array.from({ length: 12 }, (_, index) => {
+    const value = index + 1;
+    const label = tx(
+      new Intl.DateTimeFormat("en-CA", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2020, index, 1))),
+      new Intl.DateTimeFormat("zh-HK", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2020, index, 1))),
+    );
+    return `<option value="${value}" ${month === value ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+  const weekdayLabels = Array.from({ length: 7 }, (_, weekday) => {
+    const date = new Date(Date.UTC(2026, 7, 2 + weekday));
+    const full = tx(
+      new Intl.DateTimeFormat("en-CA", { weekday: "long", timeZone: "UTC" }).format(date),
+      new Intl.DateTimeFormat("zh-HK", { weekday: "long", timeZone: "UTC" }).format(date),
+    );
+    const short = tx(
+      new Intl.DateTimeFormat("en-CA", { weekday: "narrow", timeZone: "UTC" }).format(date),
+      new Intl.DateTimeFormat("zh-HK", { weekday: "narrow", timeZone: "UTC" }).format(date),
+    );
+    return `<span role="columnheader" aria-label="${escapeHtml(full)}">${escapeHtml(short)}</span>`;
+  }).join("");
+  const from = range.from.isoDate;
+  const to = range.to.isoDate;
+  const weeks = changelogCalendarWeeks(visibleMonth).map(week => `<div class="changelog-calendar__week" role="row">${week.map(day => {
+    if (!day) return `<span class="changelog-calendar__blank" role="gridcell" aria-hidden="true"></span>`;
+    const inRange = Boolean(from && day.isoDate >= from && (!to || day.isoDate <= to));
+    const isStart = day.isoDate === from;
+    const isEnd = day.isoDate === to;
+    const classes = [
+      "changelog-calendar__day",
+      inRange ? "is-in-range" : "",
+      isStart ? "is-range-start" : "",
+      isEnd ? "is-range-end" : "",
+      day.isoDate === today ? "is-today" : "",
+    ].filter(Boolean).join(" ");
+    return `<button class="${classes}" type="button" role="gridcell" data-action="select-history-date" data-history-calendar-day="${day.isoDate}" data-focus-key="history-calendar-day-${day.isoDate}" tabindex="${day.isoDate === focusDate ? "0" : "-1"}" aria-selected="${inRange}" ${day.isoDate === today ? `aria-current="date"` : ""} aria-label="${escapeHtml(changelogCalendarDateLabel(day.isoDate))}">${day.day}</button>`;
+  }).join("")}</div>`).join("");
+  const presets: Array<{ id: ChangelogDatePreset; label: string }> = [
+    { id: "last-7-days", label: tx("Last 7 days", "最近 7 日") },
+    { id: "last-30-days", label: tx("Last 30 days", "最近 30 日") },
+    { id: "this-month", label: tx("This month", "今個月") },
+    { id: "this-year", label: tx("This year", "今年") },
+    { id: "all", label: tx("All history", "全部歷史") },
+  ];
+  const status = selecting === "end" && from
+    ? tx(`Start ${from}. Choose an end date.`, `開始係 ${from}。請揀結束日期。`)
+    : from && to
+      ? tx(`Selected ${from} through ${to}. Choose a new start date to replace it.`, `已選 ${from} 至 ${to}。揀新開始日期就可以換過。`)
+      : tx("Choose the start date for the history range.", "請揀歷史日期範圍嘅開始日期。 ");
+  return `<aside class="changelog-calendar" id="history-calendar" role="dialog" aria-modal="false" aria-labelledby="history-calendar-title" aria-describedby="history-calendar-instructions" data-testid="history-calendar">
+    <header class="changelog-calendar__header"><div><p class="eyebrow">${escapeHtml(tx("DATE RANGE", "日期範圍"))}</p><h2 id="history-calendar-title">${escapeHtml(tx("Choose history dates", "選擇歷史日期"))}</h2></div><button class="icon-button" type="button" data-action="close-history-calendar" aria-label="${escapeHtml(tx("Close date picker", "關閉日期選擇器"))}">${icon("close")}</button></header>
+    <p class="changelog-calendar__instructions" id="history-calendar-instructions">${escapeHtml(tx("Pick a start and end date, use a preset, or keep typing in either field. Date, action, and text filters stay composed locally.", "揀開始同結束日期、用預設，或者繼續喺欄位打字。日期、操作同文字篩選會喺本機保持組合。"))}</p>
+    <div class="preset-row" role="group" aria-label="${escapeHtml(tx("History date-range presets", "歷史日期範圍預設"))}">${presets.map(preset => {
+      const value = changelogDateRangeForPreset(preset.id, today);
+      const active = state.filters.historyFrom === value.from && state.filters.historyTo === value.to;
+      return `<button class="assist-chip${active ? " is-selected" : ""}" type="button" data-action="history-date-preset" data-history-date-preset="${preset.id}" data-focus-key="history-preset-${preset.id}" aria-pressed="${active}">${escapeHtml(preset.label)}</button>`;
+    }).join("")}</div>
+    <div class="changelog-calendar__navigation">
+      <button class="icon-button" type="button" data-action="shift-history-calendar" data-month-delta="-1" data-focus-key="history-calendar-previous" aria-label="${escapeHtml(tx("Previous month", "上個月"))}">${icon("back")}</button>
+      <label><span class="visually-hidden">${escapeHtml(tx("Month", "月份"))}</span><select data-history-calendar-month data-focus-key="history-calendar-month" aria-label="${escapeHtml(tx("Calendar month", "日曆月份"))}">${monthOptions}</select></label>
+      <label><span class="visually-hidden">${escapeHtml(tx("Year", "年份"))}</span><input type="number" min="1900" max="9999" value="${year}" data-history-calendar-year data-focus-key="history-calendar-year" aria-label="${escapeHtml(tx("Calendar year", "日曆年份"))}"/></label>
+      <button class="icon-button" type="button" data-action="shift-history-calendar" data-month-delta="1" data-focus-key="history-calendar-next" aria-label="${escapeHtml(tx("Next month", "下個月"))}">${icon("forward")}</button>
+    </div>
+    <div class="changelog-calendar__month-label" aria-live="polite">${escapeHtml(monthLabel)}</div>
+    <div class="changelog-calendar__grid" role="grid" aria-label="${escapeHtml(monthLabel)}"><div class="changelog-calendar__weekdays" role="row">${weekdayLabels}</div>${weeks}</div>
+    <p class="changelog-calendar__status" aria-live="polite">${escapeHtml(status)}</p>
+    <footer><button class="button button--text" type="button" data-action="clear-history-dates" data-focus-key="history-calendar-clear">${escapeHtml(tx("Clear dates", "清除日期"))}</button><span class="action-spacer"></span><button class="button button--filled" type="button" data-action="close-history-calendar">${escapeHtml(tx("Done", "完成"))}</button></footer>
+  </aside>`;
+}
+
 function renderHistoryPage(): string {
   const all = state.bootstrap?.history ?? [];
-  const records = all.filter(historyMatches);
+  const selection = currentHistorySelection();
+  const { records, range } = selection;
   const actionCounts = new Map<HistoryRecord["kind"], number>();
   for (const record of all) actionCounts.set(record.kind, (actionCounts.get(record.kind) ?? 0) + 1);
+  const fromError = changelogInputError(range.from.error);
+  const toError = changelogInputError(range.to.error);
+  const rangeError = range.error === "inverted"
+    ? tx("The start date must be on or before the end date.", "開始日期一定要早過或者等於結束日期。 ")
+    : "";
+  const fromInvalid = Boolean(fromError || rangeError);
+  const toInvalid = Boolean(toError || rangeError);
+  const fromDescription = fromError ? "history-date-from-error" : rangeError ? "history-date-range-error" : "";
+  const toDescription = toError ? "history-date-to-error" : rangeError ? "history-date-range-error" : "";
   return `<section class="standard-page" data-testid="history-page" id="panel-history" role="tabpanel" aria-labelledby="tab-history">
     ${renderPageHeader("APPEND-ONLY", tx("Local history and versions", "本機歷史同版本"), tx("Restores create another revision; they never rewrite the state you started from.", "還原會新增另一個修訂，永遠唔會改寫你開始嗰個狀態。"), "history")}
-    <div class="filter-surface">
+    <div class="filter-surface changelog-filter history-filter">
       <div class="page-search">${renderSearchField("history", tx("Search labels, actions, and record types", "搜尋標籤、操作同記錄類型"))}</div>
-      <div class="date-filter"><label class="field"><span>${escapeHtml(tx("From", "由"))}</span><input type="date" data-history-date="from" value="${escapeHtml(state.filters.historyFrom)}" /></label><span aria-hidden="true">—</span><label class="field"><span>${escapeHtml(tx("To", "至"))}</span><input type="date" data-history-date="to" value="${escapeHtml(state.filters.historyTo)}" /></label><div class="preset-row"><button class="assist-chip" type="button" data-action="history-preset" data-days="7">${escapeHtml(tx("Last 7 days", "最近 7 日"))}</button><button class="assist-chip" type="button" data-action="history-preset" data-days="30">${escapeHtml(tx("Last 30 days", "最近 30 日"))}</button><button class="assist-chip" type="button" data-action="history-preset" data-days="0">${escapeHtml(tx("All time", "全部時間"))}</button></div></div>
+      <div class="date-filter" role="group" aria-label="${escapeHtml(tx("Filter local history by date", "按日期篩選本機歷史"))}">
+        <label class="field"><span>${escapeHtml(tx("History from", "歷史日期由"))}</span><input type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="${CHANGELOG_DATE_INPUT_LIMIT}" placeholder="YYYY-MM-DD" value="${escapeHtml(state.filters.historyFrom)}" data-history-date="from" data-focus-key="history-date-from" aria-invalid="${fromInvalid}" ${fromDescription ? `aria-describedby="${fromDescription}"` : ""}/><small>${escapeHtml(tx("ISO or your Windows date format", "ISO 或者你嘅 Windows 日期格式"))}</small>${fromError ? `<span class="field-error" id="history-date-from-error" role="alert">${escapeHtml(fromError)}</span>` : ""}</label>
+        <span class="date-filter__separator" aria-hidden="true">—</span>
+        <label class="field"><span>${escapeHtml(tx("History through", "歷史日期至"))}</span><input type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="${CHANGELOG_DATE_INPUT_LIMIT}" placeholder="YYYY-MM-DD" value="${escapeHtml(state.filters.historyTo)}" data-history-date="to" data-focus-key="history-date-to" aria-invalid="${toInvalid}" ${toDescription ? `aria-describedby="${toDescription}"` : ""}/><small>${escapeHtml(tx("ISO or your Windows date format", "ISO 或者你嘅 Windows 日期格式"))}</small>${toError ? `<span class="field-error" id="history-date-to-error" role="alert">${escapeHtml(toError)}</span>` : ""}</label>
+        <div class="changelog-calendar-anchor"><button class="button button--outlined" type="button" data-action="toggle-history-calendar" data-focus-key="history-calendar-trigger" aria-haspopup="dialog" aria-expanded="${state.historyCalendar.open}" aria-controls="history-calendar">${icon("calendar")}<span>${escapeHtml(tx("Choose dates", "選擇日期"))}</span></button>${state.historyCalendar.open ? renderHistoryCalendar(range) : ""}</div>
+      </div>
+      ${rangeError ? `<div class="inline-banner inline-banner--error" id="history-date-range-error" role="alert">${icon("warning")}<span>${escapeHtml(rangeError)}</span></div>` : ""}
       <fieldset class="action-filter"><legend>${escapeHtml(tx("Filter by action", "按操作篩選"))}</legend>${[...actionCounts.entries()].map(([kind, count]) => `<label class="filter-chip"><input type="checkbox" data-history-action="${kind}" ${state.filters.historyActions.has(kind) ? "checked" : ""}/><span>${escapeHtml(kind.replaceAll("-", " "))} <b>${count}</b></span></label>`).join("") || `<span>${escapeHtml(tx("No recorded actions yet", "仲未有已記錄操作"))}</span>`}</fieldset>
-      <div class="filter-actions"><span>${records.length} ${escapeHtml(tx("matching revisions", "個符合修訂"))}</span><button class="button button--outlined" type="button" data-action="export-history" ${records.length === 0 ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Export view", "匯出目前檢視"))}</span></button></div>
+      <div class="filter-actions"><span aria-live="polite">${records.length} ${escapeHtml(tx("matching revisions", "個符合修訂"))}</span><button class="button button--outlined" type="button" data-action="export-history" ${!selection.valid || records.length === 0 ? "disabled" : ""}>${icon("download")}<span>${escapeHtml(tx("Export view", "匯出目前檢視"))}</span></button></div>
     </div>
     ${renderLocalVersions()}
     <div class="record-list history-list">${records.length ? records.map(item => `<article class="history-card"><span class="history-card__icon">${icon(item.kind === "restored" || item.kind === "undone" ? "refresh" : item.kind === "deleted" ? "trash" : item.kind === "settings-changed" ? "settings" : "history")}</span><div><div class="record-meta"><span class="kind-badge">${escapeHtml(item.kind.replaceAll("-", " "))}</span><span>${escapeHtml(item.entityType)}</span><time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(formatDate(item.createdAt))}</time></div><h2>${escapeHtml(item.label)}</h2><p><code>${escapeHtml(item.entityId)}</code></p></div>${item.entityType === "settings" ? `<button class="button button--text" type="button" data-action="restore-history" data-history-id="${escapeHtml(item.id)}">${icon("refresh")}<span>${escapeHtml(tx("Restore settings", "還原設定"))}</span></button>` : `<span class="view-only-label">${escapeHtml(tx("View only", "只供查看"))}</span>`}</article>`).join("") : renderRecordEmpty("history")}</div>
@@ -5186,8 +5304,23 @@ const sampleForSearch = (key: string): string => {
 };
 
 const exportHistory = async (): Promise<void> => {
-  const records = (state.bootstrap?.history ?? []).filter(historyMatches);
-  await exportText("history", JSON.stringify({ exportedAt: new Date().toISOString(), filters: { from: state.filters.historyFrom, to: state.filters.historyTo, actions: [...state.filters.historyActions], query: searchFor("history") }, records }, null, 2), "material-email-history.json", tx("History", "歷史"));
+  const selection = currentHistorySelection();
+  if (!selection.valid) {
+    pushToast("error", "History filters need attention", "Correct the search or date-range error before exporting.", "歷史篩選要處理", "匯出之前請修正搜尋或者日期範圍錯誤。 ");
+    return;
+  }
+  await exportText("history", JSON.stringify({
+    exportedAt: new Date().toISOString(),
+    filters: {
+      from: selection.range.from.isoDate,
+      to: selection.range.to.isoDate,
+      typedFrom: state.filters.historyFrom,
+      typedTo: state.filters.historyTo,
+      actions: [...state.filters.historyActions],
+      query: searchFor("history"),
+    },
+    records: selection.records,
+  }, null, 2), "material-email-history.json", tx("History", "歷史"));
 };
 
 const exportLocalHistoryDeletionEvidence = async (): Promise<void> => {
@@ -5274,6 +5407,53 @@ const runPaletteCommand = (commandId: string): void => {
 const saveChangelogDates = (inputs: ChangelogDateInputs): void => {
   state.changelogDates = inputs;
   persistChangelogDateInputs(sessionStorage, state.changelogDates);
+};
+
+const saveHistoryDates = (inputs: ChangelogDateInputs): void => {
+  state.filters.historyFrom = inputs.from;
+  state.filters.historyTo = inputs.to;
+  persistChangelogDateInputs(sessionStorage, inputs, HISTORY_DATE_SESSION_KEY);
+};
+
+const setHistoryCalendarMonth = (visibleMonth: string): void => {
+  state.historyCalendar.visibleMonth = visibleMonth;
+  const days = changelogCalendarWeeks(visibleMonth).flat().filter((day): day is NonNullable<typeof day> => Boolean(day));
+  const currentDay = Number(state.historyCalendar.focusDate.slice(8, 10)) || 1;
+  const focusDay = days[Math.min(currentDay, days.length) - 1] ?? days[0];
+  if (focusDay) state.historyCalendar.focusDate = focusDay.isoDate;
+};
+
+const openHistoryCalendar = (): void => {
+  const range = validateDateRange(state.filters.historyFrom, state.filters.historyTo, historyDateLocale());
+  const latestRecord = state.bootstrap?.history[0];
+  const latestDate = latestRecord && Number.isFinite(Date.parse(latestRecord.createdAt))
+    ? localIsoDate(new Date(latestRecord.createdAt))
+    : localIsoDate();
+  const initial = range.from.isoDate ?? range.to.isoDate ?? latestDate;
+  state.historyCalendar = {
+    open: true,
+    visibleMonth: initial.slice(0, 7),
+    focusDate: initial,
+    selecting: range.from.isoDate && !range.to.isoDate ? "end" : "start",
+  };
+  pendingFocusKey = `history-calendar-day-${initial}`;
+  render();
+};
+
+const closeHistoryCalendar = (): void => {
+  state.historyCalendar.open = false;
+  pendingFocusKey = "history-calendar-trigger";
+  render();
+};
+
+const moveHistoryCalendarFocus = (days: number): void => {
+  const current = new Date(`${historyCalendarFocusDate()}T00:00:00Z`);
+  current.setUTCDate(current.getUTCDate() + days);
+  const next = current.toISOString().slice(0, 10);
+  state.historyCalendar.focusDate = next;
+  state.historyCalendar.visibleMonth = next.slice(0, 7);
+  pendingFocusKey = `history-calendar-day-${next}`;
+  render();
 };
 
 const setChangelogCalendarMonth = (visibleMonth: string): void => {
@@ -5710,16 +5890,52 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       break;
     }
     case "request-clear-notifications": showConfirmation({ kind: "clear-notifications" }); break;
-    case "history-preset": {
-      const days = Number(button.dataset.days ?? 0);
-      if (!days) { state.filters.historyFrom = ""; state.filters.historyTo = ""; }
-      else {
-        const end = new Date(); const start = new Date(); start.setDate(start.getDate() - days + 1);
-        const localDate = (date: Date): string => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-        state.filters.historyFrom = localDate(start); state.filters.historyTo = localDate(end);
+    case "toggle-history-calendar":
+      if (state.historyCalendar.open) closeHistoryCalendar(); else openHistoryCalendar();
+      break;
+    case "close-history-calendar": closeHistoryCalendar(); break;
+    case "shift-history-calendar": {
+      const delta = Number(button.dataset.monthDelta);
+      if (delta === -1 || delta === 1) {
+        setHistoryCalendarMonth(shiftChangelogMonth(state.historyCalendar.visibleMonth, delta));
+        render();
       }
-      render(); break;
+      break;
     }
+    case "history-date-preset": {
+      const preset = button.dataset.historyDatePreset;
+      if (preset === "all" || preset === "last-7-days" || preset === "last-30-days" || preset === "this-month" || preset === "this-year") {
+        const inputs = changelogDateRangeForPreset(preset);
+        saveHistoryDates(inputs);
+        const focusDate = inputs.to || inputs.from || localIsoDate();
+        state.historyCalendar.visibleMonth = focusDate.slice(0, 7);
+        state.historyCalendar.focusDate = focusDate;
+        state.historyCalendar.selecting = "start";
+        render();
+      }
+      break;
+    }
+    case "select-history-date": {
+      const isoDate = button.dataset.historyCalendarDay;
+      if (!isoDate) break;
+      if (state.historyCalendar.selecting === "start") {
+        saveHistoryDates({ from: isoDate, to: "" });
+        state.historyCalendar.selecting = "end";
+      } else {
+        const from = validateDateRange(state.filters.historyFrom, "", historyDateLocale()).from.isoDate;
+        saveHistoryDates(!from || isoDate >= from ? { from: from ?? isoDate, to: isoDate } : { from: isoDate, to: from });
+        state.historyCalendar.selecting = "start";
+      }
+      state.historyCalendar.focusDate = isoDate;
+      state.historyCalendar.visibleMonth = isoDate.slice(0, 7);
+      render();
+      break;
+    }
+    case "clear-history-dates":
+      saveHistoryDates({ from: "", to: "" });
+      state.historyCalendar.selecting = "start";
+      render();
+      break;
     case "toggle-changelog-calendar":
       if (state.changelogCalendar.open) closeChangelogCalendar(); else openChangelogCalendar();
       break;
@@ -5823,6 +6039,11 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
 app.addEventListener("click", event => {
   const button = (event.target as Element).closest<HTMLElement>("[data-action]");
   if (button) { event.preventDefault(); void handleAction(button); return; }
+  if (state.historyCalendar.open && !(event.target as Element).closest(".changelog-calendar-anchor")) {
+    state.historyCalendar.open = false;
+    render();
+    return;
+  }
   if (state.changelogCalendar.open && !(event.target as Element).closest(".changelog-calendar-anchor")) {
     state.changelogCalendar.open = false;
     render();
@@ -5967,9 +6188,21 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
     await reloadPimHistory(); return;
   }
   if (control.dataset.historyDate) {
-    if (control.dataset.historyDate === "from") state.filters.historyFrom = control.value;
-    else state.filters.historyTo = control.value;
+    if (control.dataset.historyDate === "from") saveHistoryDates({ from: control.value.slice(0, CHANGELOG_DATE_INPUT_LIMIT), to: state.filters.historyTo });
+    else saveHistoryDates({ from: state.filters.historyFrom, to: control.value.slice(0, CHANGELOG_DATE_INPUT_LIMIT) });
     render(); return;
+  }
+  if (control.dataset.historyCalendarMonth !== undefined || control.dataset.historyCalendarYear !== undefined) {
+    const picker = control.closest<HTMLElement>(".changelog-calendar");
+    const monthControl = picker?.querySelector<HTMLSelectElement>("[data-history-calendar-month]");
+    const yearControl = picker?.querySelector<HTMLInputElement>("[data-history-calendar-year]");
+    const month = Number(monthControl?.value);
+    const year = Number(yearControl?.value);
+    if (Number.isInteger(month) && month >= 1 && month <= 12 && Number.isInteger(year) && year >= 1900 && year <= 9999) {
+      setHistoryCalendarMonth(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`);
+      render();
+    }
+    return;
   }
   if (control.dataset.changelogCalendarMonth !== undefined || control.dataset.changelogCalendarYear !== undefined) {
     const picker = control.closest<HTMLElement>(".changelog-calendar");
@@ -6025,6 +6258,14 @@ app.addEventListener("input", event => {
   }
   const sampleKey = control.dataset.regexSample;
   if (sampleKey) { searchFor(sampleKey).sample = control.value; render(); return; }
+  const historyDate = control.dataset.historyDate;
+  if (historyDate === "from" || historyDate === "to") {
+    saveHistoryDates({
+      from: historyDate === "from" ? control.value.slice(0, CHANGELOG_DATE_INPUT_LIMIT) : state.filters.historyFrom,
+      to: historyDate === "to" ? control.value.slice(0, CHANGELOG_DATE_INPUT_LIMIT) : state.filters.historyTo,
+    });
+    render(); return;
+  }
   const changelogDate = control.dataset.changelogDate;
   if (changelogDate === "from" || changelogDate === "to") {
     state.changelogDates[changelogDate] = control.value.slice(0, CHANGELOG_DATE_INPUT_LIMIT);
@@ -6155,6 +6396,27 @@ document.addEventListener("keydown", event => {
     }
     return;
   }
+  const historyCalendarDay = target instanceof HTMLElement ? target.closest<HTMLElement>("[data-history-calendar-day]") : null;
+  if (state.historyCalendar.open && historyCalendarDay) {
+    const isoDate = historyCalendarDay.dataset.historyCalendarDay;
+    if (isoDate && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+      event.preventDefault();
+      if (event.key === "ArrowLeft") moveHistoryCalendarFocus(-1);
+      else if (event.key === "ArrowRight") moveHistoryCalendarFocus(1);
+      else if (event.key === "ArrowUp") moveHistoryCalendarFocus(-7);
+      else if (event.key === "ArrowDown") moveHistoryCalendarFocus(7);
+      else if (event.key === "Home" || event.key === "End") {
+        const weekday = new Date(`${isoDate}T00:00:00Z`).getUTCDay();
+        moveHistoryCalendarFocus(event.key === "Home" ? -weekday : 6 - weekday);
+      } else {
+        const delta = event.key === "PageUp" ? (event.ctrlKey ? -12 : -1) : event.ctrlKey ? 12 : 1;
+        setHistoryCalendarMonth(shiftChangelogMonth(state.historyCalendar.visibleMonth, delta));
+        pendingFocusKey = `history-calendar-day-${state.historyCalendar.focusDate}`;
+        render();
+      }
+      return;
+    }
+  }
   const calendarDay = target instanceof HTMLElement ? target.closest<HTMLElement>("[data-changelog-calendar-day]") : null;
   if (state.changelogCalendar.open && calendarDay) {
     const isoDate = calendarDay.dataset.changelogCalendarDay;
@@ -6195,6 +6457,7 @@ document.addEventListener("keydown", event => {
       pendingFocusKey = "search-commands";
     }
     else if (state.commandPaletteOpen) state.commandPaletteOpen = false;
+    else if (state.historyCalendar.open) { event.preventDefault(); closeHistoryCalendar(); return; }
     else if (state.changelogCalendar.open) { event.preventDefault(); closeChangelogCalendar(); return; }
     else if (state.pimEditor) { event.preventDefault(); requestPimEditorClose(); return; }
     else if (state.appearanceEditor) { event.preventDefault(); closeTabAppearanceEditor(); return; }

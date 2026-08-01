@@ -1,4 +1,28 @@
-import type { LocalHistoryDeletionEvidence, LocalHistoryPrunePreview, LocalRevision, LocalRevisionDiffLine } from "../../shared/contracts";
+import type { HistoryRecord, LocalHistoryDeletionEvidence, LocalHistoryPrunePreview, LocalRevision, LocalRevisionDiffLine } from "../../shared/contracts";
+
+export const historyRecordSearchText = (record: HistoryRecord): string =>
+  `${record.label}\n${record.kind}\n${record.entityType}\n${record.entityId}`;
+
+export const filterHistoryRecords = (
+  records: readonly HistoryRecord[],
+  query: string,
+  matches: (value: string) => boolean,
+  actions: ReadonlySet<HistoryRecord["kind"]>,
+  from: string | null,
+  to: string | null,
+): HistoryRecord[] => records.filter(record => {
+  if (actions.size && !actions.has(record.kind)) return false;
+  const timestamp = Date.parse(record.createdAt);
+  if (from) {
+    const start = Date.parse(`${from}T00:00:00`);
+    if (Number.isFinite(start) && timestamp < start) return false;
+  }
+  if (to) {
+    const end = Date.parse(`${to}T23:59:59.999`);
+    if (Number.isFinite(end) && timestamp > end) return false;
+  }
+  return !query || matches(historyRecordSearchText(record));
+});
 
 export const localRevisionSearchText = (revision: LocalRevision): string =>
   `${revision.label}\n${revision.subject}\n${revision.hash}\n${revision.createdAt}`;

@@ -73,3 +73,89 @@ test("searches, diffs, labels, and reviews restore for a local Git revision", as
   await expect(evidence).toContainText(/Cryptographic erasure is not provided/i);
   await expect(evidence).toContainText(/Not performed: cryptographic erasure, reflog expiry, Git garbage collection/i);
 });
+
+test("composes the anchored history calendar with action and regex filters", async () => {
+  await page.getByRole("tab", { name: /^History$/i }).click();
+  const history = page.getByTestId("history-page");
+  const cards = history.locator(".history-list .history-card");
+  await expect.poll(() => cards.count()).toBeGreaterThan(0);
+  const initialCount = await cards.count();
+  const firstCard = cards.first();
+  const label = (await firstCard.getByRole("heading").innerText()).trim();
+  const kind = (await firstCard.locator(".kind-badge").innerText()).trim().replaceAll(" ", "-");
+  const createdAt = await firstCard.locator("time").getAttribute("datetime");
+  expect(createdAt).toBeTruthy();
+  const recordDate = await page.evaluate(value => {
+    const date = new Date(value!);
+    return `${String(date.getFullYear()).padStart(4, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }, createdAt);
+
+  const fromDate = history.locator('[data-history-date="from"]');
+  const throughDate = history.locator('[data-history-date="to"]');
+  const exportButton = history.getByRole("button", { name: /Export view/i });
+  await fromDate.fill("2026-02-31");
+  await expect(fromDate).toHaveValue("2026-02-31");
+  await expect(fromDate).toHaveAttribute("aria-invalid", "true");
+  await expect(history.getByRole("alert")).toContainText(/Enter a real calendar date/i);
+  await expect(exportButton).toBeDisabled();
+
+  await fromDate.fill("2026-08");
+  await expect(fromDate).toHaveValue("2026-08");
+  await expect(history.getByRole("alert")).toContainText(/Finish entering the date/i);
+  await fromDate.fill("");
+
+  const calendarTrigger = history.getByRole("button", { name: /Choose dates/i });
+  await calendarTrigger.click();
+  const calendar = history.getByTestId("history-calendar");
+  await expect(calendar).toBeVisible();
+  await expect(calendar).toHaveAttribute("aria-modal", "false");
+  const focusedDay = calendar.locator('[data-history-calendar-day][tabindex="0"]');
+  const focusedIso = await focusedDay.getAttribute("data-history-calendar-day");
+  expect(focusedIso).toBeTruthy();
+  await expect(focusedDay).toBeFocused();
+  const nextIso = new Date(`${focusedIso}T00:00:00Z`);
+  nextIso.setUTCDate(nextIso.getUTCDate() + 1);
+  await page.keyboard.press("ArrowRight");
+  await expect(calendar.locator(`[data-history-calendar-day="${nextIso.toISOString().slice(0, 10)}"]`)).toBeFocused();
+
+  const yearJump = calendar.getByRole("spinbutton", { name: /Calendar year/i });
+  const originalYear = Number((await yearJump.inputValue()));
+  await yearJump.fill(String(originalYear - 1));
+  await yearJump.blur();
+  await expect(calendar.locator(".changelog-calendar__month-label")).toContainText(String(originalYear - 1));
+  await yearJump.fill(String(originalYear));
+  await yearJump.blur();
+
+  await calendar.getByRole("button", { name: /Last 7 days/i }).click();
+  await expect(fromDate).toHaveValue(/^\d{4}-\d{2}-\d{2}$/u);
+  await expect(throughDate).toHaveValue(/^\d{4}-\d{2}-\d{2}$/u);
+  await calendar.getByRole("button", { name: /Clear dates/i }).click();
+  await expect(fromDate).toHaveValue("");
+  await expect(throughDate).toHaveValue("");
+  await expect(cards).toHaveCount(initialCount);
+
+  const [recordYear, recordMonth] = recordDate.split("-").map(Number) as [number, number];
+  await calendar.getByRole("spinbutton", { name: /Calendar year/i }).fill(String(recordYear));
+  await calendar.getByRole("spinbutton", { name: /Calendar year/i }).blur();
+  await calendar.getByRole("combobox", { name: /Calendar month/i }).selectOption(String(recordMonth));
+  const recordDay = calendar.locator(`[data-history-calendar-day="${recordDate}"]`);
+  await recordDay.click();
+  await expect(fromDate).toHaveValue(recordDate);
+  await expect(throughDate).toHaveValue("");
+  await recordDay.click();
+  await expect(throughDate).toHaveValue(recordDate);
+  await calendar.getByRole("button", { name: /^Done$/i }).click();
+  await expect(calendar).toBeHidden();
+  await expect(calendarTrigger).toBeFocused();
+
+  await history.locator(`[data-history-action="${kind}"]`).check({ force: true });
+  const search = history.locator('[data-search-anchor="history"] input[type="search"]');
+  await search.fill(label.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
+  const searchAnchor = history.locator('[data-search-anchor="history"]');
+  await searchAnchor.getByRole("button", { name: /Open regular expression builder/i }).click();
+  const builder = searchAnchor.getByTestId("regex-popover");
+  await builder.getByRole("button", { name: /^Regular expression$/i }).click();
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toContainText(label);
+  await expect(exportButton).toBeEnabled();
+});

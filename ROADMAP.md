@@ -54,7 +54,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Give command-palette search its own plain-text-first model, adjacent anchored regex builder, invalid-pattern execution guard, and focused real-Electron proof
 - [x] Add focused regression coverage for process/IPC trust, mail failure semantics, account cleanup, compose/PIM dirty baselines, discard focus, PIM load retry, bilingual semantics, and revision-aware no-op saves
 - [x] Keep workspace-tab Arrow/Home/End navigation inside the semantic tablist with one roving tab stop and a non-clipped visible focus indicator, covered in real Electron
-- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 51 files / 270 tests on the current tree; focused local-iCalendar and changelog-calendar controls each passed 1 / 1 real-Electron scenario; broader evidence remains listed in `HANDOFF.md`)
+- [x] Run the consolidated type, unit, integration, and build verification (`npm run check`: 51 files / 271 tests on the current tree; focused local-iCalendar and changelog-calendar controls each passed 1 / 1 real-Electron scenario, and focused History passed 2 / 2; broader evidence remains listed in `HANDOFF.md`)
 - [ ] Exercise every user-visible path in a packaged Electron session
 - [ ] Run the full keyboard, native screen-reader, focus, contrast, reduced-motion, narrow-width, and 100/125/150/200% scaling matrices (the primary workspace-tab Arrow/Home/End slice alone is verified)
 - [ ] Verify all language modes and every English/Cantonese humor level without changing factual content
@@ -96,7 +96,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Add persisted bounded Git-backed retention, exact dry-run preview, app-owned pruning, labeled/current protection, and semantic prune records
 - [x] Add read-only deletion-policy evidence for active revisions, labels, reflog-only commits, and Git object inventory with explicit non-erasure guarantees
 - [ ] Complete every-record restore, cryptographic-erasure research, crash-injection proof, and an opt-in Git object-reclamation policy
-- [x] Add searchable semantic history action counts, date ranges, and export foundation
+- [x] Add searchable semantic history action counts plus an anchored advanced date-range picker with typed ISO/locale input, month/year navigation, named presets, keyboard range selection, composed regex filtering, and matching export
 - [x] Add a persisted global appearance reset for the live theme controls
 - [x] Complete a validated per-workspace-tab appearance slice with anchored context/keyboard access, restart persistence, per-property reset, and focus return
 - [ ] Complete appearance editing for every element, including picker self-customization and import/export

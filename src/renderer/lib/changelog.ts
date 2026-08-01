@@ -25,7 +25,7 @@ export interface ChangelogDateInputs {
   to: string;
 }
 
-export type ChangelogDatePreset = "all" | "last-30-days" | "this-month" | "this-year";
+export type ChangelogDatePreset = "all" | "last-7-days" | "last-30-days" | "this-month" | "this-year";
 
 export interface ChangelogCalendarDay {
   day: number;
@@ -151,7 +151,7 @@ export const changelogDateRangeForPreset = (
   }
 
   const start = new Date(Date.UTC(year, month - 1, day));
-  start.setUTCDate(start.getUTCDate() - 29);
+  start.setUTCDate(start.getUTCDate() - (preset === "last-7-days" ? 6 : 29));
   return { from: start.toISOString().slice(0, 10), to: parsedToday.isoDate };
 };
 
