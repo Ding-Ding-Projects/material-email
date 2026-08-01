@@ -466,9 +466,15 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .attachment-strip { margin: 0 16px 10px; padding: 9px; border-radius: var(--radius-md); background: var(--surface-container-low); }
 .attachment-strip__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .attachment-strip__heading strong { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; }
-.attachment-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 34px; margin: 5px 4px 0 0; padding: 5px 7px 5px 11px; border-radius: 12px; background: var(--secondary-container); color: var(--on-secondary-container); font-size: 0.75rem; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 34px; margin: 5px 4px 0 0; padding: 5px 7px 5px 11px; border: 1px solid transparent; border-radius: 12px; background: var(--secondary-container); color: var(--on-secondary-container); font-size: 0.75rem; vertical-align: top; }
+.attachment-chip--caution { border-color: color-mix(in srgb, var(--warning) 48%, transparent); background: color-mix(in srgb, var(--warning-container) 72%, var(--surface-container)); }
+.attachment-chip--dangerous { border-color: color-mix(in srgb, var(--error) 58%, transparent); background: color-mix(in srgb, var(--error-container) 76%, var(--surface-container)); }
 .attachment-chip > span { min-width: 0; display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-chip small { color: var(--on-surface-variant); }
+.attachment-chip__risk { display: flex; align-items: flex-start; gap: 5px; margin-top: 3px; max-width: 360px; white-space: normal; overflow-wrap: anywhere; }
+.attachment-risk-badge { display: inline-flex; align-items: center; flex: 0 0 auto; min-height: 19px; padding: 1px 6px; border-radius: 999px; font-size: 0.66rem; font-weight: 750; line-height: 1.2; }
+.attachment-risk-badge--caution { background: var(--warning-container); color: color-mix(in srgb, var(--warning) 78%, var(--on-surface)); }
+.attachment-risk-badge--dangerous { background: var(--error-container); color: var(--error); }
 .reader-security-note { display: flex; align-items: flex-start; gap: 7px; margin: 0 16px 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--success-container); color: color-mix(in srgb, var(--success) 72%, var(--on-surface)); font-size: 0.7rem; }
 .reader-security-note .icon { width: 16px; height: 16px; }
 .message-frame { min-height: 260px; flex: 1; margin: 0 14px 14px; border: 0; border-radius: var(--radius-md); background: Canvas; color-scheme: light dark; }
@@ -987,6 +993,11 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .confirmation-dialog { width: min(460px, 94vw); display: grid; justify-items: center; gap: 12px; padding: 28px; border-radius: var(--radius-xl); background: var(--surface-container-high); box-shadow: var(--elevation-3); text-align: center; }
 .confirmation-dialog h2, .confirmation-dialog p { margin: 0; }
 .confirmation-dialog p { color: var(--on-surface-variant); }
+.attachment-review-list { width: 100%; max-height: min(260px, 35vh); margin: 0; padding: 0; overflow: auto; display: grid; gap: 7px; list-style: none; text-align: start; }
+.attachment-review-list li { display: grid; gap: 4px; padding: 9px 11px; border: 1px solid var(--outline-variant); border-radius: var(--radius-md); background: var(--surface-container); }
+.attachment-review-list li > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.attachment-review-list strong { min-width: 0; overflow-wrap: anywhere; }
+.attachment-review-list small { color: var(--on-surface-variant); overflow-wrap: anywhere; }
 
 .toast-region { position: fixed; z-index: 5000; inset: auto 18px 18px auto; width: min(420px, calc(100vw - 36px)); display: flex; flex-direction: column-reverse; gap: 8px; pointer-events: none; }
 .toast { min-height: 74px; display: grid; grid-template-columns: 38px minmax(0, 1fr) 40px; align-items: center; gap: 8px; padding: 11px; border: 1px solid var(--outline-variant); border-radius: var(--radius-md); background: var(--surface-container-highest); color: var(--on-surface); box-shadow: var(--elevation-3); pointer-events: auto; animation: toast-in 180ms ease-out; }
