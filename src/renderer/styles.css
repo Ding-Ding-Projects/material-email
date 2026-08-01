@@ -557,6 +557,7 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
 .page-header > div:last-child > p:last-child { max-width: 760px; margin: 0; color: var(--on-surface-variant); }
 .page-search { min-width: 240px; flex: 1; }
 .page-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.notification-search-status { flex: 0 1 34rem; min-width: 0; margin: 0; color: var(--on-surface-variant); font-size: 0.76rem; line-height: 1.45; overflow-wrap: anywhere; }
 .settings-grid, .tool-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
 .settings-card, .tool-card, .empty-card, .filter-surface, .notification-card, .history-card, .changelog-card, .local-version-card {
   border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);

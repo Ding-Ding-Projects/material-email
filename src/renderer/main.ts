@@ -69,6 +69,7 @@ import {
   localizedNotificationAction,
   localizedNotificationCategory,
   localizedNotificationKind,
+  localizedNotificationSearchStatus,
   localizedQueueRecoveryAction,
   localizedSurfaceTone,
   localizedTone,
@@ -128,6 +129,11 @@ import {
   parseSettingsSearch,
   serializeSettingsSearch,
 } from "./lib/settings-search";
+import {
+  NOTIFICATION_SEARCH_STORAGE_KEY,
+  parseNotificationSearch,
+  serializeNotificationSearch,
+} from "./lib/notification-search";
 import {
   TAB_DISCOVERY_SEARCH_STORAGE_KEY,
   isTabDiscoverySearchKey,
@@ -421,6 +427,14 @@ const readSettingsSearch = (): Pick<SearchModel, "mode" | "pattern" | "flags"> =
     return parseSettingsSearch(localStorage.getItem(SETTINGS_SEARCH_STORAGE_KEY));
   } catch {
     return parseSettingsSearch(null);
+  }
+};
+
+const readNotificationSearch = (): Pick<SearchModel, "mode" | "pattern" | "flags"> => {
+  try {
+    return parseNotificationSearch(localStorage.getItem(NOTIFICATION_SEARCH_STORAGE_KEY));
+  } catch {
+    return parseNotificationSearch(null);
   }
 };
 
@@ -736,6 +750,8 @@ const searchFor = (key: string): SearchModel => {
   if (existing) return existing;
   const persisted = key === "settings"
     ? readSettingsSearch()
+    : key === "notifications"
+      ? readNotificationSearch()
     : key === "bulk-tabs"
       ? restoredBulkTabCloseReview.search
     : isTabDiscoverySearchKey(key)
@@ -758,6 +774,14 @@ const persistSearch = (key: string): void => {
       localStorage.setItem(SETTINGS_SEARCH_STORAGE_KEY, serializeSettingsSearch(searchFor(key)));
     } catch {
       // The Settings search remains usable when browser storage is unavailable.
+    }
+    return;
+  }
+  if (key === "notifications") {
+    try {
+      localStorage.setItem(NOTIFICATION_SEARCH_STORAGE_KEY, serializeNotificationSearch(searchFor(key)));
+    } catch {
+      // Notification search remains usable when browser storage is unavailable.
     }
     return;
   }
@@ -1775,6 +1799,8 @@ function renderRegexBuilder(key: string): string {
     </header>
     <p class="supporting-copy">${escapeHtml(key === "settings"
       ? tx("This builder is attached only to this search field. Its Settings pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢一個搜尋欄。設定模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
+      : key === "notifications"
+        ? tx("This builder is attached only to Notification Centre search. Its pattern, mode, and flags are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住通知中心搜尋。模式、配對方式同旗標會儲喺你部電腦；範例會喺重開時清除。")
       : key === "bulk-tabs"
         ? tx("This builder is attached only to this bulk-close review. Its pattern, mode, flags, direction, and pinned-tab choice are saved on this computer; the sample is cleared at restart.", "呢個建立器只連住呢個批量關閉審閱。模式、配對方式、旗標、方向同釘選分頁選擇會儲喺你部電腦；範例會喺重開時清除。")
       : isTabDiscoverySearchKey(key)
@@ -3080,10 +3106,8 @@ function renderTabSettings(): string {
   return `<section class="settings-card" data-setting-section="tabs"><header><span class="settings-card__icon">${icon("folder")}</span><div><h2>${escapeHtml(tx("Workspace tabs", "工作空間分頁"))}</h2><p>${escapeHtml(tx("Order, pinning, overflow, search, and per-tab style", "次序、釘選、溢出、搜尋同每個分頁嘅樣式"))}</p></div></header><p>${escapeHtml(tx("Drag tabs to reorder. Right-click for tab management; Shift+right-click opens its appearance editor directly. Pinned tabs are protected from bulk close by default.", "拖曳分頁就可以排序。右擊管理分頁；Shift+右擊會直接開外觀編輯器。釘選分頁預設受批量關閉保護。"))}</p><div class="button-row"><button class="button button--tonal" type="button" data-action="toggle-tab-manager">${icon("search")}<span>${escapeHtml(tx("Search and manage tabs", "搜尋同管理分頁"))}</span></button><button class="button button--text" type="button" data-action="reset-tabs">${icon("refresh")}<span>${escapeHtml(tx("Reset tab layout", "重設分頁版面"))}</span></button></div></section>`;
 }
 
-function notificationMatches(item: NotificationRecord): boolean {
-  const model = searchFor("notifications");
-  return !model.pattern || createMatcher(model)(`${item.title}\n${item.body}\n${item.kind}\n${item.category}`);
-}
+const notificationSearchText = (item: NotificationRecord): string =>
+  `${item.title}\n${item.body}\n${item.kind}\n${item.category}`;
 
 function notificationActionAttributes(item: NotificationRecord): string {
   const action = item.action;
@@ -3116,14 +3140,47 @@ function renderNotificationRecord(item: NotificationRecord): string {
   </article>`;
 }
 
+function renderNotificationSearchEmpty(): string {
+  return `<div class="empty-card empty-card--action record-empty" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="notification-search-empty-title" data-testid="notification-search-empty">
+    ${icon("search")}<h2 id="notification-search-empty-title">${escapeHtml(tx("No notifications match", "冇符合嘅通知"))}</h2>
+    <p>${escapeHtml(surfaceTone("notificationNoMatch"))}</p>
+    <button class="button button--tonal" type="button" data-action="focus-notification-search">${icon("search")}<span>${escapeHtml(tx("Edit notification search", "修改通知搜尋"))}</span></button>
+  </div>`;
+}
+
+function renderNotificationSearchInvalid(): string {
+  return `<div class="empty-card empty-card--action record-empty" role="alert" aria-atomic="true" aria-labelledby="notification-search-invalid-title" data-testid="notification-search-invalid">
+    ${icon("warning")}<h2 id="notification-search-invalid-title">${escapeHtml(tx("Invalid notification search", "通知搜尋無效"))}</h2>
+    <p>${escapeHtml(tx("The JavaScript regular expression is invalid. Fix the pattern or switch to plain text; no notification action was changed.", "JavaScript 正規表達式無效。請修正模式或者切換去純文字；冇任何通知操作被更改。"))}</p>
+    <button class="button button--tonal" type="button" data-action="focus-notification-search">${icon("search")}<span>${escapeHtml(tx("Edit notification search", "修改通知搜尋"))}</span></button>
+  </div>`;
+}
+
 function renderNotificationsPage(): string {
-  const records = (state.bootstrap?.notifications ?? []).filter(notificationMatches);
+  const allRecords = state.bootstrap?.notifications ?? [];
+  const model = searchFor("notifications");
+  const hasPattern = model.pattern.length > 0;
+  const validation = validatePattern(model);
+  const valid = !hasPattern || validation.valid;
+  const matcher = hasPattern && valid ? createMatcher(model) : null;
+  const records = !valid ? [] : matcher ? allRecords.filter(item => matcher(notificationSearchText(item))) : allRecords;
   const unread = records.filter(item => !item.read).length;
+  const searchState = !valid ? "invalid" : hasPattern && records.length === 0 ? "no-match" : "matches";
+  const status = valid
+    ? localizedNotificationSearchStatus(records.length, allRecords.length, unread, preferences(), bilingualText)
+    : tx("Search not applied. Fix the invalid regular expression.", "搜尋未套用。請修正無效嘅正規表達式。");
+  const results = records.length
+    ? records.map(renderNotificationRecord).join("")
+    : searchState === "invalid"
+      ? renderNotificationSearchInvalid()
+      : searchState === "no-match"
+        ? renderNotificationSearchEmpty()
+        : renderRecordEmpty("notifications");
   return `<section class="standard-page" data-testid="notifications-page" id="panel-notifications" role="tabpanel" aria-labelledby="tab-notifications">
     ${renderPageHeader("INBOX FOR THE APP", tx("Notification centre", "通知中心"), tx("Informational messages stay reviewable after their corner toasts disappear.", "角落提示消失之後，資訊訊息仍然可以喺呢度翻查。"), "notifications")}
     <p class="supporting-copy" data-testid="notifications-tone">${escapeHtml(surfaceTone("notifications"))}</p>
-    <div class="page-tools"><div class="page-search">${renderSearchField("notifications", tx("Search notification title, body, or kind", "搜尋通知標題、內容或者類型"))}</div><span class="count-pill">${unread} ${escapeHtml(tx("unread", "未讀"))}</span><button class="button button--outlined" type="button" data-action="request-clear-notifications" ${records.length === 0 ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Clear history", "清除記錄"))}</span></button></div>
-    <div class="record-list">${records.length ? records.map(renderNotificationRecord).join("") : renderRecordEmpty("notifications")}</div>
+    <div class="page-tools"><div class="page-search">${renderSearchField("notifications", tx("Search notification title, body, severity, or category", "搜尋通知標題、內容、嚴重程度或者類別"))}</div><p class="notification-search-status" role="status" aria-live="polite" aria-atomic="true" data-search-state="${searchState}" data-testid="notification-search-status">${escapeHtml(status)}</p><button class="button button--outlined" type="button" data-action="request-clear-notifications" ${records.length === 0 ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Clear history", "清除記錄"))}</span></button></div>
+    <div class="record-list">${results}</div>
   </section>`;
 }
 
@@ -6139,6 +6196,9 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       break;
     case "focus-settings-search":
       focusByKey("search-settings");
+      break;
+    case "focus-notification-search":
+      focusByKey("search-notifications");
       break;
     case "focus-tab-search": {
       const key = button.dataset.searchKey;

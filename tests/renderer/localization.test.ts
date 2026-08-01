@@ -4,6 +4,7 @@ import {
   localizedNotificationAction,
   localizedNotificationCategory,
   localizedNotificationKind,
+  localizedNotificationSearchStatus,
   localizedQueueRecoveryAction,
   localizedSurfaceTone,
   localizedTone,
@@ -60,6 +61,30 @@ describe("renderer language and humor selection", () => {
       funnyEnglish: 1,
       funnyCantonese: 5,
     })).toBe(`${SURFACE_TONE_COPY.tabDiscoveryNoMatch.english[0]} · ${SURFACE_TONE_COPY.tabDiscoveryNoMatch.cantonese[4]}`);
+    expect(localizedSurfaceTone("notificationNoMatch", {
+      language: "bilingual",
+      funnyEnglish: 1,
+      funnyCantonese: 5,
+    })).toBe(`${SURFACE_TONE_COPY.notificationNoMatch.english[0]} · ${SURFACE_TONE_COPY.notificationNoMatch.cantonese[4]}`);
+  });
+
+  it("keeps Notification Centre counts factual while styling each language independently", () => {
+    const serious = localizedNotificationSearchStatus(1, 3, 1, {
+      language: "en",
+      funnyEnglish: 1,
+      funnyCantonese: 5,
+    });
+    expect(serious).toBe("Showing 1 of 3 notifications. 1 matching notification is unread.");
+
+    const bilingual = localizedNotificationSearchStatus(2, 3, 0, {
+      language: "bilingual",
+      funnyEnglish: 1,
+      funnyCantonese: 5,
+    });
+    expect(bilingual).toContain("Showing 2 of 3 notifications. 0 matching notifications are unread.");
+    expect(bilingual).toContain("顯示 3 個通知入面嘅 2 個；其中 0 個符合通知未讀。");
+    expect(bilingual).not.toContain("tiny paperwork");
+    expect(bilingual).toContain("迷你文書");
   });
 
   it("falls back to the nearest lower level and then the other language instead of rendering blank copy", () => {

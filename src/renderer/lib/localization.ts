@@ -44,6 +44,45 @@ export const localizedTone = (
   return english;
 };
 
+export const notificationSearchStatusToneScale = (
+  matchingCount: number,
+  totalCount: number,
+  unreadCount: number,
+): LocalizedToneScale => {
+  const notificationNoun = totalCount === 1 ? "notification" : "notifications";
+  const unreadNoun = unreadCount === 1 ? "notification is" : "notifications are";
+  const englishFacts = `Showing ${matchingCount} of ${totalCount} ${notificationNoun}. ${unreadCount} matching ${unreadNoun} unread.`;
+  const cantoneseFacts = `顯示 ${totalCount} 個通知入面嘅 ${matchingCount} 個；其中 ${unreadCount} 個符合通知未讀。`;
+  return {
+    english: [
+      englishFacts,
+      `${englishFacts} The result stays local to this notification history.`,
+      `${englishFacts} The local search has sorted the notification history without changing it.`,
+      `${englishFacts} The local search has sorted the receipts without moving any of them.`,
+      `${englishFacts} The local search sieve has finished its tiny paperwork without moving a single receipt.`,
+    ],
+    cantonese: [
+      cantoneseFacts,
+      `${cantoneseFacts} 結果只留喺呢個本機通知記錄。`,
+      `${cantoneseFacts} 本機搜尋已經分類，冇改動任何通知。`,
+      `${cantoneseFacts} 本機搜尋已經執好收據，冇搬走任何一張。`,
+      `${cantoneseFacts} 本機搜尋篩仔做完迷你文書，半張收據都冇搬走。`,
+    ],
+  };
+};
+
+export const localizedNotificationSearchStatus = (
+  matchingCount: number,
+  totalCount: number,
+  unreadCount: number,
+  preferences: LocalizedTonePreferences,
+  combineBilingual?: (english: string, cantonese: string) => string,
+): string => localizedTone(
+  preferences,
+  notificationSearchStatusToneScale(matchingCount, totalCount, unreadCount),
+  combineBilingual,
+);
+
 export const SURFACE_TONE_COPY = {
   settingsNoMatch: {
     english: [
@@ -75,6 +114,22 @@ export const SURFACE_TONE_COPY = {
       "呢個分頁探索範圍冇任何配對；調整本機搜尋，啲分頁就會再行返出嚟。",
       "呢個分頁探索範圍冇任何配對。調校一下本機搜尋——啲分頁冇走失。",
       "呢個分頁探索範圍冇任何配對。調校一下本機搜尋；啲分頁只係喺後台，未去放假。",
+    ],
+  },
+  notificationNoMatch: {
+    english: [
+      "No notification title, body, severity, or category matched. Edit or clear this local search.",
+      "No notification title, body, severity, or category matched. Edit or clear this local search and try again.",
+      "No notification title, body, severity, or category matched; adjust the local search and the records will step back into view.",
+      "No notification title, body, severity, or category matched. Tune the local search—the records have not wandered off.",
+      "No notification title, body, severity, or category matched. Tune the local search; the receipts are backstage, not on holiday.",
+    ],
+    cantonese: [
+      "通知標題、內容、嚴重程度同類別都冇配對。請修改或者清除呢個本機搜尋。",
+      "通知標題、內容、嚴重程度同類別都冇配對。修改或者清除呢個本機搜尋再試。",
+      "通知標題、內容、嚴重程度同類別都冇配對；調整本機搜尋，啲記錄就會再行返出嚟。",
+      "通知標題、內容、嚴重程度同類別都冇配對。調校一下本機搜尋——啲記錄冇走失。",
+      "通知標題、內容、嚴重程度同類別都冇配對。調校一下本機搜尋；啲收據只係喺後台，未去放假。",
     ],
   },
   appearance: {
