@@ -34,6 +34,7 @@ import type {
 } from "../shared/contracts";
 import { AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT } from "../shared/contracts";
 import { icon, type IconName } from "./lib/icons";
+import { DEFAULT_APPEARANCE } from "./lib/appearance";
 import { classifyRendererDelivery, shouldKeepComposerOpen } from "./lib/delivery";
 import {
   CHANGELOG_DATE_INPUT_LIMIT,
@@ -263,9 +264,6 @@ const DEFAULT_PREFERENCES: Preferences = {
   narratorEnabled: false,
   narratorLanguage: "en",
   nativeNotificationsEnabled: false,
-};
-const DEFAULT_APPEARANCE: Pick<Preferences, "theme" | "density" | "accent" | "fontFamily" | "fontScale" | "fontWeight"> = {
-  theme: "system", density: "comfortable", accent: "#6750A4", fontFamily: "Segoe UI Variable", fontScale: 1, fontWeight: 400,
 };
 
 const defaultTabs = (): TabPreferences => ({
