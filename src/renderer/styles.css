@@ -839,6 +839,10 @@ kbd { border: 1px solid var(--outline-variant); border-bottom-width: 2px; border
   color: var(--on-surface);
   box-shadow: var(--elevation-3);
 }
+.page-search > .search-anchor > .anchored-popover {
+  inset-inline: 0 auto;
+  width: min(760px, calc(100vw - 112px));
+}
 .popover-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
 .popover-header h2, .popover-header p { margin: 0; }
 .supporting-copy, .engine-note { color: var(--on-surface-variant); font-size: 0.76rem; }

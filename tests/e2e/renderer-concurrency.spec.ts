@@ -248,7 +248,7 @@ test("a saved PIM mutation with a failed refresh keeps a retryable editor", asyn
   await expect(editor).toHaveAttribute("aria-busy", "false");
   await expect(editor.getByTestId("contact-notes")).toHaveValue("This mutation reached storage before refresh failed");
 
-  await page.getByTestId("pim-load-error").getByRole("button", { name: /Retry local records/i }).click({ force: true });
+  await page.getByTestId("pim-load-error").getByRole("button", { name: /Retry local records/i }).click();
   await expect(page.getByTestId("contacts-page")).toBeVisible();
   await expect(page.getByTestId("pim-load-error")).toHaveCount(0);
   await expect(page.getByTestId("pim-editor").getByTestId("contact-notes")).toHaveValue("This mutation reached storage before refresh failed");

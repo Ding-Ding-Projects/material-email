@@ -87,7 +87,8 @@ test("rejects privileged IPC from another WebContents and keeps same-file skip-l
   await page.locator('a[href="#main-content"]').focus();
   await page.keyboard.press("Enter");
   await expect(page.locator("#main-content")).toBeFocused();
-  await expect.poll(() => page.evaluate(() => window.materialEmail.bootstrap().then(result => result.version))).toBe("0.1.0");
+  const electronVersion = await application.evaluate(({ app }) => app.getVersion());
+  await expect.poll(() => page.evaluate(() => window.materialEmail.bootstrap().then(result => result.version))).toBe(electronVersion);
 
   const result = await application.evaluate(
     async ({ BrowserWindow }, files) => {
@@ -170,7 +171,7 @@ test("composes through the real renderer command path and reports demo delivery"
 test("distinguishes a saved composer from later unsaved edits", async () => {
   await ensureDemo();
   await page.locator('[data-action="compose"]').click();
-  let composer = page.locator(".compose-sheet");
+  let composer = page.getByTestId("compose-form");
   await composer.locator("#compose-to").fill("saved-draft@example.test");
   await composer.locator("#compose-subject").fill("Saved composer baseline");
   await composer.locator("#compose-body").fill("This exact content is saved.");
@@ -181,7 +182,7 @@ test("distinguishes a saved composer from later unsaved edits", async () => {
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
 
   await page.locator('[data-action="compose"]').click();
-  composer = page.locator(".compose-sheet");
+  composer = page.getByTestId("compose-form");
   await composer.locator("#compose-to").fill("edited-after-save@example.test");
   await composer.locator("#compose-subject").fill("Edit after save");
   await composer.getByTestId("compose-save-draft").click();
@@ -201,7 +202,7 @@ test("distinguishes a saved composer from later unsaved edits", async () => {
   await expect(composer.locator("#compose-body")).toHaveValue("This changed after the saved baseline.");
   await page.locator('[data-action="compose"]').first().click();
   await page.getByRole("alertdialog").getByRole("button", { name: /Discard and continue/i }).click();
-  composer = page.locator(".compose-sheet");
+  composer = page.getByTestId("compose-form");
   await expect(composer.locator("#compose-subject")).toHaveValue("");
   await composer.getByRole("button", { name: /Close composer/i }).click();
   await expect(composer).toBeHidden();
@@ -215,11 +216,11 @@ test("distinguishes a saved composer from later unsaved edits", async () => {
     });
   });
   await page.locator('[data-action="compose"]').first().click();
-  composer = page.locator(".compose-sheet");
+  composer = page.getByTestId("compose-form");
   await composer.locator("#compose-to").fill("slow@example.test");
   await composer.locator("#compose-subject").fill("Slow send keeps later edits");
   await composer.locator("#compose-body").fill("Original submitted body");
-  await composer.getByRole("button", { name: /^Send/i }).click();
+  await composer.getByTestId("compose-send").click();
   await composer.locator("#compose-body").fill("Newer private edit entered during send");
   await expect(page.getByTestId("toast-region")).toContainText(/Submitted message accepted; newer edits remain/i);
   await expect(composer.locator("#compose-body")).toHaveValue("Newer private edit entered during send");
@@ -294,9 +295,17 @@ test("creates, edits, searches, deletes, restores, and persists contacts and mai
   await expect(page.getByTestId("contact-card")).toContainText(contactName);
   await contactSearch.fill("");
 
+  await page.setViewportSize({ width: 900, height: 800 });
   const contactSearchAnchor = page.locator('[data-search-anchor="contacts"]');
   await contactSearchAnchor.locator('[data-action="toggle-regex-builder"]').click();
   let pimRegexBuilder = page.getByTestId("regex-popover");
+  const [railBox, builderBox] = await Promise.all([
+    page.locator(".spaces-rail").boundingBox(),
+    pimRegexBuilder.boundingBox(),
+  ]);
+  expect(railBox).not.toBeNull();
+  expect(builderBox).not.toBeNull();
+  expect(builderBox!.x).toBeGreaterThanOrEqual(railBox!.x + railBox!.width);
   await pimRegexBuilder.getByRole("button", { name: /^Regular expression$/i }).click();
   await pimRegexBuilder.locator('textarea[data-regex-pattern="contacts"]').fill("^Avery\\s+PIM\\s+E2E");
   await pimRegexBuilder.getByRole("button", { name: /Use in search/i }).click();
@@ -306,6 +315,7 @@ test("creates, edits, searches, deletes, restores, and persists contacts and mai
   await pimRegexBuilder.getByRole("button", { name: /^Plain text$/i }).click();
   await pimRegexBuilder.locator('textarea[data-regex-pattern="contacts"]').fill("");
   await pimRegexBuilder.getByRole("button", { name: /Close regex builder/i }).click();
+  await page.setViewportSize({ width: 1500, height: 940 });
 
   await page.getByRole("tab", { name: /Mailing lists/i }).click();
   await expect(page.getByTestId("mailing-lists-surface")).toBeVisible();
