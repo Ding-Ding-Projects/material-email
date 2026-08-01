@@ -102,6 +102,12 @@ describe("bounded local PIM provider foundation", () => {
     expect(() => inspectPimInterchange("vcard", `BEGIN:VCARD\r\nVERSION:4.0\r\nNOTE:${"x".repeat(1_048_576)}\r\nEND:VCARD`)).toThrow(/exceeds/iu);
   });
 
+  it("requires stable unique UIDs for every local event and task", () => {
+    const wrap = (body: string): string => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${body}\r\nEND:VCALENDAR\r\n`;
+    expect(() => inspectPimInterchange("icalendar", wrap("BEGIN:VEVENT\r\nSUMMARY:Missing UID\r\nEND:VEVENT"))).toThrow(/UID/iu);
+    expect(() => inspectPimInterchange("icalendar", wrap("BEGIN:VEVENT\r\nUID:same\r\nEND:VEVENT\r\nBEGIN:VTODO\r\nUID:same\r\nEND:VTODO"))).toThrow(/unique/iu);
+  });
+
   it("contains no network, credential-store, persistence, or recurrence engine dependency", async () => {
     const source = await readFile("src/main/pim/provider-foundation.ts", "utf8");
     expect(source).not.toMatch(/from\s+["']node:(?:net|tls|dns|http|https)["']|\b(?:fetch|safeStorage|JsonStore|writeFile|readFile|rrule|ical-expander|console)\b/u);

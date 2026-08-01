@@ -275,6 +275,13 @@ export const inspectPimInterchange = (format: PimInterchangeFormat, source: stri
   if (eventCount + taskCount < 1 || eventCount + taskCount > 5_000) {
     throw new PimInterchangeBoundaryError("A bounded iCalendar document must contain from 1 through 5000 events or tasks.");
   }
+  const uids = inspection.properties.get("UID") ?? [];
+  if (uids.length !== eventCount + taskCount || uids.some(uid => !uid || uid.length > 512)) {
+    throw new PimInterchangeBoundaryError("Every local event or task must contain one non-empty UID no longer than 512 characters.");
+  }
+  if (new Set(uids).size !== uids.length) {
+    throw new PimInterchangeBoundaryError("Local event and task UIDs must be unique within one iCalendar document.");
+  }
   return {
     format,
     byteLength,
