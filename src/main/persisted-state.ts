@@ -19,6 +19,7 @@ import {
   preferencesSchema,
 } from "./ipc-validation.js";
 import { classifyAttachment } from "../shared/attachment-safety.js";
+import { OAUTH_PROVIDER_IDS } from "../shared/oauth.js";
 import {
   MESSAGE_TAGS_PER_MESSAGE_LIMIT,
   MESSAGE_TAG_ASSIGNMENT_LIMIT,
@@ -152,14 +153,24 @@ const accountSchema = z
     incoming: serverSettingsSchema,
     outgoing: serverSettingsSchema,
     authMode: z.enum(["password", "oauth2"]),
+    oauthProvider: z.enum(OAUTH_PROVIDER_IDS).optional(),
     kind: z.enum(["imap", "demo"]),
     createdAt: timestampSchema,
     lastSyncAt: timestampSchema.optional(),
     syncError: boundedString(32_768).optional(),
     messageCryptography: messageCryptoProfileSchema.default(emptyMessageCryptoProfile()),
+    // An oauth2 account's credential lives in the OAuth token vault, keyed by its account id, never
+    // here — there is no password to encrypt, so it is correctly absent rather than a stand-in blank.
     encryptedSecret: z.string().min(1).max(131_072).optional(),
   })
-  .refine(account => account.kind === "demo" || Boolean(account.encryptedSecret), "Stored mail accounts require an encrypted credential.");
+  .refine(
+    account => account.kind === "demo" || account.authMode === "oauth2" || Boolean(account.encryptedSecret),
+    "Stored mail accounts require an encrypted credential.",
+  )
+  .refine(
+    account => account.authMode !== "oauth2" || account.oauthProvider !== undefined,
+    "A stored OAuth account must record which provider it signed in through.",
+  );
 const folderSchema = z.strictObject({
   accountId: identifierSchema,
   path: folderPathSchema,

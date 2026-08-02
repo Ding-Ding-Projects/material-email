@@ -306,7 +306,10 @@ interface AccountDraftBase {
   incoming: ServerSettings;
   outgoing: ServerSettings;
   authMode: AuthMode;
+  /** Empty for oauth2: the access token comes from a completed sign-in, never from this field. */
   secret: string;
+  /** Required when authMode is oauth2; absent for password. */
+  oauthProvider?: OAuthProviderId;
 }
 
 export type AccountDraft =
@@ -372,6 +375,8 @@ export interface AccountSummary {
   incoming: ServerSettings;
   outgoing: ServerSettings;
   authMode: AuthMode;
+  /** Which provider a connected oauth2 account signed in through; absent for a password account. */
+  oauthProvider?: OAuthProviderId;
   kind: "imap" | "demo";
   createdAt: string;
   lastSyncAt?: string;

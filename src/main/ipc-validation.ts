@@ -20,7 +20,7 @@ import {
   type Preferences,
   type TlsCertificateInspectionRequest,
 } from "../shared/contracts.js";
-import { OAUTH_PROVIDER_IDS } from "../shared/oauth.js";
+import { OAUTH_PROVIDER_IDS, type OAuthProviderId } from "../shared/oauth.js";
 import { MESSAGE_TAGS_PER_MESSAGE_LIMIT, MESSAGE_TAG_CATALOG_LIMIT, MESSAGE_TAG_NAME_LIMIT } from "../shared/message-tags.js";
 import {
   MESSAGE_FILTER_ACTION_LIMIT,
@@ -89,13 +89,30 @@ const tlsCertificateInspectionSchema = z.strictObject({
   security: z.enum(["tls", "starttls", "plain"]),
 }) as z.ZodType<TlsCertificateInspectionRequest>;
 
+const oauthProviderIdSchema = z.enum(OAUTH_PROVIDER_IDS);
+
 const accountDraftBaseShape = {
   displayName: z.string().trim().min(1).max(120).refine(noControlCharacters, "Display names cannot contain control characters."),
   email: emailSchema,
   incoming: serverSettingsSchema,
   outgoing: serverSettingsSchema,
   authMode: z.enum(["password", "oauth2"]),
-  secret: z.string().min(1).max(16_384),
+  // Empty for oauth2: the renderer never sends a password for that mode, and the actual access
+  // token comes from a freshly completed sign-in the main process already holds, never from this
+  // field. Non-empty is enforced per authMode below rather than here, where both modes share a shape.
+  secret: z.string().max(16_384),
+  oauthProvider: oauthProviderIdSchema.optional(),
+};
+
+/** authMode and oauthProvider/secret must agree: exactly one credential source, never both or neither. */
+const requireConsistentAuthMode = (value: { authMode: "password" | "oauth2"; secret: string; oauthProvider?: OAuthProviderId | undefined }, context: z.RefinementCtx): void => {
+  if (value.authMode === "password") {
+    if (!value.secret) context.addIssue({ code: "custom", path: ["secret"], message: "A password is required for password authentication." });
+    if (value.oauthProvider !== undefined) context.addIssue({ code: "custom", path: ["oauthProvider"], message: "Password authentication does not take an OAuth provider." });
+  } else {
+    if (value.oauthProvider === undefined) context.addIssue({ code: "custom", path: ["oauthProvider"], message: "OAuth authentication requires a provider." });
+    if (value.secret) context.addIssue({ code: "custom", path: ["secret"], message: "OAuth authentication does not take a password." });
+  }
 };
 
 export const pop3AccountOptionsSchema = z.strictObject({
@@ -127,13 +144,14 @@ export const iCalendarExportRequestSchema = z.discriminatedUnion("scope", [
 ]) as z.ZodType<ICalendarExportRequest>;
 
 export const accountDraftSchema = z.union([
-  z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("imap").default("imap") }),
+  z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("imap").default("imap") }).superRefine(requireConsistentAuthMode),
   z.strictObject({ ...accountDraftBaseShape, incomingProtocol: z.literal("pop3"), pop3: pop3AccountOptionsSchema }).superRefine((value, context) => {
     if (value.authMode !== "password") context.addIssue({ code: "custom", path: ["authMode"], message: "POP3 account testing requires password authentication." });
     if (value.incoming.security !== "tls" && value.incoming.security !== "starttls") {
       context.addIssue({ code: "custom", path: ["incoming", "security"], message: "POP3 account testing requires implicit TLS or STARTTLS." });
     }
     if (/[\r\n\0]/u.test(value.secret)) context.addIssue({ code: "custom", path: ["secret"], message: "POP3 credentials cannot contain line breaks or NUL." });
+    requireConsistentAuthMode(value, context);
   }),
 ]) as z.ZodType<AccountDraft>;
 

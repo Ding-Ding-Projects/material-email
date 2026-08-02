@@ -58,6 +58,24 @@ describe("non-PIM IPC validation", () => {
     ).toThrow();
   });
 
+  it("requires exactly one credential source: a password with no provider, or a provider with no password", () => {
+    // oauth2 with a provider and no secret is accepted; the secret is empty because the renderer
+    // never sends one, and the actual access token comes from a completed sign-in, not this field.
+    expect(ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), authMode: "oauth2", secret: "", oauthProvider: "microsoft" }])[0]).toMatchObject({
+      authMode: "oauth2",
+      oauthProvider: "microsoft",
+    });
+    // oauth2 naming a provider but also carrying a password is refused: a stray password value
+    // silently ignored is worse than one that fails loudly.
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), authMode: "oauth2", secret: "stray-password", oauthProvider: "microsoft" }])).toThrow();
+    // oauth2 with no provider named at all is refused: there is nothing to refresh against.
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), authMode: "oauth2", secret: "" }])).toThrow();
+    // password mode naming a provider is refused: the two credential sources are mutually exclusive.
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), authMode: "password", oauthProvider: "google" }])).toThrow();
+    // password mode with an empty secret is still refused, exactly as before this change.
+    expect(() => ipcPayloadSchemas.accountDraft.parse([{ ...accountDraft(), authMode: "password", secret: "" }])).toThrow();
+  });
+
   it("validates only the bounded live POP3 account-test payload and argument-free cancellation", () => {
     const pop3 = {
       leaveOnServer: true as const,

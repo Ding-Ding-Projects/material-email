@@ -124,6 +124,15 @@ const requireAccountKey = (value: unknown): string => {
   return value;
 };
 
+/** Bare IP-literal loopback only — never the "localhost" name, which DNS resolution can redirect. */
+const registrationLoopbackHosts = new Set(["127.0.0.1", "[::1]"]);
+
+/**
+ * A real provider endpoint is always HTTPS; the one exception is a literal loopback IP, which exists
+ * solely so this module's own tests can register a real local fixture server without a certificate —
+ * the same boundary this codebase already draws for its development renderer URL and for the token
+ * exchange module that actually calls these endpoints.
+ */
 const requireCleanHttpsEndpoint = (value: unknown): string => {
   if (typeof value !== "string" || value.length > 2_048) throw new OAuthTokenVaultError("provider-registration-required");
   let endpoint: URL;
@@ -132,9 +141,11 @@ const requireCleanHttpsEndpoint = (value: unknown): string => {
   } catch {
     throw new OAuthTokenVaultError("provider-registration-required");
   }
-  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+  if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
     throw new OAuthTokenVaultError("provider-registration-required");
   }
+  const isLoopback = endpoint.protocol === "http:" && registrationLoopbackHosts.has(endpoint.hostname);
+  if (endpoint.protocol !== "https:" && !isLoopback) throw new OAuthTokenVaultError("provider-registration-required");
   return endpoint.toString();
 };
 
@@ -285,6 +296,18 @@ export class WindowsSafeStorageOAuthTokenVault {
       }
       this.#revokers.set(provider, revoker);
     }
+  }
+
+  /**
+   * Returns a provider's registered client ID and token endpoint, or null if unregistered. Neither
+   * value is confidential — a public client ID is meant to be visible, and a token endpoint is a
+   * published URL — so this is safe for the main process to read when it needs to refresh a token
+   * itself, outside of any vault write.
+   */
+  registration(providerValue: OAuthProviderId): OAuthVaultProviderRegistration | null {
+    const provider = requireKnownProvider(providerValue);
+    const registration = this.#registrations.get(provider);
+    return registration ? { ...registration } : null;
   }
 
   async status(): Promise<OAuthTokenVaultSnapshot> {

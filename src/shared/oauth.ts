@@ -68,6 +68,20 @@ export interface OAuthTokenVaultSnapshot {
   providers: OAuthTokenVaultProviderSnapshot[];
 }
 
+export type OAuthSignInPhase = "exchanging" | "ready" | "failed";
+
+/**
+ * State of the token exchange that follows a completed browser round trip, distinct from
+ * {@link OAuthAuthorizationSnapshot}'s phase machine — that one only covers getting a code; this one
+ * covers turning it into tokens. Deliberately carries no access token, refresh token, or code: the
+ * renderer learns only whether a freshly authorized sign-in is ready to attach to an account.
+ */
+export interface OAuthSignInSnapshot {
+  provider: OAuthProviderId;
+  phase: OAuthSignInPhase;
+  failure: string | null;
+}
+
 export type OAuthRemoteRevocationOutcome = "not-needed" | "not-available" | "succeeded" | "failed";
 
 /** Result of a provider-level clear or revoke-and-clear request. */

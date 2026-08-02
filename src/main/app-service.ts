@@ -139,6 +139,9 @@ import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-m
 import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
 import { inspectTlsCertificate } from "./tls-certificate-diagnostics.js";
 import { testPop3Account } from "./pop3-test-transport.js";
+import type { OAuthProviderId, OAuthSignInSnapshot } from "../shared/oauth.js";
+import type { WindowsSafeStorageOAuthTokenVault } from "./oauth-token-vault.js";
+import { exchangeAuthorizationCode, refreshAccessToken } from "./oauth-token-exchange.js";
 import { emptyMessageCryptoProfile, unsignedMessageCryptography } from "../shared/message-cryptography.js";
 import { userVisibleErrorMessage } from "../shared/user-visible-error.js";
 import {
@@ -168,6 +171,22 @@ const syncFilterLedgerKey = (message: MessageSummary): string => `${message.id}\
 
 /** The ledger is a same-process guard only; the arrival diff against the cache is what survives a restart. */
 const SYNC_FILTER_LEDGER_LIMIT = 50_000;
+
+/** Refresh a connected OAuth account's token once it is this close to expiring, not only once it has. */
+const OAUTH_REFRESH_MARGIN_MS = 2 * 60_000;
+/** A completed browser sign-in with no account attached is discarded after this long, unused. */
+const OAUTH_PENDING_SIGNIN_TTL_MS = 10 * 60_000;
+
+interface PendingOAuthSignIn {
+  provider: OAuthProviderId;
+  accessToken: string;
+  refreshToken: string;
+  expiresInSeconds: number;
+  scopes: string[];
+  capturedAtMs: number;
+}
+
+const providerDisplayName = (provider: OAuthProviderId): string => (provider === "google" ? "Google" : "Microsoft");
 
 const fileErrorCode = (error: unknown): string | undefined =>
   error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
@@ -323,9 +342,18 @@ export class AppService {
   readonly #detectedEditorPaths = new Set<string>();
   readonly #queueFlights = new Set<string>();
   readonly #syncFilteredMessages = new Set<string>();
+  readonly #oauthTokenVault: WindowsSafeStorageOAuthTokenVault | null;
   #pop3TestController: AbortController | null = null;
+  /**
+   * A freshly exchanged token with no account attached yet — the space between a completed browser
+   * sign-in and the user actually clicking Add or Test. Bounded lifetime so a completed-but-unused
+   * sign-in does not sit in memory indefinitely across a long-idle session.
+   */
+  #pendingOAuthSignIn: PendingOAuthSignIn | null = null;
+  #oauthSignInStatus: OAuthSignInSnapshot | null = null;
 
-  constructor(userDataPath: string) {
+  constructor(userDataPath: string, options: { oauthTokenVault?: WindowsSafeStorageOAuthTokenVault } = {}) {
+    this.#oauthTokenVault = options.oauthTokenVault ?? null;
     this.#statePath = path.join(userDataPath, "material-email-state-v1.json");
     this.#quarantinePath = path.join(userDataPath, "attachment-quarantine-v1");
     this.#pim = new PimService(userDataPath);
@@ -457,13 +485,14 @@ export class AppService {
     if (draft.incomingProtocol === "pop3") {
       throw new Error("POP3 account saving is not available in this build. No server was contacted by this blocked Connect action, no credential was used, and no account was saved. Use Test settings for the bounded live POP3 check.");
     }
-    if (draft.authMode === "oauth2") {
-      throw new Error("OAuth token exchange and connected-account persistence are not available in this build. No token was saved.");
-    }
     assertConnectionPreflight(draft);
     const existing = await this.#store.read();
     if (existing.accounts.some(account => account.email.toLowerCase() === draft.email.toLowerCase())) {
       throw new Error(`An account for ${draft.email} already exists on this computer.`);
+    }
+    if (draft.authMode === "oauth2") {
+      if (!draft.oauthProvider) throw new Error("An OAuth account draft must name its provider.");
+      return this.#addOAuthAccount(draft, draft.oauthProvider);
     }
     if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows credential encryption is not available on this computer.");
     const account: StoredAccount = {
@@ -479,7 +508,7 @@ export class AppService {
       encryptedSecret: safeStorage.encryptString(draft.secret).toString("base64"),
     };
     try {
-      await this.#mail.testAccount(this.#runtimeAccount(account));
+      await this.#mail.testAccount(await this.#runtimeAccount(account));
     } catch (error) {
       throw publicMailError(error);
     }
@@ -496,10 +525,75 @@ export class AppService {
     return this.#publicAccount(account);
   }
 
+  /**
+   * Attaches a freshly authorized sign-in to a new account. A failed connectivity test leaves the
+   * sign-in available to retry, exactly as a failed password test would — it is only consumed, and
+   * only written to the vault, once the account is actually being saved.
+   */
+  async #addOAuthAccount(draft: AccountDraft, provider: OAuthProviderId): Promise<AccountSummary> {
+    const vault = this.#oauthTokenVault;
+    if (!vault) throw new Error("OAuth account connections are not available in this build.");
+    const account: StoredAccount = {
+      id: randomUUID(),
+      displayName: draft.displayName,
+      email: draft.email,
+      incoming: draft.incoming,
+      outgoing: draft.outgoing,
+      authMode: "oauth2",
+      oauthProvider: provider,
+      kind: "imap",
+      createdAt: new Date().toISOString(),
+      messageCryptography: emptyMessageCryptoProfile(),
+    };
+    const forTest = this.#peekPendingOAuthSignIn(provider, { consume: false });
+    try {
+      await this.#mail.testAccount({ ...this.#publicAccount(account), secret: forTest.accessToken });
+    } catch (error) {
+      throw publicMailError(error);
+    }
+    const consumed = this.#peekPendingOAuthSignIn(provider, { consume: true });
+    await vault.saveInitial(provider, account.id, {
+      accessToken: consumed.accessToken,
+      refreshToken: consumed.refreshToken,
+      expiresInSeconds: consumed.expiresInSeconds,
+      scopes: consumed.scopes,
+    });
+    await this.#store.update(state => {
+      state.accounts.push(account);
+      seedAccountIdentity(state, account, () => randomUUID());
+      state.preferences.selectedAccountId = account.id;
+      this.#record(state, "created", "account", account.id, `Added account ${account.email}`, this.#publicAccount(account));
+      this.#notify(state, "success", "Account connected", `${account.email} passed incoming and outgoing server checks.`, {
+        category: "account",
+        action: { kind: "open", target: "page", page: "settings" },
+      });
+    });
+    return this.#publicAccount(account);
+  }
+
   async testAccount(input: AccountDraft): Promise<AccountTestResult> {
     const draft = accountDraftSchema.parse(input);
     if (draft.authMode === "oauth2") {
-      throw new Error("OAuth token exchange and connected-account testing are not available in this build. No token was sent.");
+      if (draft.incomingProtocol === "pop3") throw new Error("POP3 accounts do not support OAuth authentication.");
+      if (!draft.oauthProvider) throw new Error("An OAuth account draft must name its provider.");
+      assertConnectionPreflight(draft);
+      const pending = this.#peekPendingOAuthSignIn(draft.oauthProvider, { consume: false });
+      const runtime: RuntimeAccount = {
+        id: "test",
+        displayName: draft.displayName,
+        email: draft.email,
+        incoming: draft.incoming,
+        outgoing: draft.outgoing,
+        authMode: "oauth2",
+        kind: "imap",
+        createdAt: new Date().toISOString(),
+        secret: pending.accessToken,
+      };
+      try {
+        return await this.#mail.testAccount(runtime);
+      } catch (error) {
+        throw publicMailError(error);
+      }
     }
     assertConnectionPreflight(draft);
     if (draft.incomingProtocol === "pop3") {
@@ -543,9 +637,18 @@ export class AppService {
   }
 
   async removeAccount(accountId: string): Promise<void> {
-    await this.#store.update(state => {
+    await this.#store.update(async state => {
       const account = state.accounts.find(candidate => candidate.id === accountId);
       if (!account) return;
+      if (account.authMode === "oauth2" && account.oauthProvider && this.#oauthTokenVault) {
+        // Best-effort: an orphaned vault record for a removed account can never be refreshed
+        // successfully anyway, so a failure here must not block removing the account locally.
+        try {
+          await this.#oauthTokenVault.forgetAccount(account.oauthProvider, accountId);
+        } catch (error) {
+          console.error("Forgetting the removed account's OAuth tokens failed; the account was still removed.", error);
+        }
+      }
       state.accounts = state.accounts.filter(candidate => candidate.id !== accountId);
       delete state.folders[accountId];
       for (const key of Object.keys(state.messages)) if (key.startsWith(`${accountId}\u0000`)) delete state.messages[key];
@@ -579,7 +682,7 @@ export class AppService {
         syncedAt: new Date().toISOString(),
       };
     }
-    const account = this.#runtimeAccount(stored);
+    const account = await this.#runtimeAccount(stored);
     try {
       await this.#withQueueFlight(accountId, () => this.#replayPending(account));
       state = await this.#store.read();
@@ -663,7 +766,7 @@ export class AppService {
     const key = folderKey(accountId, folderPath);
     if (state.messages[key]) return state.messages[key];
     if (account.kind === "demo") return [];
-    const messages = await this.#mail.listMessages(this.#runtimeAccount(account), folderPath);
+    const messages = await this.#mail.listMessages(await this.#runtimeAccount(account), folderPath);
     await this.#store.update(draft => {
       this.#requireAccount(draft, accountId);
       draft.messages[key] = messages;
@@ -702,7 +805,7 @@ export class AppService {
     if (cached?.uidValidity === uidValidity) return cached;
     assertMimeSourceSize(message.size);
     const detail = {
-      ...(await this.#mail.getMessage(this.#runtimeAccount(account), folderPath, uid, uidValidity)),
+      ...(await this.#mail.getMessage(await this.#runtimeAccount(account), folderPath, uid, uidValidity)),
       uidValidity,
     };
     await this.#store.update(draft => {
@@ -748,7 +851,7 @@ export class AppService {
     if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
     const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
     assertMimeSourceSize(message.size);
-    const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
+    const attachments = await this.#mail.getAttachments(await this.#runtimeAccount(account), folderPath, uid, uidValidity);
     const attachment = attachments[index];
     if (!attachment) throw new Error("That attachment no longer exists.");
     const currentRisk = createAttachmentRiskReviewItem(attachment, index);
@@ -793,7 +896,7 @@ export class AppService {
     if (account.kind === "demo") throw new Error("The demo messages do not contain downloadable attachments.");
     const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
     assertMimeSourceSize(message.size);
-    const attachments = await this.#mail.getAttachments(this.#runtimeAccount(account), folderPath, uid, uidValidity);
+    const attachments = await this.#mail.getAttachments(await this.#runtimeAccount(account), folderPath, uid, uidValidity);
     const currentReview = createAttachmentSaveReview(attachments);
     requireAttachmentSaveReview(currentReview.riskyAttachments, review);
     const quarantined = await this.#quarantineAttachments(
@@ -923,7 +1026,7 @@ export class AppService {
     if (account.kind !== "demo") {
       uidValidity = this.#requireCurrentMessage(state, accountId, folderPath, uid).uidValidity;
       try {
-        await this.#mail.setFlags(this.#runtimeAccount(account), folderPath, uid, patch, uidValidity);
+        await this.#mail.setFlags(await this.#runtimeAccount(account), folderPath, uid, patch, uidValidity);
       } catch (error) {
         if (isMailboxGenerationMismatch(error)) throw error;
         networkError = mailErrorMessage(error);
@@ -972,7 +1075,7 @@ export class AppService {
     if (account.kind !== "demo") {
       uidValidity = this.#requireCurrentMessage(state, accountId, folderPath, uid).uidValidity;
       try {
-        moveResult = await this.#mail.moveMessage(this.#runtimeAccount(account), folderPath, uid, destination, uidValidity);
+        moveResult = await this.#mail.moveMessage(await this.#runtimeAccount(account), folderPath, uid, destination, uidValidity);
       } catch (error) {
         if (isMailboxGenerationMismatch(error)) throw error;
         networkError = mailErrorMessage(error);
@@ -1043,7 +1146,7 @@ export class AppService {
     const account = this.#requireAccount(state, accountId);
     if (account.kind === "demo") throw new Error("The demonstration account has a fixed set of folders.");
     try {
-      await this.#mail.createFolder(this.#runtimeAccount(account), folderPath);
+      await this.#mail.createFolder(await this.#runtimeAccount(account), folderPath);
     } catch (error) {
       throw publicMailError(error);
     }
@@ -1059,7 +1162,7 @@ export class AppService {
     const destination = `${parent}${name}`;
     if (destination === folderPath) return state.folders[accountId] ?? [];
     try {
-      await this.#mail.renameFolder(this.#runtimeAccount(account), folderPath, destination);
+      await this.#mail.renameFolder(await this.#runtimeAccount(account), folderPath, destination);
     } catch (error) {
       throw publicMailError(error);
     }
@@ -1089,7 +1192,7 @@ export class AppService {
       throw new Error(`${folder.name} is a special folder this account relies on, so it cannot be removed.`);
     }
     try {
-      await this.#mail.deleteFolder(this.#runtimeAccount(account), folderPath);
+      await this.#mail.deleteFolder(await this.#runtimeAccount(account), folderPath);
     } catch (error) {
       throw publicMailError(error);
     }
@@ -1124,7 +1227,7 @@ export class AppService {
     if (!uidValidity) throw new Error("Refresh this folder before marking it read: its mailbox generation is unknown.");
     let changed = 0;
     try {
-      changed = await this.#mail.markFolderRead(this.#runtimeAccount(account), folderPath, uidValidity);
+      changed = await this.#mail.markFolderRead(await this.#runtimeAccount(account), folderPath, uidValidity);
     } catch (error) {
       throw publicMailError(error);
     }
@@ -1437,7 +1540,7 @@ export class AppService {
   async #refreshFolders(accountId: string, label: string): Promise<FolderSummary[]> {
     const state = await this.#store.read();
     const account = this.#requireAccount(state, accountId);
-    const folders = await this.#mail.listFolders(this.#runtimeAccount(account));
+    const folders = await this.#mail.listFolders(await this.#runtimeAccount(account));
     await this.#store.update(draft => {
       this.#requireAccount(draft, accountId);
       draft.folders[accountId] = folders;
@@ -1524,7 +1627,7 @@ export class AppService {
       result = { messageId: `<${randomUUID()}@material-email.local>`, accepted: [...draft.to, ...draft.cc, ...draft.bcc], rejected: [], queued: false };
     } else {
       try {
-        result = await this.#mail.sendMessage(this.#runtimeAccount(account), draft, identity);
+        result = await this.#mail.sendMessage(await this.#runtimeAccount(account), draft, identity);
       } catch (error) {
         networkError = mailErrorMessage(error);
         result = { messageId: `outbox:${randomUUID()}`, accepted: [], rejected: [], queued: true };
@@ -1669,7 +1772,7 @@ export class AppService {
   async retryPendingOperation(accountId: string, operationId: string): Promise<void> {
     await this.#withQueueFlight(accountId, async () => {
       const state = await this.#store.read();
-      const account = this.#runtimeAccount(this.#requireAccount(state, accountId));
+      const account = await this.#runtimeAccount(this.#requireAccount(state, accountId));
       const operation = state.pendingOperations.find(candidate => candidate.id === operationId && candidate.accountId === accountId);
       if (!operation) throw new Error("That pending mail operation no longer exists.");
       this.#assertQueueHead(state, accountId, "pending", operationId);
@@ -1755,7 +1858,7 @@ export class AppService {
   async retryOutbox(accountId: string, outboxId: string): Promise<SendResult> {
     return this.#withQueueFlight(accountId, async () => {
       const state = await this.#store.read();
-      const account = this.#runtimeAccount(this.#requireAccount(state, accountId));
+      const account = await this.#runtimeAccount(this.#requireAccount(state, accountId));
       const item = state.outbox.find(candidate => candidate.id === outboxId && candidate.draft.accountId === accountId);
       if (!item) throw new Error("That Outbox item no longer exists.");
       this.#assertQueueHead(state, accountId, "outbox", outboxId);
@@ -2578,11 +2681,119 @@ export class AppService {
     return safe.syncError ? { ...safe, syncError: mailErrorMessage(safe.syncError) } : safe;
   };
 
-  #runtimeAccount(account: StoredAccount): RuntimeAccount {
+  async #runtimeAccount(account: StoredAccount): Promise<RuntimeAccount> {
     if (account.kind === "demo") return { ...account, secret: "" };
+    if (account.authMode === "oauth2") return this.#runtimeOAuthAccount(account);
     if (!account.encryptedSecret) throw new Error("The account credential is missing.");
     if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows credential encryption is not available on this computer.");
     return { ...this.#publicAccount(account), secret: safeStorage.decryptString(Buffer.from(account.encryptedSecret, "base64")) };
+  }
+
+  /**
+   * Resolves a connected OAuth account to a runtime access token, refreshing it first when it is
+   * within {@link OAUTH_REFRESH_MARGIN_MS} of expiring. The mail service already treats `secret` as
+   * the access token whenever `authMode` is `oauth2` (its XOAUTH2 path), so this is the only place
+   * that needs to know a token can expire.
+   */
+  async #runtimeOAuthAccount(account: StoredAccount): Promise<RuntimeAccount> {
+    const vault = this.#oauthTokenVault;
+    if (!vault) throw new Error("OAuth account connections are not available in this build.");
+    const provider = account.oauthProvider;
+    if (!provider) throw new Error("This account has no recorded OAuth provider. Remove and reconnect it.");
+    const record = await vault.read(provider, account.id);
+    if (!record) throw new Error(`Reconnect ${account.email}: its sign-in has expired or was cleared from this computer.`);
+    if (Date.parse(record.expiresAt) - Date.now() > OAUTH_REFRESH_MARGIN_MS) {
+      return { ...this.#publicAccount(account), secret: record.accessToken };
+    }
+    const registration = vault.registration(provider);
+    if (!registration) throw new Error(`This build no longer has an OAuth registration for ${provider}. Remove and reconnect ${account.email}.`);
+    let rotated: Awaited<ReturnType<typeof refreshAccessToken>>;
+    try {
+      rotated = await refreshAccessToken({
+        provider,
+        tokenEndpoint: registration.tokenEndpoint,
+        clientId: registration.clientId,
+        refreshToken: record.refreshToken,
+        scopes: record.scopes,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "an unknown error";
+      throw new Error(`Reconnect ${account.email}: refreshing its sign-in failed (${reason}).`);
+    }
+    await vault.rotate(provider, account.id, {
+      accessToken: rotated.accessToken,
+      ...(rotated.refreshToken ? { refreshToken: rotated.refreshToken } : {}),
+      expiresInSeconds: rotated.expiresInSeconds,
+      // A refresh response that omits scope (some providers do, when it is unchanged) keeps what
+      // was already recorded rather than silently narrowing it to nothing.
+      scopes: rotated.scopes.length ? rotated.scopes : record.scopes,
+    });
+    return { ...this.#publicAccount(account), secret: rotated.accessToken };
+  }
+
+  /**
+   * Called once, right after a browser round trip lands a code — never over IPC, and never with
+   * the code, verifier, or redirect URI exposed to the renderer. Performs the actual exchange this
+   * app's PKCE/loopback foundation deliberately does not do on its own, and holds the result as an
+   * unattached sign-in until the user adds or tests an account with it.
+   */
+  async completeOAuthSignIn(grant: { provider: OAuthProviderId; code: string; codeVerifier: string; redirectUri: string }): Promise<void> {
+    this.#pendingOAuthSignIn = null;
+    this.#oauthSignInStatus = { provider: grant.provider, phase: "exchanging", failure: null };
+    const vault = this.#oauthTokenVault;
+    if (!vault) {
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "OAuth account connections are not available in this build." };
+      return;
+    }
+    const registration = vault.registration(grant.provider);
+    if (!registration) {
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "This build has no OAuth registration for that provider." };
+      return;
+    }
+    try {
+      const result = await exchangeAuthorizationCode({
+        provider: grant.provider,
+        tokenEndpoint: registration.tokenEndpoint,
+        clientId: registration.clientId,
+        code: grant.code,
+        redirectUri: grant.redirectUri,
+        codeVerifier: grant.codeVerifier,
+      });
+      this.#pendingOAuthSignIn = {
+        provider: grant.provider,
+        accessToken: result.accessToken,
+        // exchangeAuthorizationCode already refuses a response with no refresh token.
+        refreshToken: result.refreshToken!,
+        expiresInSeconds: result.expiresInSeconds,
+        scopes: result.scopes,
+        capturedAtMs: Date.now(),
+      };
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "ready", failure: null };
+    } catch (error) {
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: error instanceof Error ? error.message : "The sign-in could not be completed." };
+    }
+  }
+
+  getOAuthSignInStatus(): OAuthSignInSnapshot | null {
+    return this.#oauthSignInStatus;
+  }
+
+  /**
+   * Returns the pending sign-in for `provider` without consuming it (so Test can be pressed more
+   * than once), refusing a missing, mismatched, or stale one. `consume: true` clears it afterward —
+   * used only by account creation, so a token cannot be attached to two different accounts.
+   */
+  #peekPendingOAuthSignIn(provider: OAuthProviderId, options: { consume: boolean }): PendingOAuthSignIn {
+    const pending = this.#pendingOAuthSignIn;
+    if (!pending || pending.provider !== provider) {
+      throw new Error(`Sign in with ${providerDisplayName(provider)} before connecting this account.`);
+    }
+    if (Date.now() - pending.capturedAtMs > OAUTH_PENDING_SIGNIN_TTL_MS) {
+      this.#pendingOAuthSignIn = null;
+      throw new Error(`That ${providerDisplayName(provider)} sign-in has expired. Sign in again.`);
+    }
+    if (options.consume) this.#pendingOAuthSignIn = null;
+    return pending;
   }
 
   #requireAccount(state: PersistedState, accountId: string): StoredAccount {

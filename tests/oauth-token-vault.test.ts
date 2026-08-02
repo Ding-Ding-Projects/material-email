@@ -75,6 +75,24 @@ describe("Windows safeStorage OAuth token vault", () => {
     expect(status.providers[0]).toMatchObject({ id: "google", registered: false, state: "not-registered", recordCount: 0 });
   });
 
+  it("accepts a real local loopback token endpoint but refuses plain HTTP to anywhere else", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "material-email-oauth-vault-"));
+    directories.push(directory);
+    const safeStorage = new FakeWindowsSafeStorage();
+    expect(() => new WindowsSafeStorageOAuthTokenVault({
+      filePath: path.join(directory, "oauth-token-vault.json"),
+      safeStorage,
+      platform: "win32",
+      registrations: [{ provider: "google", clientId: "fixture", tokenEndpoint: "http://127.0.0.1:1/token" }],
+    })).not.toThrow();
+    expect(() => new WindowsSafeStorageOAuthTokenVault({
+      filePath: path.join(directory, "oauth-token-vault.json"),
+      safeStorage,
+      platform: "win32",
+      registrations: [{ provider: "google", clientId: "fixture", tokenEndpoint: "http://oauth.example.test/token" }],
+    })).toThrow(/provider-registration-required/iu);
+  });
+
   it("stores only safeStorage ciphertext and rotates bounded access/refresh generations atomically", async () => {
     const source = new MockProviderTokenSource();
     const { vault, filePath } = await createHarness();
@@ -183,6 +201,12 @@ describe("Windows safeStorage OAuth token vault", () => {
   it("forgetting an account that never had a record is a harmless no-op", async () => {
     const { vault } = await createHarness();
     await expect(vault.forgetAccount("google", "account-never-existed")).resolves.toBeUndefined();
+  });
+
+  it("exposes a registered provider's non-secret client ID and token endpoint, and null when unregistered", async () => {
+    const { vault } = await createHarness();
+    expect(vault.registration("google")).toEqual(registration);
+    expect(vault.registration("microsoft")).toBeNull();
   });
 
   it("reports unavailable Windows protection without attempting encryption", async () => {
