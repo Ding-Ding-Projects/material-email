@@ -28,6 +28,7 @@ import type {
   OutboxSummary,
   OAuthAuthorizationSnapshot,
   OAuthProviderId,
+  OAuthSignInSnapshot,
   OAuthTokenVaultSnapshot,
   PendingOperationSummary,
   PimProviderFoundationSnapshot,
@@ -420,6 +421,7 @@ interface RendererState {
   selectedDiscovery: AccountDiscoveryResult | null;
   setupEmail: string;
   oauthAuthorization: OAuthAuthorizationSnapshot;
+  oauthSignIn: OAuthSignInSnapshot | null;
   oauthProvider: OAuthProviderId;
   oauthTokenVault: OAuthTokenVaultSnapshot;
   localRevisions: LocalRevision[];
@@ -652,6 +654,7 @@ const state: RendererState = {
   selectedDiscovery: null,
   setupEmail: "",
   oauthAuthorization: DEFAULT_OAUTH_AUTHORIZATION,
+  oauthSignIn: null,
   oauthProvider: "google",
   oauthTokenVault: DEFAULT_OAUTH_TOKEN_VAULT,
   localRevisions: [],
@@ -3240,11 +3243,24 @@ const oauthAuthorizationCopy = (): { title: string; body: string; alert: boolean
       ),
       alert: false,
     };
-    case "authorization-received": return {
-      title: tx("Callback validated; account still disconnected", "回呼已驗證；帳戶仍然未連接"),
-      body: tx("The one-time authorization code was discarded. This build has no token exchange, token storage, or live provider account connection.", "一次性授權碼已捨棄。呢個版本冇 token exchange、權杖儲存或者即時供應商帳戶連接。"),
-      alert: false,
-    };
+    case "authorization-received": {
+      const signIn = state.oauthSignIn;
+      if (signIn?.phase === "ready") return {
+        title: tx("Signed in", "已登入"),
+        body: tx("Fill in the account's display name, email address, and server settings below, then Test settings or Connect account. No token was written to disk until you do.", "喺下面填返呢個帳戶嘅顯示名稱、電郵地址同伺服器設定，跟住撳「測試設定」或者「連接帳戶」。喺你撳之前，冇任何權杖寫落磁碟。"),
+        alert: false,
+      };
+      if (signIn?.phase === "failed") return {
+        title: tx("Sign-in could not be completed", "登入未能完成"),
+        body: signIn.failure ?? tx("The token exchange failed. No token was saved. Start browser authorization again to retry.", "Token exchange 失敗。冇儲存任何權杖。請再次開始瀏覽器授權。"),
+        alert: true,
+      };
+      return {
+        title: tx("Finishing sign-in", "登入緊"),
+        body: tx("The authorization code is being exchanged for a token over a direct HTTPS connection to the provider. Nothing is saved until this finishes.", "授權碼正經直接 HTTPS 連線同供應商交換緊權杖。喺呢步完成之前，冇任何嘢會儲存。"),
+        alert: false,
+      };
+    }
     case "cancelled": return {
       title: tx("Browser authorization cancelled", "瀏覽器授權已取消"),
       body: tx("The loopback listener closed and its temporary state was cleared. No code or token was saved.", "Loopback 監聽器已關閉，臨時狀態亦已清除。冇儲存授權碼或者權杖。"),
@@ -3286,7 +3302,7 @@ const renderOAuthAuthorizationPanel = (): string => {
     <p class="oauth-foundation__boundary" id="oauth-foundation-boundary">${icon("info")}<span>${escapeHtml(tx("No provider client registration ships in this build. The app never asks you to paste an OAuth token; the foundation keeps PKCE verifier, callback state, authorization URL, and code out of renderer IPC and persistent storage.", "呢個版本冇附帶供應商 client registration。應用程式永遠唔會叫你貼 OAuth 權杖；呢個地基會將 PKCE verifier、回呼 state、授權網址同授權碼留喺 renderer IPC 同持久儲存之外。"))}</span></p>
     <div class="oauth-foundation__controls">
       <label class="field"><span>${escapeHtml(tx("Browser provider", "瀏覽器供應商"))}</span><select name="oauthProvider" data-action-change="select-oauth-provider" aria-describedby="oauth-provider-support" ${active ? "disabled" : ""}>${snapshot.providers.map(provider => `<option value="${provider.id}" ${provider.id === state.oauthProvider ? "selected" : ""}>${escapeHtml(`${provider.name} — ${provider.configured ? tx("configured", "已設定") : tx("not configured", "未設定")}`)}</option>`).join("")}</select></label>
-      <p id="oauth-provider-support" class="supporting-copy">${escapeHtml(selected?.configured ? tx("This provider configuration can exercise the local authorization foundation. A connected mail account still requires a separately reviewed token exchange and secure token lifecycle.", "呢個供應商設定可以運行本機授權地基。要連接郵件帳戶，仍然需要另行審閱 token exchange 同安全權杖生命週期。") : tx("Provider registration unavailable. The button stays disabled; no browser, loopback listener, mail server, or provider endpoint will be contacted.", "供應商註冊不可用。按鈕會保持停用；唔會聯絡瀏覽器、loopback 監聽器、郵件伺服器或者供應商端點。"))}</p>
+      <p id="oauth-provider-support" class="supporting-copy">${escapeHtml(selected?.configured ? tx("This provider is registered. Signing in exchanges the authorization code for a token over a direct HTTPS connection to the provider; nothing is written to disk until you test or connect the account below.", "呢個供應商已經註冊。登入會經直接 HTTPS 連線同供應商交換授權碼換取權杖；喺你喺下面測試或者連接帳戶之前，冇任何嘢會寫落磁碟。") : tx("Provider registration unavailable. The button stays disabled; no browser, loopback listener, mail server, or provider endpoint will be contacted.", "供應商註冊不可用。按鈕會保持停用；唔會聯絡瀏覽器、loopback 監聽器、郵件伺服器或者供應商端點。"))}</p>
     </div>
     <div class="oauth-foundation__status${copy.alert ? " oauth-foundation__status--error" : ""}" data-testid="oauth-status" role="${copy.alert ? "alert" : "status"}" aria-live="${copy.alert ? "assertive" : "polite"}" aria-atomic="true" aria-busy="${active}">${icon(copy.alert ? "warning" : active ? "refresh" : snapshot.phase === "authorization-received" ? "check" : "info", active ? "is-spinning" : "")}<div><strong>${escapeHtml(copy.title)}</strong><p>${escapeHtml(copy.body)}</p></div></div>
     <div class="button-row oauth-foundation__actions"><button class="button button--tonal" type="button" data-action="start-oauth-authorization" data-focus-key="oauth-start" ${!selected?.configured || active ? "disabled" : ""}>${icon("forward")}<span>${escapeHtml(tx("Start browser authorization", "開始瀏覽器授權"))}</span></button>${active ? `<button class="button button--outlined" type="button" data-action="cancel-oauth-authorization" data-focus-key="oauth-cancel">${icon("close")}<span>${escapeHtml(tx("Cancel authorization", "取消授權"))}</span></button>` : ""}</div>
@@ -5154,15 +5170,26 @@ const oauthAuthorizationSnapshotsEqual = (left: OAuthAuthorizationSnapshot, righ
 
 const scheduleOAuthStatusPoll = (): void => {
   stopOAuthStatusPolling();
-  if (!state.setupOpen || !oauthAuthorizationIsActive()) return;
+  // The exchange that follows a completed browser round trip runs after this phase machine has
+  // already left its "active" phases, so polling continues through it too — otherwise the renderer
+  // would stop watching at the exact moment the exchange starts and never see it finish.
+  const exchanging = state.oauthSignIn?.phase === "exchanging";
+  if (!state.setupOpen || (!oauthAuthorizationIsActive() && !exchanging)) return;
   oauthStatusPollTimer = window.setTimeout(async () => {
     oauthStatusPollTimer = null;
     try {
       const next = await api.getOAuthAuthorizationStatus();
-      if (!oauthAuthorizationSnapshotsEqual(state.oauthAuthorization, next)) {
-        state.oauthAuthorization = next;
-        updateOAuthAuthorizationPanel();
+      let changed = !oauthAuthorizationSnapshotsEqual(state.oauthAuthorization, next);
+      state.oauthAuthorization = next;
+      // The browser round trip and the token exchange it triggers are two separate state
+      // machines; a callback landing while this tab is polling is exactly the moment the exchange
+      // is happening, so the sign-in snapshot is polled alongside it rather than only once at open.
+      const signIn = await api.getOAuthSignInStatus().catch(() => state.oauthSignIn);
+      if (JSON.stringify(signIn) !== JSON.stringify(state.oauthSignIn)) {
+        state.oauthSignIn = signIn;
+        changed = true;
       }
+      if (changed) updateOAuthAuthorizationPanel();
       scheduleOAuthStatusPoll();
     } catch {
       pushToast(
@@ -5178,6 +5205,7 @@ const scheduleOAuthStatusPoll = (): void => {
 
 const refreshOAuthAuthorizationStatus = async (): Promise<void> => {
   state.oauthAuthorization = await api.getOAuthAuthorizationStatus();
+  state.oauthSignIn = await api.getOAuthSignInStatus().catch(() => null);
   const selectedExists = state.oauthAuthorization.providers.some(provider => provider.id === state.oauthProvider);
   if (!selectedExists) state.oauthProvider = state.oauthAuthorization.providers[0]?.id ?? "google";
   updateOAuthAuthorizationPanel();
@@ -5255,6 +5283,7 @@ const accountDraftFromForm = (form: HTMLFormElement): AccountDraft => {
     },
     authMode: authMode as AccountDraft["authMode"],
     secret: String(data.get("secret") ?? ""),
+    ...(authMode === "oauth2" ? { oauthProvider: state.oauthProvider } : {}),
   };
   if (incomingProtocol === "imap") return { ...base, incomingProtocol };
   return { ...base, incomingProtocol, pop3: pop3OptionsFromForm(form) };
@@ -5544,13 +5573,16 @@ const handleAccountSubmit = async (form: HTMLFormElement, mode: "test" | "add"):
     return;
   }
   const authMode = form.elements.namedItem("authMode");
-  if (authMode instanceof HTMLSelectElement && authMode.value === "oauth2") {
+  const oauthMode = authMode instanceof HTMLSelectElement && authMode.value === "oauth2";
+  if (oauthMode && state.oauthSignIn?.phase !== "ready") {
+    // The server enforces this too; checking here first avoids a round trip for a state the
+    // renderer already knows about and gives a clearer place to send focus.
     pushToast(
       "warning",
-      "OAuth account connection is not available",
-      "This build can exercise only the local PKCE and callback foundation. It has no reviewed token exchange, token lifecycle, or connected-account path.",
-      "OAuth 帳戶連接不可用",
-      "呢個版本只可以運行本機 PKCE 同回呼地基。仲未有經審閱嘅 token exchange、權杖生命週期或者帳戶連接路徑。",
+      "Sign in first",
+      "Start browser authorization and complete sign-in before testing or connecting this account.",
+      "請先登入",
+      "請先開始瀏覽器授權並完成登入，先至可以測試或者連接呢個帳戶。",
     );
     updateOAuthAuthorizationPanel("oauth-start");
     return;

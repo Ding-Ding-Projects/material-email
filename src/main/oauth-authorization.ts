@@ -40,11 +40,25 @@ export interface OAuthProviderConfiguration {
   scopes: readonly string[];
 }
 
+export interface OAuthAuthorizationCodeGrant {
+  provider: OAuthProviderId;
+  code: string;
+  codeVerifier: string;
+  redirectUri: string;
+}
+
 export interface OAuthAuthorizationServiceOptions {
   configurations?: readonly OAuthProviderConfiguration[];
   openExternal: (url: string) => Promise<void>;
   timeoutMs?: number;
   now?: () => number;
+  /**
+   * Called exactly once per successful callback, synchronously from inside the loopback HTTP
+   * handler, with the code this foundation would otherwise discard. Never invoked over IPC and
+   * never given to the renderer — this is the one seam where a caller can turn a completed browser
+   * round trip into an actual token exchange, which this class still does not do itself.
+   */
+  onAuthorizationCode?: (grant: OAuthAuthorizationCodeGrant) => void;
 }
 
 export interface PkcePair {
@@ -234,6 +248,7 @@ export class OAuthAuthorizationService {
   readonly #openExternal: (url: string) => Promise<void>;
   readonly #timeoutMs: number;
   readonly #now: () => number;
+  readonly #onAuthorizationCode: ((grant: OAuthAuthorizationCodeGrant) => void) | undefined;
   #active: ActiveAuthorization | null = null;
   #snapshot: Omit<OAuthAuthorizationSnapshot, "providers"> = {
     phase: "idle",
@@ -246,6 +261,7 @@ export class OAuthAuthorizationService {
     this.#openExternal = options.openExternal;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_AUTHORIZATION_TIMEOUT_MS;
     this.#now = options.now ?? Date.now;
+    this.#onAuthorizationCode = options.onAuthorizationCode;
     if (!Number.isInteger(this.#timeoutMs) || this.#timeoutMs < 10 || this.#timeoutMs > 10 * 60_000) {
       throw new Error("OAuth authorization timeout is outside the supported bound.");
     }
@@ -397,10 +413,17 @@ export class OAuthAuthorizationService {
       return;
     }
 
-    // The authorization code is intentionally consumed only as proof that the
-    // exact callback completed. This foundation performs no token exchange and
-    // neither returns nor stores the code.
-    void validation.code;
+    // The code and verifier are captured as values now, before #terminate zeroes the raw buffer
+    // they came from. This class still performs no token exchange itself; the grant is handed to
+    // the caller's callback so a real exchange can happen exactly once, outside of this file.
+    if (this.#onAuthorizationCode) {
+      this.#onAuthorizationCode({
+        provider: session.provider,
+        code: validation.code,
+        codeVerifier: base64Url(session.verifierBytes),
+        redirectUri: `http://${session.expectedHost}${CALLBACK_PATH}`,
+      });
+    }
     const closing = this.#terminate(session, "authorization-received", null);
     sendResponse(response, 200, callbackDocument("received"), "text/html; charset=utf-8");
     void closing;

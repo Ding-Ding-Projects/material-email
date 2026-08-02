@@ -21,6 +21,7 @@ const api: MaterialEmailApi = {
   getOAuthAuthorizationStatus: () => ipcRenderer.invoke("account:oauth-status"),
   startOAuthAuthorization: provider => ipcRenderer.invoke("account:oauth-start", provider),
   cancelOAuthAuthorization: () => ipcRenderer.invoke("account:oauth-cancel"),
+  getOAuthSignInStatus: () => ipcRenderer.invoke("account:oauth-signin-status"),
   getOAuthTokenVaultStatus: () => ipcRenderer.invoke("account:oauth-vault-status"),
   clearOAuthTokenVault: provider => ipcRenderer.invoke("account:oauth-vault-clear", provider),
   revokeOAuthTokenVault: provider => ipcRenderer.invoke("account:oauth-vault-revoke", provider),

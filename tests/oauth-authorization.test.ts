@@ -5,6 +5,7 @@ import {
   OAuthAuthorizationService,
   createPkcePair,
   validateLoopbackCallback,
+  type OAuthAuthorizationCodeGrant,
   type OAuthProviderConfiguration,
 } from "../src/main/oauth-authorization.js";
 
@@ -19,12 +20,13 @@ const services: OAuthAuthorizationService[] = [];
 
 const createService = (
   openExternal: (url: string) => Promise<void>,
-  options: { configured?: boolean; timeoutMs?: number } = {},
+  options: { configured?: boolean; timeoutMs?: number; onAuthorizationCode?: (grant: OAuthAuthorizationCodeGrant) => void } = {},
 ): OAuthAuthorizationService => {
   const service = new OAuthAuthorizationService({
     configurations: options.configured === false ? [] : [fixtureConfiguration],
     openExternal,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.onAuthorizationCode ? { onAuthorizationCode: options.onAuthorizationCode } : {}),
   });
   services.push(service);
   return service;
@@ -130,6 +132,62 @@ describe("OAuth authorization state machine", () => {
     expect(publicState).not.toContain(sensitiveCode);
     expect(publicState).not.toContain(state);
     expect(publicState).not.toContain(authorization.searchParams.get("code_challenge")!);
+  });
+
+  it("hands the code, verifier, and redirect URI to onAuthorizationCode exactly once on a real callback", async () => {
+    let openedUrl = "";
+    let received: OAuthAuthorizationCodeGrant | null = null;
+    const service = createService(async url => { openedUrl = url; }, { onAuthorizationCode: grant => { received = grant; } });
+    await service.start("google");
+    const { authorization, callback, state } = authorizationDetails(openedUrl);
+    const verifier = authorization.searchParams.get("code_verifier");
+    // Confirmed absent from the authorization URL itself (that assertion belongs to the test above);
+    // this test only needs the challenge to prove the handed-off verifier is the one that produced it.
+    void verifier;
+    const challenge = authorization.searchParams.get("code_challenge")!;
+
+    callback.searchParams.set("state", state);
+    callback.searchParams.set("code", "fixture-authorization-code");
+    const response = await loopbackRequest(callback);
+    expect(response.status).toBe(200);
+
+    expect(received).not.toBeNull();
+    expect(received).toEqual({
+      provider: "google",
+      code: "fixture-authorization-code",
+      codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43,86}$/u) as unknown as string,
+      redirectUri: callback.origin + callback.pathname,
+    });
+    // The handed-off verifier must be the one whose S256 hash produced the challenge actually sent,
+    // or a real exchange against a real provider would fail with a PKCE mismatch.
+    const recomputedChallenge = createHash("sha256").update(received!.codeVerifier, "ascii").digest("base64url");
+    expect(recomputedChallenge).toBe(challenge);
+  });
+
+  it("never calls onAuthorizationCode when the provider denies the request", async () => {
+    let openedUrl = "";
+    const onAuthorizationCode = vi.fn();
+    const service = createService(async url => { openedUrl = url; }, { onAuthorizationCode });
+    await service.start("google");
+    const { callback, state } = authorizationDetails(openedUrl);
+    callback.searchParams.set("state", state);
+    callback.searchParams.set("error", "access_denied");
+    await loopbackRequest(callback);
+    expect(onAuthorizationCode).not.toHaveBeenCalled();
+    expect(service.status()).toMatchObject({ phase: "error", failure: "provider-denied" });
+  });
+
+  it("never calls onAuthorizationCode for a rejected loopback request", async () => {
+    let openedUrl = "";
+    const onAuthorizationCode = vi.fn();
+    const service = createService(async url => { openedUrl = url; }, { onAuthorizationCode });
+    await service.start("google");
+    const { callback } = authorizationDetails(openedUrl);
+    callback.searchParams.set("state", "wrong-state-entirely");
+    callback.searchParams.set("code", "fixture-code");
+    const response = await loopbackRequest(callback);
+    expect(response.status).not.toBe(200);
+    expect(onAuthorizationCode).not.toHaveBeenCalled();
   });
 
   it("keeps waiting after rejected loopback requests, then accepts the exact callback", async () => {

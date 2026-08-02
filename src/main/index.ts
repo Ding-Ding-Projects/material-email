@@ -22,6 +22,7 @@ import { ipcPayloadSchemas, parseIpcArgs } from "./ipc-validation.js";
 import { ExternalLinkReviewQueue } from "./external-link-review.js";
 import { OAuthAuthorizationService } from "./oauth-authorization.js";
 import { WindowsSafeStorageOAuthTokenVault } from "./oauth-token-vault.js";
+import { resolveMicrosoftOAuthConfig } from "./oauth-provider-config.js";
 import { assessExternalLink } from "../shared/external-link-safety.js";
 import {
   assertTrustedRendererClaim,
@@ -102,6 +103,7 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("account:oauth-vault-status", ipcPayloadSchemas.none, () => oauthTokenVault.status());
   handleValidated("account:oauth-vault-clear", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.clear(provider));
   handleValidated("account:oauth-vault-revoke", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.revokeAndClear(provider));
+  handleValidated("account:oauth-signin-status", ipcPayloadSchemas.none, () => service.getOAuthSignInStatus());
   handleValidated("account:inspect-tls-certificate", ipcPayloadSchemas.tlsCertificateInspection, ([request]) => service.inspectTlsCertificate(request));
   handleValidated("account:pop3-test-cancel", ipcPayloadSchemas.none, () => service.cancelPop3AccountTest());
   handleValidated("pim:provider-foundation", ipcPayloadSchemas.pimProviderFoundation, ([profile]) => service.runPimProviderFoundation(profile));
@@ -430,14 +432,34 @@ else {
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
-  service = new AppService(app.getPath("userData"));
   windowStateStore = new WindowStateStore(path.join(app.getPath("userData"), "window-state.json"));
-  oauthAuthorization = new OAuthAuthorizationService({ openExternal: url => shell.openExternal(url) });
+  // Absent unless MATERIAL_EMAIL_MICROSOFT_CLIENT_ID is set; every path below degrades to today's
+  // disabled-foundation behavior when it is not, exactly as an unset environment variable always
+  // has. A malformed value is reported rather than left silent, but a typo in one environment
+  // variable must never be the reason the whole mail client fails to start.
+  let microsoftOAuth: ReturnType<typeof resolveMicrosoftOAuthConfig> = null;
+  try {
+    microsoftOAuth = resolveMicrosoftOAuthConfig(process.env);
+  } catch (error) {
+    console.error("Microsoft OAuth configuration was invalid; sign-in stays disabled for this session.", error);
+  }
   oauthTokenVault = new WindowsSafeStorageOAuthTokenVault({
     filePath: path.join(app.getPath("userData"), "oauth-token-vault.json"),
     safeStorage,
-    registrations: [],
+    registrations: microsoftOAuth
+      ? [{ provider: "microsoft", clientId: microsoftOAuth.clientId, tokenEndpoint: microsoftOAuth.tokenEndpoint }]
+      : [],
     revokers: [],
+  });
+  service = new AppService(app.getPath("userData"), { oauthTokenVault });
+  oauthAuthorization = new OAuthAuthorizationService({
+    openExternal: url => shell.openExternal(url),
+    configurations: microsoftOAuth
+      ? [{ provider: "microsoft", authorizationEndpoint: microsoftOAuth.authorizationEndpoint, clientId: microsoftOAuth.clientId, scopes: microsoftOAuth.scopes }]
+      : [],
+    // Never over IPC, never given to the renderer: the moment a browser round trip lands a code,
+    // hand it straight to the one place that is allowed to exchange it.
+    onAuthorizationCode: grant => { void service.completeOAuthSignIn(grant); },
   });
   const rendererTarget = resolveRendererLoadTarget({
     isPackaged: app.isPackaged,

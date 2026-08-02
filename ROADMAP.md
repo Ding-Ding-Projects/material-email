@@ -12,8 +12,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Windows-backed `safeStorage` encryption for persisted account secrets
 - [x] Manual IMAP/SMTP account schema and connection tests
 - [x] Strict POP3 account-test schema, POP3-aware port diagnostics, and a user-initiated bounded implicit-TLS/required-STARTTLS test with CAPA, USER/PASS, STAT, UIDL/LIST, cancellation, redaction, and no retrieval/deletion/persistence; deterministic servers are test-only
-- [x] Ephemeral main-process OAuth authorization-code/PKCE state machine with exact loopback callback validation, timeout/cancel/error cleanup, status-only IPC, and no token exchange/persistence/logging
-- [x] Provider-gated Windows `safeStorage` OAuth vault with bounded encrypted access/refresh records, atomic rotation generations, metadata-only IPC, local clear, injectable revoke-and-clear, and accessible bilingual Settings controls; production provider/revoker lists remain empty
+- [x] Ephemeral main-process OAuth authorization-code/PKCE state machine with exact loopback callback validation, timeout/cancel/error cleanup, status-only IPC; the class itself still performs no exchange, persistence, or logging, and optionally hands a captured code to a caller-supplied callback rather than doing anything with it itself
+- [x] Provider-gated Windows `safeStorage` OAuth vault with bounded encrypted access/refresh records, atomic rotation generations, metadata-only IPC, per-account and whole-provider clear, injectable revoke-and-clear, and accessible bilingual Settings controls; Microsoft registration is read from the environment when present, Google's revoker list remains empty
 - [x] Mock-only local OAuth exchange/expiry/refresh/revoke state machine with ephemeral AES-256-GCM ciphertext and an explicit demo factory isolated from production
 - [x] Bounded local certificate/hostname preflight with conventional TLS/STARTTLS port diagnostics, bilingual accessible errors, and a main-process no-connection guard
 - [x] IMAP folder/message listing, message retrieval, flags, and moves
@@ -79,7 +79,9 @@ This roadmap separates code that exists from behavior that has been verified. Or
 
 ## Mail capabilities open
 
-- [ ] Register and verify live OAuth providers, then implement reviewed code exchange, provider refresh/revocation clients, scope/consent handling, account connection, vault migration/recovery matrices, and public-provider interoperability (the Windows vault and mock lifecycle are not completion evidence)
+- [x] Wire Microsoft code exchange, refresh, per-account vault storage/removal, and account connection end to end, environment-gated and tested against a real local HTTP fixture speaking the token-endpoint protocol; no live Microsoft tenant has exercised it yet
+- [ ] Register a real Microsoft Entra ID app and verify sign-in, refresh, and IMAP/SMTP XOAUTH2 delivery against a live tenant; register Google (needs `access_type=offline` handling this build does not have yet) and verify it the same way
+- [ ] Provider revocation clients (Google and Microsoft revokers remain unset, so Revoke and clear only clears local ciphertext), scope/consent UX beyond the bare authorization request, vault migration/recovery matrices, and public-provider interoperability
 - [x] Bounded live POP3 account-test transport and loopback interoperability for implicit TLS plus required STARTTLS; Test Settings only, leave-on-server command set, no account creation or sync
 - [ ] Public-provider POP3 interoperability, additional authentication policies, POP3 account persistence, durable UIDL tracking, polling, message retrieval, retention/deletion semantics, outgoing delivery integration, folders, and synchronization (the account test is not completion evidence)
 - [x] User-facing retry ceilings and conflict resolution for queued mail operations

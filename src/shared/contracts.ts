@@ -24,6 +24,7 @@ import type { ExternalLinkReason, ExternalLinkRisk } from "./external-link-safet
 import type {
   OAuthAuthorizationSnapshot,
   OAuthProviderId,
+  OAuthSignInSnapshot,
   OAuthTokenVaultActionResult,
   OAuthTokenVaultSnapshot,
 } from "./oauth.js";
@@ -70,6 +71,8 @@ export type {
   OAuthProviderAvailability,
   OAuthProviderId,
   OAuthRemoteRevocationOutcome,
+  OAuthSignInPhase,
+  OAuthSignInSnapshot,
   OAuthTokenVaultActionResult,
   OAuthTokenVaultFailure,
   OAuthTokenVaultProviderSnapshot,
@@ -749,6 +752,7 @@ export interface MaterialEmailApi {
   getOAuthAuthorizationStatus(): Promise<OAuthAuthorizationSnapshot>;
   startOAuthAuthorization(provider: OAuthProviderId): Promise<OAuthAuthorizationSnapshot>;
   cancelOAuthAuthorization(): Promise<OAuthAuthorizationSnapshot>;
+  getOAuthSignInStatus(): Promise<OAuthSignInSnapshot | null>;
   getOAuthTokenVaultStatus(): Promise<OAuthTokenVaultSnapshot>;
   clearOAuthTokenVault(provider: OAuthProviderId): Promise<OAuthTokenVaultActionResult>;
   revokeOAuthTokenVault(provider: OAuthProviderId): Promise<OAuthTokenVaultActionResult>;
