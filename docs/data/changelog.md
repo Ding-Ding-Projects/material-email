@@ -8,7 +8,7 @@ The release audit on 2026-08-01 covered published versions from `v0.8.1` through
 
 The Changelog tab is intended to show every released version with exact version, release date, categorized changes, and the release's dim-sum code name only when a verified catalog asset exists. Search and date filters compose. Users can copy or export the currently filtered view.
 
-An entry for unreleased work carries an empty release date. The card shows *Release date not recorded* in place of a time, the filter drops the entry as soon as either date bound is set, and the Markdown export records `Released: Not recorded`. The viewer's entry type carries no commit field, so an unreleased entry names its commit in its own change text; until the work is committed that reads as the literal token `PENDING-COMMIT`, deliberately not a hexadecimal hash so it cannot be mistaken for one. Giving entries a real linked commit field is open work. The entry is listed last because the date picker seeds its first visible month from the first entry's date, and an empty date there would open the picker on an empty month grid.
+An entry for unreleased work carries an empty release date. The card shows *Release date not recorded* in place of a time, the filter drops the entry as soon as either date bound is set, and the Markdown export records `Released: Not recorded`. The viewer's entry type carries no commit field, so an unreleased entry names its commit in its own change text. An entry written before its work is committed cannot know the hash, so it carries a placeholder token that is deliberately not hexadecimal — it cannot be mistaken for a real hash — and the hash replaces it in a follow-up commit. Giving entries a real linked and validated commit field is open work. The entry is listed last because the date picker seeds its first visible month from the first entry's date, and an empty date there would open the picker on an empty month grid.
 
 The current viewer composes its bounded plain-text or regex search with release-date bounds. A non-modal calendar popover stays anchored to the date controls and supports two-click range selection, previous/next month navigation, direct month and year jumps, and named ranges for the last 30 days, current month, current year, or all releases. The day grid uses one roving keyboard stop with Arrow, Home/End, Page Up/Down, and Ctrl+Page Up/Down navigation; Escape and Done return focus to the trigger. It preserves the raw date fields for the current app session, reports incomplete, impossible, and reversed ranges inline, and uses one shared filtered Markdown selection for the visible list, copy, and export. A release without a catalog decoration shows neither a borrowed code name nor a fallback photo.
 
@@ -27,7 +27,7 @@ The date fields accept ISO `YYYY-MM-DD` and Windows-locale-ordered numeric dates
 - A code name without a verified local image creates broken presentation.
 - Catalog exhaustion can accidentally reuse the first dish or make an installer-only release fail post-publication verification.
 - An unreleased entry can be read as a published one: the count above the list reads *matching released versions* and includes it.
-- A `PENDING-COMMIT` placeholder can outlive the commit it was waiting for and reach a published note unreplaced.
+- A commit placeholder can outlive the commit it was waiting for and reach a published note unreplaced. Nothing validates that an entry's stated commit exists.
 
 ## Security considerations
 

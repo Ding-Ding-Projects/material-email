@@ -4210,7 +4210,7 @@ function changelogEntries(): ChangelogEntry[] {
         { category: tx("Mail", "郵件"), detail: tx("Message filters have an editor in Settings, and the ones set to run after synchronization now run over newly arrived messages.", "郵件篩選規則喺設定入面有得編輯，而設定咗同步之後執行嗰啲，而家會處理新收到嘅郵件。") },
         { category: tx("Startup", "啟動"), detail: tx("The dim-sum surprise draws on about one launch in ten instead of one in a hundred, and its off switch is gone.", "點心驚喜由大約每一百次啟動出一次，變成大約每十次出一次，而個熄掣就冇咗。") },
         { category: tx("Release", "發佈"), detail: tx("Release notes carry a line-count table that CI counts at the released commit, and publishing is refused when that table is missing.", "發佈記錄會附上由 CI 喺該次提交數出嚟嘅程式碼行數表；冇咗個表就唔會發佈。") },
-        { category: tx("Commit", "提交"), detail: tx("Written before these changes were committed, so the commit hash is still the placeholder PENDING-COMMIT.", "呢條記錄喺 commit 之前寫低，所以 commit 雜湊仲係佔位符 PENDING-COMMIT。") },
+        { category: tx("Commit", "提交"), detail: tx("These changes landed in commit a65b2d6.", "呢啲改動喺 commit a65b2d6 落咗地。") },
       ],
     },
   ];
