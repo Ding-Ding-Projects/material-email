@@ -185,6 +185,15 @@ export const mailIdentityInputSchema = z.strictObject({
   isDefault: z.boolean().optional(),
 }) as z.ZodType<MailIdentityInput>;
 
+/**
+ * Deliberately carries no `.default()`. Zod's `.partial()` wraps a field in `.optional()`, but a
+ * field already holding `.default()` still substitutes that default the moment the key is absent —
+ * `.optional()` only stops a schema from rejecting `undefined`, it does not reach back and disarm a
+ * default underneath it. A patch built from this object would therefore inject the default value of
+ * every field the caller never mentioned, and merging that patch over stored preferences would silently
+ * revert them. Full-object parsing gets its defaults from {@link preferencesSchema} below instead,
+ * which is the only place they belong: filling a gap left by a state file older than the field.
+ */
 const preferencesObjectSchema = z.strictObject({
   language: z.enum(["en", "yue", "bilingual"]),
   funnyEnglish: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
@@ -197,8 +206,8 @@ const preferencesObjectSchema = z.strictObject({
   fontWeight: z.number().int().min(100).max(1_000),
   narratorEnabled: z.boolean(),
   narratorLanguage: z.enum(["en", "yue", "bilingual"]),
-  nativeNotificationsEnabled: z.boolean().default(false),
-  historyRetentionDays: historyRetentionDaysSchema.default(LOCAL_HISTORY_RETENTION_DAYS_DEFAULT),
+  nativeNotificationsEnabled: z.boolean(),
+  historyRetentionDays: historyRetentionDaysSchema,
   externalEditorPath: nativePathSchema.optional(),
   selectedAccountId: identifierSchema.optional(),
   selectedFolderPath: folderPathSchema.optional(),
@@ -209,9 +218,16 @@ const preferencesObjectSchema = z.strictObject({
  * retired switch, and a strict object would reject the entire record over that one dead key, locking
  * the owner out of their own mail. Accept it, drop it, and let the profile rejoin the draw. The
  * renderer never sends it, so the patch schema stays strict.
+ *
+ * `nativeNotificationsEnabled` and `historyRetentionDays` get their defaults here, and only here, so
+ * a state file written before those fields existed still loads with sane values.
  */
 export const preferencesSchema = preferencesObjectSchema
-  .extend({ dimSumEnabled: z.boolean().optional() })
+  .extend({
+    nativeNotificationsEnabled: z.boolean().default(false),
+    historyRetentionDays: historyRetentionDaysSchema.default(LOCAL_HISTORY_RETENTION_DAYS_DEFAULT),
+    dimSumEnabled: z.boolean().optional(),
+  })
   .transform(preferences => {
     const retained = { ...preferences };
     delete retained.dimSumEnabled;

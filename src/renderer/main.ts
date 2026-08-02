@@ -1498,10 +1498,11 @@ const initialize = async (): Promise<void> => {
     render();
     void maybeShowDimSum(bootstrap);
     await refreshOrganization();
-    if (preferred) {
-      await loadAccount(preferred.id, false);
-      await refreshDraftAndOutbox();
-    }
+    // loadAccount already refreshes drafts/outbox internally once it finishes, inside its own
+    // try/catch that degrades to a toast. A second unguarded call here had no request left to make
+    // that loadAccount had not already made, and its only effect was to let a recoverable
+    // draft/outbox failure escalate into the fatal error screen instead of a toast.
+    if (preferred) await loadAccount(preferred.id, false);
   } catch (error) {
     state.phase = "error";
     state.fatalError = errorMessage(error);

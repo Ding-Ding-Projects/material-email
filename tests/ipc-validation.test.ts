@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AccountDraft, AttachmentSaveReview, ComposeDraft } from "../src/shared/contracts";
-import { ipcPayloadSchemas, parseIpcArgs } from "../src/main/ipc-validation";
+import { ipcPayloadSchemas, parseIpcArgs, preferencesPatchSchema, preferencesSchema } from "../src/main/ipc-validation";
 import { TAB_APPEARANCE_THEME_FORMAT, TAB_APPEARANCE_THEME_VERSION } from "../src/shared/tab-appearance-theme";
 
 const accountDraft = (): AccountDraft => ({
@@ -197,7 +197,9 @@ describe("non-PIM IPC validation", () => {
   });
 
   it("strictly validates preference names, values, and native editor paths", () => {
-    expect(ipcPayloadSchemas.preferences.parse([{ theme: "dark", funnyEnglish: 5 }])).toEqual([{ theme: "dark", funnyEnglish: 5, nativeNotificationsEnabled: false, historyRetentionDays: 365 }]);
+    // A patch carries only the fields it actually changes; it must never gain a defaulted
+    // nativeNotificationsEnabled/historyRetentionDays it never mentioned (see preferences-patch-merge.test.ts).
+    expect(ipcPayloadSchemas.preferences.parse([{ theme: "dark", funnyEnglish: 5 }])).toEqual([{ theme: "dark", funnyEnglish: 5 }]);
     expect(ipcPayloadSchemas.historyPrunePreview.parse([30])).toEqual([30]);
     expect(() => ipcPayloadSchemas.historyPrunePreview.parse([29])).toThrow();
     expect(() => ipcPayloadSchemas.historyPrunePreview.parse([3_651])).toThrow();
@@ -224,6 +226,36 @@ describe("non-PIM IPC validation", () => {
     expect(() => ipcPayloadSchemas.remoteContentConsent.parse(["account-1", "Inbox", 8, "true"])).toThrow();
     expect(() => ipcPayloadSchemas.remoteContentConsent.parse(["account-1", "Inbox", 0, true])).toThrow();
     expect(() => ipcPayloadSchemas.remoteContentConsent.parse(["account-1", "Inbox", 8, true, "surplus"])).toThrow();
+  });
+
+  it("does not inject a defaulted field into a preferences patch that never mentioned it", () => {
+    // zod's .partial() only makes a field optional; a field that already carries .default() still
+    // substitutes that default the moment it is absent, regardless of .optional() layered on top.
+    // A patch schema built naively from the full object would therefore silently reintroduce
+    // nativeNotificationsEnabled/historyRetentionDays into every unrelated patch.
+    const patch = preferencesPatchSchema.parse({ selectedAccountId: "account-1", selectedFolderPath: "Inbox" });
+    expect(patch).toEqual({ selectedAccountId: "account-1", selectedFolderPath: "Inbox" });
+    expect(patch).not.toHaveProperty("nativeNotificationsEnabled");
+    expect(patch).not.toHaveProperty("historyRetentionDays");
+  });
+
+  it("still fills nativeNotificationsEnabled/historyRetentionDays when parsing a full preferences object missing them", () => {
+    const withoutNewerFields = {
+      language: "en",
+      funnyEnglish: 2,
+      funnyCantonese: 3,
+      theme: "system",
+      density: "comfortable",
+      accent: "#6750A4",
+      fontFamily: "Segoe UI Variable",
+      fontScale: 1,
+      fontWeight: 400,
+      narratorEnabled: false,
+      narratorLanguage: "en",
+    };
+    const parsed = preferencesSchema.parse(withoutNewerFields);
+    expect(parsed.nativeNotificationsEnabled).toBe(false);
+    expect(parsed.historyRetentionDays).toBeGreaterThan(0);
   });
 
   it("does not echo a rejected account secret in validation errors", () => {

@@ -743,6 +743,13 @@ test("guards dirty PIM editors and restores keyboard focus for contact, membersh
     const event = new Event("beforeunload", { cancelable: true });
     return window.dispatchEvent(event);
   })).toBe(false);
+  // Preventing that unload is not a pure query: with unsaved work, the handler also opens the
+  // app's own close-window confirmation as a real side effect, exactly as it would for an actual
+  // close attempt. Dismiss that stray dialog before exercising the PIM editor's own Escape-driven
+  // decision below — otherwise the next Escape is swallowed by this one instead of opening it.
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await notes.focus();
   await page.keyboard.press("Escape");
   let decision = page.getByRole("alertdialog");
