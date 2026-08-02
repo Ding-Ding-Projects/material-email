@@ -94,6 +94,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Local junk classification trained only by explicit corrections, with source-prefixed tokens, an honest untrained state, bounded token counts, exact untraining, and no automatic move, deletion, or transmission
 - [x] Folder create, rename, and removal against the server with special-folder protection, subtree cache invalidation, and a bounded single-round-trip mark-folder-read that reports what actually changed
 - [x] Prove tagging, tag-narrowed quick filtering, mark-folder-read, restart persistence, and refused-pattern disclosure in 2 / 2 real-Electron scenarios
+- [x] Add the per-account identity and signature model: conservative address validation, control-character stripping, exactly one default per account, sibling promotion on removal, reply-address identity selection, and signature placement above or below quoted material without stacking
+- [ ] Wire identities and signatures through persistence, IPC, the composer identity picker, and the SMTP From/Reply-To headers (the pure model is not integration evidence)
 - [ ] Persist tags as server-side IMAP keywords, run filters automatically after synchronization, and add a filter editor surface with its own search and regex builder
 - [ ] Server-complete all-account synchronization/threading and persistent scalable mail indexing
 - [ ] Conversation threading and complete search indexing
