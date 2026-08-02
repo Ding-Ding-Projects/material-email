@@ -3,6 +3,7 @@
 | Article | Status | Purpose |
 | --- | --- | --- |
 | [Accounts and connectivity](accounts-and-connectivity.md) | Verified bounded account test | Manual IMAP/SMTP, a live POP3 Test/Cancel path over TLS or STARTTLS, local/TLS diagnostics, ephemeral OAuth PKCE/callback states, a provider-gated Windows safeStorage vault, and a mock-only exchange/refresh/revoke harness |
+| [Setting up Microsoft sign-in](microsoft-oauth-setup.md) | Setup guide for a working prerequisite; not yet verified live | Step-by-step Azure AD (Entra ID) app registration, IMAP/SMTP permission scopes, environment configuration, and the AADSTS errors you may hit |
 | [Synchronization and folders](synchronization-and-folders.md) | Foundation | Folder discovery, message summaries, flags, and moves |
 | [Local unified folders](unified-folders.md) | Verified bounded slice | Cached cross-account Inbox, Starred, and Unread with account attribution |
 | [Cached conversation grouping](conversation-grouping.md) | Verified bounded slice | Local subject/reference grouping over visible cached summaries |
