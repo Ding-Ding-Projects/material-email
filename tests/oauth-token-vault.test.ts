@@ -151,6 +151,40 @@ describe("Windows safeStorage OAuth token vault", () => {
     expect((JSON.parse(await readFile(filePath, "utf8")) as { records: unknown[] }).records).toEqual([]);
   });
 
+  it("reads back plaintext for exactly one account and returns null when no record exists", async () => {
+    const source = new MockProviderTokenSource();
+    const { vault } = await createHarness();
+    await vault.saveInitial("google", "account-1", source.initial());
+
+    const read = await vault.read("google", "account-1");
+    expect(read).toEqual({
+      accessToken: "fixture-access-one",
+      refreshToken: "fixture-refresh-one",
+      expiresAt: "2026-08-01T12:01:00.000Z",
+      scopes: ["mail.read", "mail.send"],
+    });
+    expect(await vault.read("google", "account-2")).toBeNull();
+    expect(await vault.read("microsoft", "account-1")).toBeNull();
+  });
+
+  it("forgets exactly one account's tokens without disturbing a sibling account's", async () => {
+    const source = new MockProviderTokenSource();
+    const { vault, filePath } = await createHarness();
+    await vault.saveInitial("google", "account-1", source.initial());
+    await vault.saveInitial("google", "account-2", { ...source.initial(), accessToken: "fixture-access-sibling" });
+
+    await vault.forgetAccount("google", "account-1");
+    expect(await vault.read("google", "account-1")).toBeNull();
+    expect((await vault.read("google", "account-2"))?.accessToken).toBe("fixture-access-sibling");
+    expect((await vault.status()).providers[0]).toMatchObject({ recordCount: 1 });
+    expect(await readFile(filePath, "utf8")).not.toMatch(/fixture-access-one|fixture-refresh-one/u);
+  });
+
+  it("forgetting an account that never had a record is a harmless no-op", async () => {
+    const { vault } = await createHarness();
+    await expect(vault.forgetAccount("google", "account-never-existed")).resolves.toBeUndefined();
+  });
+
   it("reports unavailable Windows protection without attempting encryption", async () => {
     const { vault, safeStorage } = await createHarness({ available: false });
     await expect(vault.saveInitial("google", "account-1", new MockProviderTokenSource().initial())).rejects.toMatchObject({
@@ -158,5 +192,12 @@ describe("Windows safeStorage OAuth token vault", () => {
     });
     expect(safeStorage.encryptString).not.toHaveBeenCalled();
     await expect(vault.status()).resolves.toMatchObject({ available: false, failure: "encryption-unavailable" });
+  });
+
+  it("refuses to read a token when Windows protection is unavailable, rather than returning a stale ciphertext", async () => {
+    const { vault, safeStorage } = await createHarness();
+    await vault.saveInitial("google", "account-1", new MockProviderTokenSource().initial());
+    safeStorage.available = false;
+    await expect(vault.read("google", "account-1")).rejects.toMatchObject({ code: "windows-safe-storage-unavailable" });
   });
 });

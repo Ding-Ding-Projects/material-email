@@ -352,6 +352,51 @@ export class WindowsSafeStorageOAuthTokenVault {
     });
   }
 
+  /**
+   * Returns plaintext token material for exactly one account, or null when no record exists. This
+   * is deliberately never wired to IPC — it exists only for the main process to authenticate a
+   * connected account's own mail connection, the same boundary a decrypted account password
+   * already crosses only inside the main process and never over IPC.
+   */
+  async read(providerValue: OAuthProviderId, accountKeyValue: string): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: string;
+    scopes: string[];
+  } | null> {
+    const provider = requireKnownProvider(providerValue);
+    const accountKey = requireAccountKey(accountKeyValue);
+    this.#requireProtection();
+    return this.#run(async () => {
+      const document = await this.#readDocument();
+      const record = document.records.find(candidate => candidate.provider === provider && candidate.accountKey === accountKey);
+      if (!record) return null;
+      return {
+        accessToken: this.#unprotect(record.accessTokenCiphertext),
+        refreshToken: this.#unprotect(record.refreshTokenCiphertext),
+        expiresAt: record.expiresAt,
+        scopes: [...record.scopes],
+      };
+    });
+  }
+
+  /**
+   * Removes exactly one account's record, unlike {@link clear} which drops every record for a
+   * provider. Used when a single connected account is removed, so removing one Microsoft account
+   * never touches another Microsoft account's tokens.
+   */
+  async forgetAccount(providerValue: OAuthProviderId, accountKeyValue: string): Promise<void> {
+    const provider = requireKnownProvider(providerValue);
+    const accountKey = requireAccountKey(accountKeyValue);
+    return this.#run(async () => {
+      const document = await this.#readDocument();
+      const remaining = document.records.filter(record => !(record.provider === provider && record.accountKey === accountKey));
+      if (remaining.length === document.records.length) return;
+      document.records = remaining;
+      await this.#writeDocument(document);
+    });
+  }
+
   async clear(providerValue: OAuthProviderId): Promise<OAuthTokenVaultActionResult> {
     const provider = requireKnownProvider(providerValue);
     return this.#run(async () => {
