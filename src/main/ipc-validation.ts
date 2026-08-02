@@ -13,12 +13,22 @@ import {
   type CachedMailSearchQuery,
   type LocalHistoryPruneRequest,
   type ICalendarExportRequest,
+  type MessageFilterInput,
+  type MessageTagPatch,
   type PimProviderProfileInput,
   type Pop3AccountOptions,
   type Preferences,
   type TlsCertificateInspectionRequest,
 } from "../shared/contracts.js";
 import { OAUTH_PROVIDER_IDS } from "../shared/oauth.js";
+import { MESSAGE_TAGS_PER_MESSAGE_LIMIT, MESSAGE_TAG_CATALOG_LIMIT, MESSAGE_TAG_NAME_LIMIT } from "../shared/message-tags.js";
+import {
+  MESSAGE_FILTER_ACTION_LIMIT,
+  MESSAGE_FILTER_CONDITION_LIMIT,
+  MESSAGE_FILTER_LIMIT,
+  MESSAGE_FILTER_NAME_LIMIT,
+  MESSAGE_FILTER_VALUE_LIMIT,
+} from "../shared/message-filters.js";
 import { validateTabAppearanceThemeDocument, type TabAppearanceThemeDocument } from "../shared/tab-appearance-theme.js";
 
 const noControlCharacters = (value: string): boolean => !/[\u0000-\u001f\u007f]/u.test(value);
@@ -231,6 +241,46 @@ export const tabAppearanceThemeSchema = z.custom<TabAppearanceThemeDocument>(
   "A strictly validated Material Email tab appearance theme is required.",
 );
 
+const folderNameSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .refine(noHeaderBreaks, "Folder names cannot contain line breaks or NUL.")
+  .refine(value => !/[/\\]/u.test(value), "A folder name cannot contain a path separator.")
+  .refine(value => value.trim() === value, "A folder name cannot start or end with whitespace.");
+const messageTagIdSchema = z.string().min(1).max(MESSAGE_TAG_NAME_LIMIT).regex(/^[\p{Letter}\p{Number}-]+$/u);
+const messageTagNameSchema = z.string().min(1).max(MESSAGE_TAG_NAME_LIMIT).refine(noControlCharacters, "Control characters are not allowed.");
+const messageTagColourSchema = z.string().regex(/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/iu);
+const messageTagPatchSchema = z.strictObject({
+  name: messageTagNameSchema.optional(),
+  colour: messageTagColourSchema.optional(),
+  ordinal: z.number().int().min(0).max(MESSAGE_TAG_CATALOG_LIMIT).optional(),
+}) as z.ZodType<MessageTagPatch>;
+const messageFilterConditionInputSchema = z.strictObject({
+  field: z.enum([
+    "from", "to", "cc", "recipient", "subject", "body", "account", "folder", "tag", "size", "age-days", "attachments", "read-state", "star-state",
+  ]),
+  operator: z.enum(["contains", "not-contains", "is", "is-not", "starts-with", "ends-with", "regex", "greater-than", "less-than"]),
+  value: z.string().max(MESSAGE_FILTER_VALUE_LIMIT),
+  caseSensitive: z.boolean(),
+});
+const messageFilterActionInputSchema = z.strictObject({
+  kind: z.enum([
+    "mark-read", "mark-unread", "star", "unstar", "add-tag", "remove-tag", "move", "archive", "trash", "mark-junk", "mark-not-junk", "stop",
+  ]),
+  value: z.string().max(MESSAGE_FILTER_VALUE_LIMIT),
+});
+const messageFilterInputSchema = z.strictObject({
+  id: identifierSchema.optional(),
+  name: z.string().min(1).max(MESSAGE_FILTER_NAME_LIMIT).refine(noControlCharacters, "Control characters are not allowed."),
+  enabled: z.boolean(),
+  match: z.enum(["all", "any"]),
+  runOnSync: z.boolean(),
+  accountId: identifierSchema.nullable(),
+  conditions: z.array(messageFilterConditionInputSchema).min(1).max(MESSAGE_FILTER_CONDITION_LIMIT),
+  actions: z.array(messageFilterActionInputSchema).min(1).max(MESSAGE_FILTER_ACTION_LIMIT),
+}) as z.ZodType<MessageFilterInput>;
+
 export const ipcPayloadSchemas = {
   none: z.tuple([]),
   accountDiscover: z.tuple([emailSchema]),
@@ -272,6 +322,15 @@ export const ipcPayloadSchemas = {
   tabAppearanceThemeExport: z.tuple([tabAppearanceThemeSchema]),
   editorOpen: z.union([z.tuple([]), z.tuple([z.undefined()]), z.tuple([nativePathSchema])]),
   externalLinkRequest: z.tuple([externalLinkRequestIdSchema]),
+  folderName: z.tuple([identifierSchema, folderPathSchema, folderNameSchema]),
+  messageTagCreate: z.tuple([messageTagNameSchema, messageTagColourSchema]),
+  messageTagUpdate: z.tuple([messageTagIdSchema, messageTagPatchSchema]),
+  messageTagId: z.tuple([messageTagIdSchema]),
+  messageTagSet: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, z.array(messageTagIdSchema).max(MESSAGE_TAGS_PER_MESSAGE_LIMIT)]),
+  messageFilterSave: z.tuple([messageFilterInputSchema]),
+  messageFilterId: z.tuple([identifierSchema]),
+  messageFilterOrder: z.tuple([z.array(identifierSchema).max(MESSAGE_FILTER_LIMIT)]),
+  junkTrain: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, z.enum(["junk", "good"])]),
 } as const;
 
 export const parseIpcArgs = <Schema extends z.ZodType>(channel: string, schema: Schema, args: unknown[]): z.output<Schema> => {

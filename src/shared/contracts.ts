@@ -29,6 +29,9 @@ import type {
 } from "./oauth.js";
 import type { MessageCryptoProfile, MessageCryptographyAssessment } from "./message-cryptography.js";
 import type { TabAppearanceThemeDocument } from "./tab-appearance-theme.js";
+import type { MessageTag } from "./message-tags.js";
+import type { MessageFilter, MessageFilterAction, MessageFilterCondition } from "./message-filters.js";
+import type { JunkAssessment } from "./junk-classifier.js";
 
 export type {
   CalendarEvent,
@@ -82,6 +85,80 @@ export type {
   MessageCryptographyAssessment,
   MessageCryptoTrustState,
 } from "./message-cryptography.js";
+
+export type { MessageTag, MessageTagState } from "./message-tags.js";
+export type {
+  MessageFilter,
+  MessageFilterAction,
+  MessageFilterActionKind,
+  MessageFilterCondition,
+  MessageFilterField,
+  MessageFilterOperator,
+} from "./message-filters.js";
+export type { JunkAssessment, JunkVerdict } from "./junk-classifier.js";
+export type {
+  QuickFilterFacet,
+  QuickFilterScope,
+  QuickFilterState,
+} from "./quick-filter.js";
+
+export interface MessageTagCatalog {
+  tags: MessageTag[];
+  /** How many cached messages carry each tag, keyed by tag identifier. */
+  usage: Record<string, number>;
+}
+
+/** Applied tag identifiers keyed by `MessageSummary.id`, so the renderer can label list rows. */
+export type MessageTagAssignmentMap = Record<string, string[]>;
+
+export interface MessageTagPatch {
+  name?: string;
+  colour?: string;
+  ordinal?: number;
+}
+
+export interface MessageFilterInput {
+  id?: string;
+  name: string;
+  enabled: boolean;
+  match: "all" | "any";
+  runOnSync: boolean;
+  accountId: string | null;
+  conditions: MessageFilterCondition[];
+  actions: MessageFilterAction[];
+}
+
+export interface MessageFilterRunEntrySummary {
+  messageId: string;
+  subject: string;
+  sender: string;
+  filterNames: string[];
+  actions: MessageFilterAction[];
+}
+
+export interface MessageFilterRunSummary {
+  /** False for a preview, true once the actions were carried out. */
+  applied: boolean;
+  accountId: string;
+  folderPath: string;
+  consideredCount: number;
+  matchedCount: number;
+  appliedCount: number;
+  limitReached: boolean;
+  entries: MessageFilterRunEntrySummary[];
+  entriesTruncated: boolean;
+  failures: string[];
+}
+
+export interface JunkSummary {
+  tokenCount: number;
+  junkMessageCount: number;
+  goodMessageCount: number;
+  ready: boolean;
+  threshold: number;
+  /** Always false: classification and training stay on this computer. */
+  serverAssisted: false;
+}
 
 export type LanguageMode = "en" | "yue" | "bilingual";
 export type ThemeMode = "light" | "dark" | "system";
@@ -685,6 +762,26 @@ export interface MaterialEmailApi {
   deleteQuarantinedAttachment(id: string): Promise<void>;
   setMessageFlags(accountId: string, folderPath: string, uid: number, patch: { unread?: boolean; starred?: boolean }): Promise<void>;
   moveMessage(accountId: string, folderPath: string, uid: number, destination: string): Promise<void>;
+  createFolder(accountId: string, folderPath: string): Promise<FolderSummary[]>;
+  renameFolder(accountId: string, folderPath: string, name: string): Promise<FolderSummary[]>;
+  deleteFolder(accountId: string, folderPath: string): Promise<FolderSummary[]>;
+  markFolderRead(accountId: string, folderPath: string): Promise<number>;
+  listMessageTags(): Promise<MessageTagCatalog>;
+  listMessageTagAssignments(): Promise<MessageTagAssignmentMap>;
+  createMessageTag(name: string, colour: string): Promise<MessageTagCatalog>;
+  updateMessageTag(id: string, patch: MessageTagPatch): Promise<MessageTagCatalog>;
+  deleteMessageTag(id: string): Promise<MessageTagCatalog>;
+  setMessageTags(accountId: string, folderPath: string, uid: number, tagIds: string[]): Promise<string[]>;
+  listMessageFilters(): Promise<MessageFilter[]>;
+  saveMessageFilter(input: MessageFilterInput): Promise<MessageFilter[]>;
+  deleteMessageFilter(id: string): Promise<MessageFilter[]>;
+  reorderMessageFilters(orderedIds: string[]): Promise<MessageFilter[]>;
+  previewMessageFilterRun(accountId: string, folderPath: string): Promise<MessageFilterRunSummary>;
+  runMessageFilters(accountId: string, folderPath: string): Promise<MessageFilterRunSummary>;
+  getJunkSummary(): Promise<JunkSummary>;
+  classifyMessageJunk(accountId: string, folderPath: string, uid: number): Promise<JunkAssessment>;
+  trainMessageJunk(accountId: string, folderPath: string, uid: number, label: "junk" | "good"): Promise<JunkSummary>;
+  resetJunkModel(): Promise<JunkSummary>;
   sendMessage(draft: ComposeDraft): Promise<SendResult>;
   saveDraft(draft: ComposeDraft): Promise<ComposeDraft>;
   listDrafts(accountId: string): Promise<LocalDraftSummary[]>;

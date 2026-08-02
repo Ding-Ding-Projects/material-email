@@ -13,6 +13,13 @@ import type {
   ComposeDraft,
   FolderSummary,
   HistoryRecord,
+  JunkAssessment,
+  JunkSummary,
+  MessageFilter,
+  MessageFilterInput,
+  MessageFilterRunSummary,
+  MessageTagAssignmentMap,
+  MessageTagCatalog,
   MessageDetail,
   MessageSummary,
   NotificationRecord,
@@ -91,6 +98,30 @@ import {
   type PersistedState,
   type StoredAccount,
 } from "./persisted-state.js";
+import {
+  addMessageTag,
+  applyMessageTags,
+  carryTagsThroughMove,
+  classifyJunk,
+  editMessageTag,
+  forgetAccountTags,
+  forgetFolderTags,
+  junkSummaryOf,
+  listFilters,
+  planFilterRun,
+  removeFilter,
+  removeMessageTag,
+  reorderFilters,
+  resetJunk,
+  summarizeFilterPlan,
+  tagAssignmentMapOf,
+  tagCatalogOf,
+  trainJunk,
+  upsertFilter,
+  type FilterRunContext,
+} from "./mail-organization.js";
+import { emptyMessageTagState } from "../shared/message-tags.js";
+import { emptyJunkModel } from "../shared/junk-classifier.js";
 import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
 import { collectCachedUnifiedMessages } from "../shared/unified-folders.js";
 import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-mail-index.js";
@@ -286,6 +317,9 @@ export class AppService {
       this.#statePath,
       () => ({
         schemaVersion: 1,
+        messageTags: emptyMessageTagState(),
+        messageFilters: [],
+        junkModel: emptyJunkModel(),
         accounts: [],
         preferences: defaultPreferences(),
         folders: {},
@@ -482,6 +516,7 @@ export class AppService {
       state.drafts = state.drafts.filter(draft => draft.accountId !== accountId);
       state.outbox = state.outbox.filter(item => item.draft.accountId !== accountId);
       state.pendingOperations = state.pendingOperations.filter(operation => operation.accountId !== accountId);
+      forgetAccountTags(state, accountId);
       if (state.preferences.selectedAccountId === accountId) {
         const nextAccount = state.accounts[0];
         if (nextAccount) state.preferences.selectedAccountId = nextAccount.id;
@@ -913,6 +948,11 @@ export class AppService {
         draft.messages[targetKey] = [moved, ...(draft.messages[targetKey] ?? []).filter(item => item.uid !== destinationUid)];
       }
       delete draft.details[message.id];
+      carryTagsThroughMove(
+        draft,
+        { accountId, folderPath, uid, ...(message.uidValidity ? { uidValidity: message.uidValidity } : {}) },
+        moved ? { folderPath: destination, uid: moved.uid, ...(moved.uidValidity ? { uidValidity: moved.uidValidity } : {}) } : null,
+      );
       this.#record(draft, "updated", "message", moved?.id ?? message.id, `Moved “${message.subject}” to ${destination}`, {
         from: folderPath,
         destination,
@@ -948,6 +988,343 @@ export class AppService {
         this.#notify(draft, "success", "Message moved", `“${message.subject}” moved to ${destination}.`);
       }
     });
+  }
+
+  async createFolder(accountId: string, folderPath: string): Promise<FolderSummary[]> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    if (account.kind === "demo") throw new Error("The demonstration account has a fixed set of folders.");
+    try {
+      await this.#mail.createFolder(this.#runtimeAccount(account), folderPath);
+    } catch (error) {
+      throw publicMailError(error);
+    }
+    return this.#refreshFolders(accountId, `Created folder ${folderPath}`);
+  }
+
+  async renameFolder(accountId: string, folderPath: string, name: string): Promise<FolderSummary[]> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    if (account.kind === "demo") throw new Error("The demonstration account has a fixed set of folders.");
+    const separator = folderPath.includes("/") ? "/" : ".";
+    const parent = folderPath.includes(separator) ? `${folderPath.slice(0, folderPath.lastIndexOf(separator))}${separator}` : "";
+    const destination = `${parent}${name}`;
+    if (destination === folderPath) return state.folders[accountId] ?? [];
+    try {
+      await this.#mail.renameFolder(this.#runtimeAccount(account), folderPath, destination);
+    } catch (error) {
+      throw publicMailError(error);
+    }
+    // The server may have moved a whole subtree, so drop every cached collection beneath the old path.
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      for (const key of Object.keys(draft.messages)) {
+        const prefix = folderKey(accountId, folderPath);
+        if (key === prefix || key.startsWith(`${prefix}${separator}`)) delete draft.messages[key];
+      }
+      for (const [id, detail] of Object.entries(draft.details)) {
+        if (detail.accountId === accountId && (detail.folderPath === folderPath || detail.folderPath.startsWith(`${folderPath}${separator}`))) {
+          delete draft.details[id];
+        }
+      }
+      if (draft.preferences.selectedFolderPath === folderPath) draft.preferences.selectedFolderPath = destination;
+    });
+    return this.#refreshFolders(accountId, `Renamed folder ${folderPath} to ${destination}`);
+  }
+
+  async deleteFolder(accountId: string, folderPath: string): Promise<FolderSummary[]> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    if (account.kind === "demo") throw new Error("The demonstration account has a fixed set of folders.");
+    const folder = (state.folders[accountId] ?? []).find(candidate => candidate.path === folderPath);
+    if (folder && folder.role !== "other") {
+      throw new Error(`${folder.name} is a special folder this account relies on, so it cannot be removed.`);
+    }
+    try {
+      await this.#mail.deleteFolder(this.#runtimeAccount(account), folderPath);
+    } catch (error) {
+      throw publicMailError(error);
+    }
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      delete draft.messages[folderKey(accountId, folderPath)];
+      for (const [id, detail] of Object.entries(draft.details)) {
+        if (detail.accountId === accountId && detail.folderPath === folderPath) delete draft.details[id];
+      }
+      forgetFolderTags(draft, accountId, folderPath);
+      if (draft.preferences.selectedFolderPath === folderPath) delete draft.preferences.selectedFolderPath;
+    });
+    return this.#refreshFolders(accountId, `Removed folder ${folderPath}`);
+  }
+
+  async markFolderRead(accountId: string, folderPath: string): Promise<number> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    const key = folderKey(accountId, folderPath);
+    if (account.kind === "demo") {
+      let changed = 0;
+      await this.#store.update(draft => {
+        draft.messages[key] = (draft.messages[key] ?? []).map(message => {
+          if (!message.unread) return message;
+          changed += 1;
+          return { ...message, unread: false };
+        });
+      });
+      return changed;
+    }
+    const uidValidity = (state.folders[accountId] ?? []).find(folder => folder.path === folderPath)?.uidValidity;
+    if (!uidValidity) throw new Error("Refresh this folder before marking it read: its mailbox generation is unknown.");
+    let changed = 0;
+    try {
+      changed = await this.#mail.markFolderRead(this.#runtimeAccount(account), folderPath, uidValidity);
+    } catch (error) {
+      throw publicMailError(error);
+    }
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      draft.messages[key] = (draft.messages[key] ?? []).map(message => (message.unread ? { ...message, unread: false } : message));
+      for (const [id, detail] of Object.entries(draft.details)) {
+        if (detail.accountId === accountId && detail.folderPath === folderPath && detail.unread) draft.details[id] = { ...detail, unread: false };
+      }
+      const folder = (draft.folders[accountId] ?? []).find(candidate => candidate.path === folderPath);
+      if (folder) folder.unread = 0;
+      this.#record(draft, "updated", "message", `${accountId}:${folderPath}`, `Marked ${folderPath} read`, { markedRead: changed });
+    });
+    return changed;
+  }
+
+  async listMessageTags(): Promise<MessageTagCatalog> {
+    return tagCatalogOf(await this.#store.read());
+  }
+
+  async listMessageTagAssignments(): Promise<MessageTagAssignmentMap> {
+    return tagAssignmentMapOf(await this.#store.read());
+  }
+
+  async createMessageTag(name: string, colour: string): Promise<MessageTagCatalog> {
+    let catalog: MessageTagCatalog | null = null;
+    await this.#store.update(draft => {
+      catalog = addMessageTag(draft, name, colour);
+      this.#record(draft, "created", "settings", "message-tags", `Created tag ${name}`, { name, colour });
+    });
+    return catalog ?? this.listMessageTags();
+  }
+
+  async updateMessageTag(id: string, patch: { name?: string; colour?: string; ordinal?: number }): Promise<MessageTagCatalog> {
+    let catalog: MessageTagCatalog | null = null;
+    await this.#store.update(draft => {
+      catalog = editMessageTag(draft, id, patch);
+      this.#record(draft, "updated", "settings", "message-tags", `Updated tag ${id}`, patch);
+    });
+    return catalog ?? this.listMessageTags();
+  }
+
+  async deleteMessageTag(id: string): Promise<MessageTagCatalog> {
+    let catalog: MessageTagCatalog | null = null;
+    await this.#store.update(draft => {
+      catalog = removeMessageTag(draft, id);
+      this.#record(draft, "deleted", "settings", "message-tags", `Removed tag ${id}`, { id });
+    });
+    return catalog ?? this.listMessageTags();
+  }
+
+  async setMessageTags(accountId: string, folderPath: string, uid: number, tagIds: string[]): Promise<string[]> {
+    let applied: string[] = [];
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      const message = draft.messages[folderKey(accountId, folderPath)]?.find(item => item.uid === uid);
+      if (!message) throw new Error("That message is no longer in this folder's local cache. Refresh the folder and try again.");
+      applied = applyMessageTags(draft, message, tagIds);
+      this.#record(draft, "updated", "message", message.id, `Tagged “${message.subject}”`, { tagIds: applied });
+    });
+    return applied;
+  }
+
+  async listMessageFilters(): Promise<MessageFilter[]> {
+    return listFilters(await this.#store.read());
+  }
+
+  async saveMessageFilter(input: MessageFilterInput): Promise<MessageFilter[]> {
+    let filters: MessageFilter[] = [];
+    await this.#store.update(draft => {
+      filters = upsertFilter(draft, input);
+      this.#record(draft, input.id ? "updated" : "created", "settings", "message-filters", `Saved filter ${input.name}`, {
+        name: input.name,
+        enabled: input.enabled,
+        conditionCount: input.conditions.length,
+        actionCount: input.actions.length,
+      });
+    });
+    return filters;
+  }
+
+  async deleteMessageFilter(id: string): Promise<MessageFilter[]> {
+    let filters: MessageFilter[] = [];
+    await this.#store.update(draft => {
+      const removed = listFilters(draft).find(filter => filter.id === id);
+      filters = removeFilter(draft, id);
+      this.#record(draft, "deleted", "settings", "message-filters", `Removed filter ${removed?.name ?? id}`, { id });
+    });
+    return filters;
+  }
+
+  async reorderMessageFilters(orderedIds: string[]): Promise<MessageFilter[]> {
+    let filters: MessageFilter[] = [];
+    await this.#store.update(draft => {
+      filters = reorderFilters(draft, orderedIds);
+      this.#record(draft, "updated", "settings", "message-filters", "Reordered filters", { orderedIds });
+    });
+    return filters;
+  }
+
+  async previewMessageFilterRun(accountId: string, folderPath: string): Promise<MessageFilterRunSummary> {
+    const state = await this.#store.read();
+    const context = this.#filterContext(state, accountId, folderPath);
+    const plan = planFilterRun(state, context);
+    return summarizeFilterPlan(plan, context, { applied: false, appliedCount: 0, failures: [] }) as MessageFilterRunSummary;
+  }
+
+  async runMessageFilters(accountId: string, folderPath: string): Promise<MessageFilterRunSummary> {
+    const state = await this.#store.read();
+    const context = this.#filterContext(state, accountId, folderPath);
+    const plan = planFilterRun(state, context);
+    const outcome = await this.#applyFilterPlan(state, context, plan);
+    const summary = summarizeFilterPlan(plan, context, { applied: true, ...outcome }) as MessageFilterRunSummary;
+    if (plan.matchedCount) {
+      await this.#store.update(draft => {
+        this.#record(draft, "updated", "message", `${accountId}:${folderPath}`, `Ran filters on ${folderPath}`, {
+          matched: plan.matchedCount,
+          applied: outcome.appliedCount,
+          failed: outcome.failures.length,
+        });
+        this.#notify(
+          draft,
+          outcome.failures.length ? "warning" : "success",
+          "Filters finished",
+          outcome.failures.length
+            ? `${outcome.appliedCount} of ${plan.matchedCount} matching messages were updated. ${outcome.failures.length} could not be completed.`
+            : `${outcome.appliedCount} of ${plan.matchedCount} matching messages were updated.`,
+          { category: "mail", action: { kind: "open", target: "page", page: "mail" } },
+        );
+      });
+    }
+    return summary;
+  }
+
+  async getJunkSummary(): Promise<JunkSummary> {
+    return junkSummaryOf(await this.#store.read());
+  }
+
+  async classifyMessageJunk(accountId: string, folderPath: string, uid: number): Promise<JunkAssessment> {
+    const state = await this.#store.read();
+    this.#requireAccount(state, accountId);
+    const message = state.messages[folderKey(accountId, folderPath)]?.find(item => item.uid === uid);
+    if (!message) throw new Error("That message is no longer in this folder's local cache. Refresh the folder and try again.");
+    return classifyJunk(state, message, state.details[message.id]?.text);
+  }
+
+  async trainMessageJunk(accountId: string, folderPath: string, uid: number, label: "junk" | "good"): Promise<JunkSummary> {
+    let summary: JunkSummary | null = null;
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      const message = draft.messages[folderKey(accountId, folderPath)]?.find(item => item.uid === uid);
+      if (!message) throw new Error("That message is no longer in this folder's local cache. Refresh the folder and try again.");
+      summary = trainJunk(draft, message, label, draft.details[message.id]?.text);
+      this.#record(draft, "updated", "settings", "junk-model", `Trained the junk filter as ${label}`, {
+        messageId: message.id,
+        label,
+        junkMessageCount: summary.junkMessageCount,
+        goodMessageCount: summary.goodMessageCount,
+      });
+    });
+    return summary ?? this.getJunkSummary();
+  }
+
+  async resetJunkModel(): Promise<JunkSummary> {
+    let summary: JunkSummary | null = null;
+    await this.#store.update(draft => {
+      summary = resetJunk(draft);
+      this.#record(draft, "deleted", "settings", "junk-model", "Cleared the junk filter training", {});
+      this.#notify(draft, "info", "Junk training cleared", "The local junk filter forgot everything it had learned on this computer.", {
+        category: "mail",
+      });
+    });
+    return summary ?? this.getJunkSummary();
+  }
+
+  async #refreshFolders(accountId: string, label: string): Promise<FolderSummary[]> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    const folders = await this.#mail.listFolders(this.#runtimeAccount(account));
+    await this.#store.update(draft => {
+      this.#requireAccount(draft, accountId);
+      draft.folders[accountId] = folders;
+      this.#record(draft, "updated", "account", accountId, label, { folderCount: folders.length });
+    });
+    return folders;
+  }
+
+  #filterContext(state: PersistedState, accountId: string, folderPath: string): FilterRunContext {
+    const account = this.#requireAccount(state, accountId);
+    return { accountId, folderPath, accountEmail: account.email, folders: state.folders[accountId] ?? [] };
+  }
+
+  /**
+   * Carries out a planned run one message at a time. A message that fails leaves the remaining
+   * messages alone rather than aborting the run, and every failure is reported back.
+   */
+  async #applyFilterPlan(
+    state: PersistedState,
+    context: FilterRunContext,
+    plan: ReturnType<typeof planFilterRun>,
+  ): Promise<{ appliedCount: number; failures: string[] }> {
+    const folders = state.folders[context.accountId] ?? [];
+    const roleFolder = (role: FolderSummary["role"]): string | null => folders.find(folder => folder.role === role)?.path ?? null;
+    const failures: string[] = [];
+    let appliedCount = 0;
+
+    for (const entry of plan.entries) {
+      const message = entry.subject.message;
+      let destination: string | null = null;
+      let junkLabel: "junk" | "good" | null = null;
+      const flagPatch: { unread?: boolean; starred?: boolean } = {};
+      const tagIds = new Set(entry.subject.tagIds);
+      let tagsChanged = false;
+
+      for (const action of entry.evaluation.effective) {
+        switch (action.kind) {
+          case "mark-read": flagPatch.unread = false; break;
+          case "mark-unread": flagPatch.unread = true; break;
+          case "star": flagPatch.starred = true; break;
+          case "unstar": flagPatch.starred = false; break;
+          case "add-tag": tagsChanged = !tagIds.has(action.value) || tagsChanged; tagIds.add(action.value); break;
+          case "remove-tag": tagsChanged = tagIds.delete(action.value) || tagsChanged; break;
+          case "move": destination = action.value; break;
+          case "archive": destination = roleFolder("archive"); break;
+          case "trash": destination = roleFolder("trash"); break;
+          case "mark-junk": junkLabel = "junk"; destination = destination ?? roleFolder("junk"); break;
+          case "mark-not-junk": junkLabel = "good"; break;
+          case "stop": break;
+        }
+      }
+
+      try {
+        if (tagsChanged) await this.setMessageTags(context.accountId, message.folderPath, message.uid, [...tagIds]);
+        if (junkLabel) await this.trainMessageJunk(context.accountId, message.folderPath, message.uid, junkLabel);
+        if (flagPatch.unread !== undefined || flagPatch.starred !== undefined) {
+          await this.setMessageFlags(context.accountId, message.folderPath, message.uid, flagPatch);
+        }
+        // The move goes last: it changes the UID the earlier steps addressed.
+        if (destination && destination !== message.folderPath) {
+          await this.moveMessage(context.accountId, message.folderPath, message.uid, destination);
+        }
+        appliedCount += 1;
+      } catch (error) {
+        failures.push(`${message.subject}: ${mailErrorMessage(error)}`);
+      }
+    }
+
+    return { appliedCount, failures };
   }
 
   async sendMessage(input: ComposeDraft): Promise<SendResult> {

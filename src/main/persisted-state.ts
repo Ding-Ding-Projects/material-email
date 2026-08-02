@@ -20,6 +20,23 @@ import {
 } from "./ipc-validation.js";
 import { classifyAttachment } from "../shared/attachment-safety.js";
 import {
+  MESSAGE_TAGS_PER_MESSAGE_LIMIT,
+  MESSAGE_TAG_ASSIGNMENT_LIMIT,
+  MESSAGE_TAG_CATALOG_LIMIT,
+  MESSAGE_TAG_NAME_LIMIT,
+  emptyMessageTagState,
+  type MessageTagState,
+} from "../shared/message-tags.js";
+import {
+  MESSAGE_FILTER_ACTION_LIMIT,
+  MESSAGE_FILTER_CONDITION_LIMIT,
+  MESSAGE_FILTER_LIMIT,
+  MESSAGE_FILTER_NAME_LIMIT,
+  MESSAGE_FILTER_VALUE_LIMIT,
+  type MessageFilter,
+} from "../shared/message-filters.js";
+import { JUNK_MODEL_TOKEN_LIMIT, emptyJunkModel, type JunkModel } from "../shared/junk-classifier.js";
+import {
   emptyMessageCryptoProfile,
   parseMessageCryptoProfile,
   parseMessageCryptographyAssessment,
@@ -58,6 +75,9 @@ export interface OutboxItem {
 
 export interface PersistedState {
   schemaVersion: 1;
+  messageTags: MessageTagState;
+  messageFilters: MessageFilter[];
+  junkModel: JunkModel;
   accounts: StoredAccount[];
   preferences: Preferences;
   folders: Record<string, FolderSummary[]>;
@@ -295,8 +315,76 @@ const detailRecordSchema = z
   .record(z.string().max(4_096), messageDetailSchema)
   .refine(value => Object.keys(value).length <= 50_000, "Too many message details are stored.");
 
+const messageTagIdSchema = z.string().min(1).max(MESSAGE_TAG_NAME_LIMIT).regex(/^[\p{Letter}\p{Number}-]+$/u);
+const messageTagSchema = z.strictObject({
+  id: messageTagIdSchema,
+  name: z.string().min(1).max(MESSAGE_TAG_NAME_LIMIT),
+  colour: z.string().regex(/^#[0-9a-f]{6}$/u),
+  ordinal: z.number().int().min(0).max(MESSAGE_TAG_CATALOG_LIMIT),
+  builtIn: z.boolean(),
+});
+const messageTagStateSchema = z
+  .strictObject({
+    catalog: z.array(messageTagSchema).max(MESSAGE_TAG_CATALOG_LIMIT),
+    assignments: z
+      .record(z.string().min(1).max(4_096), z.array(messageTagIdSchema).min(1).max(MESSAGE_TAGS_PER_MESSAGE_LIMIT))
+      .refine(value => Object.keys(value).length <= MESSAGE_TAG_ASSIGNMENT_LIMIT, "Too many tagged messages are stored."),
+  })
+  // A tag reference that outlived its definition would render as a blank chip, so drop it on load.
+  .transform(value => {
+    const known = new Set(value.catalog.map(tag => tag.id));
+    const assignments: Record<string, string[]> = {};
+    for (const [key, ids] of Object.entries(value.assignments)) {
+      const retained = [...new Set(ids)].filter(id => known.has(id));
+      if (retained.length) assignments[key] = retained;
+    }
+    return { catalog: value.catalog, assignments };
+  }) as z.ZodType<MessageTagState>;
+
+const messageFilterConditionSchema = z.strictObject({
+  field: z.enum([
+    "from", "to", "cc", "recipient", "subject", "body", "account", "folder", "tag", "size", "age-days", "attachments", "read-state", "star-state",
+  ]),
+  operator: z.enum(["contains", "not-contains", "is", "is-not", "starts-with", "ends-with", "regex", "greater-than", "less-than"]),
+  value: boundedString(MESSAGE_FILTER_VALUE_LIMIT),
+  caseSensitive: z.boolean(),
+});
+const messageFilterActionSchema = z.strictObject({
+  kind: z.enum([
+    "mark-read", "mark-unread", "star", "unstar", "add-tag", "remove-tag", "move", "archive", "trash", "mark-junk", "mark-not-junk", "stop",
+  ]),
+  value: boundedString(MESSAGE_FILTER_VALUE_LIMIT),
+});
+const messageFilterSchema = z.strictObject({
+  id: identifierSchema,
+  name: z.string().min(1).max(MESSAGE_FILTER_NAME_LIMIT),
+  enabled: z.boolean(),
+  ordinal: z.number().int().min(0).max(MESSAGE_FILTER_LIMIT),
+  match: z.enum(["all", "any"]),
+  runOnSync: z.boolean(),
+  accountId: identifierSchema.nullable(),
+  conditions: z.array(messageFilterConditionSchema).min(1).max(MESSAGE_FILTER_CONDITION_LIMIT),
+  actions: z.array(messageFilterActionSchema).min(1).max(MESSAGE_FILTER_ACTION_LIMIT),
+}) as z.ZodType<MessageFilter>;
+
+const junkTokenCountSchema = z.strictObject({
+  junk: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  good: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+});
+const junkModelSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  junkMessageCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  goodMessageCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  tokens: z
+    .record(z.string().min(1).max(128), junkTokenCountSchema)
+    .refine(value => Object.keys(value).length <= JUNK_MODEL_TOKEN_LIMIT, "The junk model holds too many tokens."),
+}) as z.ZodType<JunkModel>;
+
 export const persistedStateSchema = z.strictObject({
   schemaVersion: z.literal(1),
+  messageTags: messageTagStateSchema.default(emptyMessageTagState()),
+  messageFilters: z.array(messageFilterSchema).max(MESSAGE_FILTER_LIMIT).default([]),
+  junkModel: junkModelSchema.default(emptyJunkModel()),
   accounts: z.array(accountSchema).max(100),
   preferences: preferencesSchema,
   folders: folderRecordSchema,

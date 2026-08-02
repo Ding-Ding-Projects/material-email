@@ -481,6 +481,58 @@ export class MailService {
     });
   }
 
+  async createFolder(account: RuntimeAccount, folderPath: string): Promise<FolderSummary> {
+    return this.#withImap(account, async client => {
+      const created = await client.mailboxCreate(folderPath);
+      if (!created) throw new Error("The mail server did not confirm the new folder.");
+      const listed = await client.list({ statusQuery: { messages: true, unseen: true, uidValidity: true } });
+      const mailbox = listed.find(candidate => candidate.path === created.path);
+      if (!mailbox) throw new Error("The mail server created the folder but did not list it back.");
+      return this.#folder(account.id, mailbox);
+    });
+  }
+
+  /**
+   * Renames a folder in place. Servers move the whole subtree, so callers must refresh the folder
+   * list rather than patching the single path they asked about.
+   */
+  async renameFolder(account: RuntimeAccount, folderPath: string, destinationPath: string): Promise<string> {
+    return this.#withImap(account, async client => {
+      const renamed = await client.mailboxRename(folderPath, destinationPath);
+      if (!renamed) throw new Error("The mail server did not confirm the folder rename.");
+      return renamed.newPath;
+    });
+  }
+
+  async deleteFolder(account: RuntimeAccount, folderPath: string): Promise<void> {
+    await this.#withImap(account, async client => {
+      const deleted = await client.mailboxDelete(folderPath);
+      if (!deleted) throw new Error("The mail server did not confirm the folder removal.");
+    });
+  }
+
+  /**
+   * Marks every message in a folder read in one server round trip. Returns the number of messages
+   * that were unread beforehand, so the caller reports what actually changed.
+   */
+  async markFolderRead(account: RuntimeAccount, folderPath: string, expectedUidValidity: string): Promise<number> {
+    return this.#withImap(account, async client => {
+      const lock = await client.getMailboxLock(folderPath);
+      try {
+        this.#assertMailboxGeneration(client, folderPath, expectedUidValidity);
+        const unread = await client.search({ seen: false }, { uid: true });
+        if (!unread || !unread.length) return 0;
+        const bounded = unread.slice(0, 50_000);
+        if (!(await client.messageFlagsAdd(bounded, ["\\Seen"], { uid: true }))) {
+          throw new Error("The mail server did not confirm the read-state change.");
+        }
+        return bounded.length;
+      } finally {
+        lock.release();
+      }
+    });
+  }
+
   async sendMessage(account: RuntimeAccount, draft: ComposeDraft): Promise<SendResult> {
     const transport = this.#smtpTransport(account);
     try {

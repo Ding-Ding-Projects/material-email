@@ -133,6 +133,38 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("mail:move", ipcPayloadSchemas.moveMessage, ([accountId, folderPath, uid, destination]) =>
     service.moveMessage(accountId, folderPath, uid, destination),
   );
+  handleValidated("mail:create-folder", ipcPayloadSchemas.accountFolder, ([accountId, folderPath]) => service.createFolder(accountId, folderPath));
+  handleValidated("mail:rename-folder", ipcPayloadSchemas.folderName, ([accountId, folderPath, name]) =>
+    service.renameFolder(accountId, folderPath, name),
+  );
+  handleValidated("mail:delete-folder", ipcPayloadSchemas.accountFolder, ([accountId, folderPath]) => service.deleteFolder(accountId, folderPath));
+  handleValidated("mail:mark-folder-read", ipcPayloadSchemas.accountFolder, ([accountId, folderPath]) =>
+    service.markFolderRead(accountId, folderPath),
+  );
+  handleValidated("tags:list", ipcPayloadSchemas.none, () => service.listMessageTags());
+  handleValidated("tags:assignments", ipcPayloadSchemas.none, () => service.listMessageTagAssignments());
+  handleValidated("tags:create", ipcPayloadSchemas.messageTagCreate, ([name, colour]) => service.createMessageTag(name, colour));
+  handleValidated("tags:update", ipcPayloadSchemas.messageTagUpdate, ([id, patch]) => service.updateMessageTag(id, patch));
+  handleValidated("tags:delete", ipcPayloadSchemas.messageTagId, ([id]) => service.deleteMessageTag(id));
+  handleValidated("tags:set", ipcPayloadSchemas.messageTagSet, ([accountId, folderPath, uid, tagIds]) =>
+    service.setMessageTags(accountId, folderPath, uid, tagIds),
+  );
+  handleValidated("filters:list", ipcPayloadSchemas.none, () => service.listMessageFilters());
+  handleValidated("filters:save", ipcPayloadSchemas.messageFilterSave, ([input]) => service.saveMessageFilter(input));
+  handleValidated("filters:delete", ipcPayloadSchemas.messageFilterId, ([id]) => service.deleteMessageFilter(id));
+  handleValidated("filters:reorder", ipcPayloadSchemas.messageFilterOrder, ([orderedIds]) => service.reorderMessageFilters(orderedIds));
+  handleValidated("filters:preview", ipcPayloadSchemas.accountFolder, ([accountId, folderPath]) =>
+    service.previewMessageFilterRun(accountId, folderPath),
+  );
+  handleValidated("filters:run", ipcPayloadSchemas.accountFolder, ([accountId, folderPath]) => service.runMessageFilters(accountId, folderPath));
+  handleValidated("junk:summary", ipcPayloadSchemas.none, () => service.getJunkSummary());
+  handleValidated("junk:classify", ipcPayloadSchemas.accountFolderMessage, ([accountId, folderPath, uid]) =>
+    service.classifyMessageJunk(accountId, folderPath, uid),
+  );
+  handleValidated("junk:train", ipcPayloadSchemas.junkTrain, ([accountId, folderPath, uid, label]) =>
+    service.trainMessageJunk(accountId, folderPath, uid, label),
+  );
+  handleValidated("junk:reset", ipcPayloadSchemas.none, () => service.resetJunkModel());
   handleValidated("mail:send", ipcPayloadSchemas.composeDraft, ([draft]) => service.sendMessage(draft));
   handleValidated("mail:save-draft", ipcPayloadSchemas.composeDraft, ([draft]) => service.saveDraft(draft));
   handleValidated("mail:drafts", ipcPayloadSchemas.accountId, ([accountId]) => service.listDrafts(accountId));

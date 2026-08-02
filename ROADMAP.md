@@ -88,6 +88,13 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Ephemeral cached-mail plain/regex index with bounded results and account/folder/conversation attribution
 - [x] Reject demonstrated nested, adjacent-overlap, wildcard-overlap, and prefix-alternative regex denial-of-service families before cached-mail IPC; advance `u`-mode zero-width sample matches by code point
 - [x] Localized cached-search result counts, keyboard-actionable invalid/empty/error states, mode-only restart persistence, and redacted one-request retry handling with focused unit and 2 / 2 real-Electron proof
+- [x] Colour-coded message tags bound to account/folder/mailbox-generation/UID, with a built-in catalogue, per-message and catalogue ceilings, move carry-through, dropped attribution when the server reports no destination UID, and account/folder pruning
+- [x] Quick filter over the visible message list with unread/starred/attachment/tagged facets, any/all tag matching, plain-text-first search that ignores case by default, an adjacent regex mode, and an in-place invalid-pattern state that hides nothing
+- [x] Ordered message filter rules with fourteen condition fields, nine operators, twelve actions, match-all/any, account scoping, stop handling, contradiction collapsing, a bounded run ceiling, and a previewed run that uses the same planner as the run it previews
+- [x] Local junk classification trained only by explicit corrections, with source-prefixed tokens, an honest untrained state, bounded token counts, exact untraining, and no automatic move, deletion, or transmission
+- [x] Folder create, rename, and removal against the server with special-folder protection, subtree cache invalidation, and a bounded single-round-trip mark-folder-read that reports what actually changed
+- [x] Prove tagging, tag-narrowed quick filtering, mark-folder-read, restart persistence, and refused-pattern disclosure in 2 / 2 real-Electron scenarios
+- [ ] Persist tags as server-side IMAP keywords, run filters automatically after synchronization, and add a filter editor surface with its own search and regex builder
 - [ ] Server-complete all-account synchronization/threading and persistent scalable mail indexing
 - [ ] Conversation threading and complete search indexing
 - [x] Attachment risk classification and review-before-save warnings

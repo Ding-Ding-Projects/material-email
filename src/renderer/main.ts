@@ -52,6 +52,14 @@ import type {
   TlsCertificateAuthorizationIssue,
   TlsCertificateInspectionResult,
   WindowControlState,
+  JunkAssessment,
+  JunkSummary,
+  MessageFilter,
+  MessageFilterAction,
+  MessageFilterRunSummary,
+  MessageTag,
+  MessageTagAssignmentMap,
+  MessageTagCatalog,
 } from "../shared/contracts";
 import {
   AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
@@ -63,6 +71,16 @@ import {
   POP3_MESSAGE_LIMIT_MIN,
 } from "../shared/contracts";
 import { userVisibleErrorMessage } from "../shared/user-visible-error";
+import {
+  QUICK_FILTER_FACETS,
+  applyQuickFilter,
+  emptyQuickFilterState,
+  quickFilterIsInert,
+  toggleQuickFilterFacet,
+  toggleQuickFilterTag,
+  type QuickFilterFacet,
+  type QuickFilterState,
+} from "../shared/quick-filter";
 import { icon, type IconName } from "./lib/icons";
 import { DEFAULT_APPEARANCE } from "./lib/appearance";
 import {
@@ -396,6 +414,14 @@ interface RendererState {
   pendingOperations: PendingOperationSummary[];
   outboxItems: OutboxSummary[];
   windowControls: WindowControlState;
+  messageTags: MessageTagCatalog;
+  messageTagAssignments: MessageTagAssignmentMap;
+  tagMenuMessageId: string | null;
+  quickFilter: QuickFilterState;
+  messageFilters: MessageFilter[];
+  filterRunSummary: MessageFilterRunSummary | null;
+  junkSummary: JunkSummary | null;
+  junkAssessment: JunkAssessment | null;
 }
 
 const TAB_DEFINITIONS: readonly TabDefinition[] = [
@@ -629,6 +655,14 @@ const state: RendererState = {
   pendingOperations: [],
   outboxItems: [],
   windowControls: { maximized: false, minimized: false },
+  messageTags: { tags: [], usage: {} },
+  messageTagAssignments: {},
+  tagMenuMessageId: null,
+  quickFilter: emptyQuickFilterState(),
+  messageFilters: [],
+  filterRunSummary: null,
+  junkSummary: null,
+  junkAssessment: null,
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -1256,6 +1290,27 @@ const scheduleMailSearch = (delay = 160): void => {
   }, delay);
 };
 
+/**
+ * Loads the tag catalog, tag assignments, filters, and junk training summary. These change rarely
+ * and are small, so the whole set is refetched rather than diffed.
+ */
+const refreshOrganization = async (): Promise<void> => {
+  try {
+    const [messageTags, messageTagAssignments, messageFilters, junkSummary] = await Promise.all([
+      api.listMessageTags(),
+      api.listMessageTagAssignments(),
+      api.listMessageFilters(),
+      api.getJunkSummary(),
+    ]);
+    state.messageTags = messageTags;
+    state.messageTagAssignments = messageTagAssignments;
+    state.messageFilters = messageFilters;
+    state.junkSummary = junkSummary;
+  } catch (error) {
+    pushToast("error", "Could not load organization settings", errorMessage(error), "載入唔到整理設定", errorMessage(error));
+  }
+};
+
 const loadFolder = async (folderPath: string, persist = true, owner?: MailNavigationOwner): Promise<void> => {
   const accountId = owner?.accountId ?? state.accountId;
   if (!accountId) return;
@@ -1278,6 +1333,8 @@ const loadFolder = async (folderPath: string, persist = true, owner?: MailNaviga
     const messages = await api.listMessages(accountId, folderPath);
     if (!ownsRequest()) return;
     state.messages = messages;
+    state.messageTagAssignments = await api.listMessageTagAssignments();
+    if (!ownsRequest()) return;
     const first = messages[0];
     if (first) await loadMessage(first, navigationSequence);
     if (!ownsRequest()) return;
@@ -1359,6 +1416,7 @@ const initialize = async (): Promise<void> => {
     const preferred = bootstrap.accounts.find(account => account.id === bootstrap.preferences.selectedAccountId) ?? bootstrap.accounts[0];
     render();
     void maybeShowDimSum(bootstrap);
+    await refreshOrganization();
     if (preferred) {
       await loadAccount(preferred.id, false);
       await refreshDraftAndOutbox();
@@ -1993,11 +2051,26 @@ function messageAccountAttribution(message: MessageSummary): string {
   return account ? `${account.displayName} · ${account.email}` : message.accountId;
 }
 
-function filteredMessages(): MessageSummary[] {
+function searchedMessages(): MessageSummary[] {
   const model = searchFor("mail");
   if (!model.pattern) return state.messages;
   if (!validatePattern(model).valid) return [];
   return currentMailSearchResult()?.hits.map(hit => hit.message) ?? [];
+}
+
+function tagIdsFor(messageId: string): string[] {
+  return state.messageTagAssignments[messageId] ?? [];
+}
+
+function quickFilterResult(): ReturnType<typeof applyQuickFilter> {
+  return applyQuickFilter(
+    state.quickFilter,
+    searchedMessages().map(message => ({ message, tagIds: tagIdsFor(message.id) })),
+  );
+}
+
+function filteredMessages(): MessageSummary[] {
+  return [...quickFilterResult().messages];
 }
 
 function renderMailPage(): string {
@@ -2425,8 +2498,111 @@ function renderFolderPane(current: FolderSummary | undefined): string {
         </button>`;
       }).join("") : `<div class="pane-empty"><span>${icon("folder")}</span><p>${escapeHtml(tx("No folders are cached yet.", "仲未有已快取嘅資料夾。"))}</p><button class="button button--tonal" type="button" data-action="sync">${escapeHtml(tx("Synchronize now", "立即同步"))}</button></div>`}
     </nav>
+    ${renderFolderActions(current)}
     <footer class="folder-pane__footer"><button class="button button--text" type="button" data-action="activate-tab" data-tab-id="settings">${icon("settings")}<span>${escapeHtml(tx("Account settings", "帳戶設定"))}</span></button></footer>
   </aside>`;
+}
+
+function renderFolderActions(current: FolderSummary | undefined): string {
+  const account = activeAccount();
+  if (!account) return "";
+  const demo = account.kind === "demo";
+  const removable = Boolean(current) && current?.role === "other";
+  return `<div class="folder-actions" data-testid="folder-actions" role="group" aria-label="${escapeHtml(tx("Folder actions", "資料夾操作"))}">
+    <button class="button button--text" type="button" data-action="create-folder" ${demo || isBusy("folder-admin") ? "disabled" : ""}>${icon("folder")}<span>${escapeHtml(tx("New folder", "新增資料夾"))}</span></button>
+    <button class="button button--text" type="button" data-action="rename-folder" ${demo || !current || isBusy("folder-admin") ? "disabled" : ""}>${icon("compose")}<span>${escapeHtml(tx("Rename", "重新命名"))}</span></button>
+    <button class="button button--text" type="button" data-action="delete-folder" ${demo || !removable || isBusy("folder-admin") ? "disabled" : ""}>${icon("trash")}<span>${escapeHtml(tx("Remove", "移除"))}</span></button>
+    <button class="button button--text" type="button" data-action="mark-folder-read" ${!current || isBusy("folder-admin") ? "disabled" : ""}>${icon("unread")}<span>${escapeHtml(tx("Mark all read", "全部標為已讀"))}</span></button>
+    <button class="button button--text" type="button" data-action="run-filters" ${!current || isBusy("filters") ? "disabled" : ""}>${icon("regex")}<span>${escapeHtml(tx("Run filters", "執行篩選規則"))}</span></button>
+    ${demo ? `<p class="local-truth-note">${icon("info")}<span>${escapeHtml(tx("The demonstration account keeps a fixed set of folders, so folder changes are unavailable here.", "示範帳戶嘅資料夾係固定嘅，所以呢度改唔到資料夾。"))}</span></p>` : ""}
+    ${state.filterRunSummary ? renderFilterRunSummary(state.filterRunSummary) : ""}
+  </div>`;
+}
+
+function renderReaderTagControl(detail: MessageDetail): string {
+  const applied = new Set(tagIdsFor(detail.id));
+  const taggable = state.unifiedFolder === null && !mailSearchIsActive();
+  return `<section class="reader-tags" data-testid="reader-tags" aria-label="${escapeHtml(tx("Message tags", "郵件標籤"))}">
+    <span class="reader-tags__label">${icon("folder")}<span>${escapeHtml(tx("Tags", "標籤"))}</span></span>
+    <div class="reader-tags__chips">
+      ${state.messageTags.tags.length ? state.messageTags.tags.map(tag => {
+        const on = applied.has(tag.id);
+        return `<button class="assist-chip assist-chip--tag${on ? " is-selected" : ""}" type="button" data-action="toggle-message-tag" data-tag-id="${escapeHtml(tag.id)}" aria-pressed="${on}" style="--tag-colour: ${escapeHtml(tag.colour)}" ${taggable && !isBusy("tags") ? "" : "disabled"}><span class="tag-chip__dot" aria-hidden="true"></span>${escapeHtml(tag.name)}</button>`;
+      }).join("") : `<span class="reader-tags__empty">${escapeHtml(tx("No tags are defined yet.", "仲未有標籤。"))}</span>`}
+    </div>
+    ${taggable ? "" : `<p class="local-truth-note">${icon("info")}<span>${escapeHtml(tx("Open the message in its account folder to change tags: tags follow a message's mailbox generation.", "喺帳戶資料夾入面打開郵件先可以改標籤：標籤係綁住郵件所屬 mailbox generation。"))}</span></p>`}
+  </section>`;
+}
+
+function renderReaderJunkControl(detail: MessageDetail): string {
+  const summary = state.junkSummary;
+  const assessment = state.junkAssessment && state.junkAssessment.tokenCount >= 0 && state.selectedMessageId === detail.id
+    ? state.junkAssessment
+    : null;
+  const trainable = state.unifiedFolder === null && !mailSearchIsActive();
+  const verdictCopy = (value: JunkAssessment): string => {
+    const percent = `${Math.round(value.score * 100)}%`;
+    switch (value.verdict) {
+      case "junk": return tx(`Scored ${percent} junk-like against your local training.`, `根據你本機訓練，呢封信有 ${percent} 似垃圾郵件。`);
+      case "not-junk": return tx(`Scored ${percent} junk-like; your training says this looks wanted.`, `分數 ${percent} 似垃圾郵件；你嘅訓練認為呢封係想要嘅。`);
+      case "uncertain": return tx(`Scored ${percent} junk-like, which is not decisive either way.`, `分數 ${percent} 似垃圾郵件，兩邊都唔算肯定。`);
+      case "untrained": return tx("The local junk filter has not been trained enough to judge this message.", "本機垃圾郵件過濾器訓練唔夠，未夠資格判斷呢封信。");
+    }
+  };
+  return `<section class="reader-junk" data-testid="reader-junk" aria-label="${escapeHtml(tx("Junk assessment", "垃圾郵件評估"))}">
+    <div class="reader-junk__row">
+      <button class="button button--text" type="button" data-action="classify-junk" ${trainable && !isBusy("junk") ? "" : "disabled"}>${icon("search")}<span>${escapeHtml(tx("Assess as junk", "評估垃圾郵件"))}</span></button>
+      <button class="button button--text" type="button" data-action="train-junk" data-junk-label="junk" ${trainable && !isBusy("junk") ? "" : "disabled"}>${icon("warning")}<span>${escapeHtml(tx("It is junk", "係垃圾郵件"))}</span></button>
+      <button class="button button--text" type="button" data-action="train-junk" data-junk-label="good" ${trainable && !isBusy("junk") ? "" : "disabled"}>${icon("check")}<span>${escapeHtml(tx("Not junk", "唔係垃圾郵件"))}</span></button>
+    </div>
+    ${assessment ? `<p class="reader-junk__verdict" data-testid="junk-verdict" role="status" aria-live="polite">${escapeHtml(verdictCopy(assessment))}</p>` : ""}
+    <p class="local-truth-note">${icon("info")}<span>${escapeHtml(summary
+      ? tx(
+        `Trained on ${summary.junkMessageCount} junk and ${summary.goodMessageCount} wanted messages on this computer. Nothing is sent to a server, and no message is moved unless a filter says so.`,
+        `喺呢部電腦用 ${summary.junkMessageCount} 封垃圾郵件同 ${summary.goodMessageCount} 封想要嘅郵件訓練過。冇任何嘢送去伺服器，除非篩選規則指定，否則唔會移動郵件。`,
+      )
+      : tx("Junk classification is local only. Nothing is sent to a server.", "垃圾郵件分類只喺本機。冇任何嘢送去伺服器。"))}</span></p>
+  </section>`;
+}
+
+function filterActionLabel(action: MessageFilterAction): string {
+  switch (action.kind) {
+    case "mark-read": return tx("mark read", "標為已讀");
+    case "mark-unread": return tx("mark unread", "標為未讀");
+    case "star": return tx("add star", "加星號");
+    case "unstar": return tx("remove star", "移除星號");
+    case "add-tag": return tx(`tag ${action.value}`, `加標籤 ${action.value}`);
+    case "remove-tag": return tx(`untag ${action.value}`, `移除標籤 ${action.value}`);
+    case "move": return tx(`move to ${action.value}`, `移去 ${action.value}`);
+    case "archive": return tx("archive", "封存");
+    case "trash": return tx("move to trash", "移去垃圾桶");
+    case "mark-junk": return tx("mark junk", "標為垃圾郵件");
+    case "mark-not-junk": return tx("mark not junk", "標為唔係垃圾郵件");
+    case "stop": return tx("stop", "停止");
+  }
+}
+
+function renderFilterRunSummary(summary: MessageFilterRunSummary): string {
+  const locale = preferences().language === "yue" ? "zh-HK" : "en-CA";
+  const headline = summary.applied
+    ? tx(
+      `Filters updated ${summary.appliedCount.toLocaleString(locale)} of ${summary.matchedCount.toLocaleString(locale)} matching messages.`,
+      `篩選規則更新咗 ${summary.matchedCount.toLocaleString(locale)} 封符合郵件之中嘅 ${summary.appliedCount.toLocaleString(locale)} 封。`,
+    )
+    : tx(
+      `${summary.matchedCount.toLocaleString(locale)} of ${summary.consideredCount.toLocaleString(locale)} cached messages would be changed.`,
+      `${summary.consideredCount.toLocaleString(locale)} 封快取郵件之中，有 ${summary.matchedCount.toLocaleString(locale)} 封會被改動。`,
+    );
+  return `<div class="filter-run-summary" data-testid="filter-run-summary" role="status" aria-live="polite">
+    <p><strong>${escapeHtml(headline)}</strong></p>
+    ${summary.limitReached ? `<p class="local-truth-note">${icon("warning")}<span>${escapeHtml(tx("The run stopped at its safety ceiling; messages beyond it were not examined.", "今次執行去到安全上限就停;超出上限嘅郵件冇被檢查。"))}</span></p>` : ""}
+    ${summary.entries.length ? `<ul class="filter-run-summary__list">${summary.entries.slice(0, 8).map(entry =>
+      `<li><strong>${escapeHtml(entry.subject)}</strong><small>${escapeHtml(entry.filterNames.join(", "))} → ${escapeHtml(entry.actions.map(action => filterActionLabel(action as MessageFilterAction)).join(", "))}</small></li>`,
+    ).join("")}</ul>` : `<p>${escapeHtml(tx("No cached message in this folder matched an enabled filter.", "呢個資料夾冇快取郵件符合任何已啟用嘅篩選規則。"))}</p>`}
+    ${summary.entriesTruncated ? `<p class="local-truth-note">${icon("info")}<span>${escapeHtml(tx("Only the first matches are listed.", "只列出頭幾個符合項目。"))}</span></p>` : ""}
+    ${summary.failures.length ? `<ul class="filter-run-summary__failures">${summary.failures.slice(0, 5).map(failure => `<li>${escapeHtml(failure)}</li>`).join("")}</ul>` : ""}
+    <button class="button button--text" type="button" data-action="dismiss-filter-summary">${icon("close")}<span>${escapeHtml(tx("Dismiss", "關閉"))}</span></button>
+  </div>`;
 }
 
 function renderMessagePane(current: FolderSummary | undefined, messages: MessageSummary[], searchValid: boolean): string {
@@ -2475,6 +2651,7 @@ function renderMessagePane(current: FolderSummary | undefined, messages: Message
     ${unified ? `<p class="local-truth-note unified-folder-note" data-testid="unified-folder-truth">${icon("info")}<span>${escapeHtml(tx("Built only from summaries already cached on this computer. Subject/reference grouping is local and bounded; server-wide coverage and a scalable search index are not implied.", "只會使用呢部電腦已有嘅郵件摘要快取。主旨／reference 分組只係本機有限處理；唔代表全伺服器覆蓋或者可擴展搜尋索引。"))}</span></p>` : ""}
     ${grouping.limited ? `<p class="local-truth-note conversation-limit-note" data-testid="conversation-limit-note">${icon("warning")}<span>${escapeHtml(tx(`Conversation grouping is paused above ${CACHED_CONVERSATION_MESSAGE_LIMIT.toLocaleString()} visible cached messages; every message remains available as its own row.`, `畫面已快取郵件超過 ${CACHED_CONVERSATION_MESSAGE_LIMIT.toLocaleString()} 封，所以 conversation grouping 暫停；每封郵件仍然會獨立顯示。`))}</span></p>` : ""}
     ${isBusy("folder") || state.mailSearchPending ? `<div class="linear-progress" role="progressbar" aria-label="${escapeHtml(state.mailSearchPending ? tx("Searching cached mail", "搜尋快取郵件") : tx("Loading messages", "載入郵件"))}"></div>` : ""}
+    ${renderQuickFilterBar()}
     <div class="message-list" id="mail-message-list" data-testid="message-list" role="listbox" aria-label="${escapeHtml(searchRequested ? tx("Cached mail search results", "快取郵件搜尋結果") : tx("Messages", "郵件"))}"${searchRequested ? ` aria-describedby="cached-mail-search-truth"` : ""} tabindex="${messages.length ? "0" : "-1"}">
       ${messageListContent}
     </div>
@@ -2494,6 +2671,64 @@ function renderConversation(conversation: CachedConversation): string {
   </section>`;
 }
 
+function tagsFor(messageId: string): MessageTag[] {
+  const applied = new Set(tagIdsFor(messageId));
+  return state.messageTags.tags.filter(tag => applied.has(tag.id));
+}
+
+function renderTagChips(messageId: string): string {
+  const tags = tagsFor(messageId);
+  if (!tags.length) return "";
+  return `<span class="tag-chip-row" data-testid="message-tag-chips">${tags.map(tag =>
+    `<span class="tag-chip" style="--tag-colour: ${escapeHtml(tag.colour)}" title="${escapeHtml(tag.name)}"><span class="tag-chip__dot" aria-hidden="true"></span>${escapeHtml(tag.name)}</span>`,
+  ).join("")}</span>`;
+}
+
+function quickFilterFacetLabel(facet: QuickFilterFacet): string {
+  switch (facet) {
+    case "unread": return tx("Unread", "未讀");
+    case "starred": return tx("Starred", "星號");
+    case "attachments": return tx("Attachments", "附件");
+    case "tagged": return tx("Tagged", "有標籤");
+  }
+}
+
+function renderQuickFilterBar(): string {
+  const filter = state.quickFilter;
+  const result = quickFilterResult();
+  const locale = preferences().language === "yue" ? "zh-HK" : "en-CA";
+  const summary = !filter.active || quickFilterIsInert(filter)
+    ? tx("Showing every cached message in this view.", "顯示呢個檢視所有已快取郵件。")
+    : result.patternValid
+      ? tx(
+        `${result.matchedCount.toLocaleString(locale)} of ${result.totalCount.toLocaleString(locale)} cached messages match.`,
+        `${result.totalCount.toLocaleString(locale)} 封快取郵件之中，有 ${result.matchedCount.toLocaleString(locale)} 封符合。`,
+      )
+      : tx("The quick filter expression needs attention; nothing was hidden by guesswork.", "快速篩選嘅表達式要處理；冇靠估去隱藏任何郵件。");
+  return `<div class="quick-filter${filter.active ? " is-active" : ""}" data-testid="quick-filter" role="group" aria-label="${escapeHtml(tx("Quick filter", "快速篩選"))}">
+    <div class="quick-filter__row">
+      <button class="assist-chip${filter.active ? " is-selected" : ""}" type="button" data-action="toggle-quick-filter" aria-pressed="${filter.active}" data-focus-key="quick-filter-toggle">${icon("search")}<span>${escapeHtml(tx("Quick filter", "快速篩選"))}</span></button>
+      ${filter.active ? QUICK_FILTER_FACETS.map(facet => {
+        const on = filter.facets.includes(facet);
+        return `<button class="assist-chip${on ? " is-selected" : ""}" type="button" data-action="toggle-quick-filter-facet" data-facet="${facet}" aria-pressed="${on}">${escapeHtml(quickFilterFacetLabel(facet))}</button>`;
+      }).join("") : ""}
+      ${filter.active && state.messageTags.tags.length ? state.messageTags.tags.map(tag => {
+        const on = filter.tagIds.includes(tag.id);
+        return `<button class="assist-chip assist-chip--tag${on ? " is-selected" : ""}" type="button" data-action="toggle-quick-filter-tag" data-tag-id="${escapeHtml(tag.id)}" aria-pressed="${on}" style="--tag-colour: ${escapeHtml(tag.colour)}"><span class="tag-chip__dot" aria-hidden="true"></span>${escapeHtml(tag.name)}</button>`;
+      }).join("") : ""}
+      ${filter.active ? `<button class="button button--text" type="button" data-action="clear-quick-filter">${icon("close")}<span>${escapeHtml(tx("Clear", "清除"))}</span></button>` : ""}
+    </div>
+    ${filter.active ? `<div class="quick-filter__row">
+      <label class="visually-hidden" for="quick-filter-text">${escapeHtml(tx("Quick filter text", "快速篩選文字"))}</label>
+      <input class="text-input quick-filter__input" id="quick-filter-text" type="search" value="${escapeHtml(filter.pattern)}" placeholder="${escapeHtml(filter.mode === "regex" ? tx("Regular expression", "正規表達式") : tx("Plain text", "純文字"))}" data-quick-filter="pattern" data-focus-key="quick-filter-text" aria-describedby="quick-filter-summary">
+      <button class="assist-chip${filter.mode === "regex" ? " is-selected" : ""}" type="button" data-action="toggle-quick-filter-mode" aria-pressed="${filter.mode === "regex"}">${icon("regex")}<span>${escapeHtml(tx("Regex", "正規"))}</span></button>
+      <button class="assist-chip${filter.caseSensitive ? " is-selected" : ""}" type="button" data-action="toggle-quick-filter-case" aria-pressed="${filter.caseSensitive}"><span>${escapeHtml(tx("Match case", "分大小寫"))}</span></button>
+      ${filter.mode === "regex" ? `<label class="visually-hidden" for="quick-filter-flags">${escapeHtml(tx("Regular expression flags", "正規表達式旗標"))}</label><input class="text-input quick-filter__flags" id="quick-filter-flags" type="text" value="${escapeHtml(filter.flags)}" placeholder="imsu" maxlength="4" data-quick-filter="flags" data-focus-key="quick-filter-flags">` : ""}
+    </div>` : ""}
+    <p class="quick-filter__summary${filter.active && !result.patternValid ? " is-invalid" : ""}" id="quick-filter-summary" role="status" aria-live="polite">${escapeHtml(summary)}${filter.active && !result.patternValid && result.patternMessage ? ` ${escapeHtml(result.patternMessage)}` : ""}</p>
+  </div>`;
+}
+
 function renderMessageRow(message: MessageSummary): string {
   const selected = message.id === state.selectedMessageId;
   const sender = message.from[0] ? displayAddress(message.from[0]) : tx("Unknown sender", "未知寄件人");
@@ -2501,7 +2736,7 @@ function renderMessageRow(message: MessageSummary): string {
   return `<div class="message-row${message.unread ? " is-unread" : ""}${selected ? " is-selected" : ""}" role="option" aria-selected="${selected}" data-message-id="${escapeHtml(message.id)}">
     <button class="message-row__main" type="button" data-action="select-message" data-message-id="${escapeHtml(message.id)}">
       <span class="avatar" aria-hidden="true">${escapeHtml(avatar)}</span>
-      <span class="message-row__copy"><span class="message-row__top"><strong>${escapeHtml(sender)}</strong><time datetime="${escapeHtml(message.date)}">${escapeHtml(formatDate(message.date))}</time></span>${state.unifiedFolder || mailSearchIsActive() ? `<span class="message-row__account">${escapeHtml(messageAccountAttribution(message))}</span>` : ""}<span class="message-row__subject">${escapeHtml(message.subject)}</span><span class="message-row__preview">${escapeHtml(searchHitForMessage(message.id)?.snippet || message.preview)}</span></span>
+      <span class="message-row__copy"><span class="message-row__top"><strong>${escapeHtml(sender)}</strong><time datetime="${escapeHtml(message.date)}">${escapeHtml(formatDate(message.date))}</time></span>${state.unifiedFolder || mailSearchIsActive() ? `<span class="message-row__account">${escapeHtml(messageAccountAttribution(message))}</span>` : ""}<span class="message-row__subject">${escapeHtml(message.subject)}</span><span class="message-row__preview">${escapeHtml(searchHitForMessage(message.id)?.snippet || message.preview)}</span>${renderTagChips(message.id)}</span>
       ${message.hasAttachments ? `<span class="attachment-indicator" aria-label="${escapeHtml(tx("Has attachments", "有附件"))}">${icon("attach")}</span>` : ""}
     </button>
     <button class="star-button${message.starred ? " is-starred" : ""}" type="button" data-action="toggle-row-star" data-message-id="${escapeHtml(message.id)}" aria-label="${escapeHtml(message.starred ? tx("Remove star", "移除星號") : tx("Add star", "加入星號"))}">${icon("star")}</button>
@@ -2724,6 +2959,8 @@ function renderReaderPane(): string {
       ${archive ? `<button class="icon-button" type="button" data-action="archive-message" aria-label="${escapeHtml(tx("Archive", "封存"))}" data-tooltip="${escapeHtml(tx("Archive", "封存"))}">${icon("archive")}</button>` : ""}
       ${trash ? `<button class="icon-button danger-action" type="button" data-action="trash-message" aria-label="${escapeHtml(tx("Move to trash", "移到垃圾桶"))}" data-tooltip="${escapeHtml(tx("Trash", "垃圾桶"))}">${icon("trash")}</button>` : ""}
     </div>
+    ${renderReaderTagControl(detail)}
+    ${renderReaderJunkControl(detail)}
     ${state.unifiedFolder ? `<p class="local-truth-note reader-unified-note">${icon("info")}<span>${escapeHtml(tx("Reply, forward, star, and read-state actions keep the message's account identity. Open its account folder before moving it so this view never guesses a cross-account destination.", "回覆、轉寄、星號同已讀狀態都會保留郵件所屬帳戶。移動之前請開返該帳戶資料夾，避免呢個檢視跨帳戶亂估目的地。"))}</span></p>` : ""}
     <header class="message-header">
       <div class="avatar avatar--large" aria-hidden="true">${escapeHtml((displayAddress(detail.from[0] ?? { name: "", address: "?" }).charAt(0) || "?").toUpperCase())}</div>
@@ -6638,6 +6875,202 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       break;
     }
     case "toggle-row-star": if (button.dataset.messageId) await toggleRowStar(button.dataset.messageId); break;
+    case "toggle-quick-filter":
+      state.quickFilter = { ...state.quickFilter, active: !state.quickFilter.active };
+      render();
+      focusByKey(state.quickFilter.active ? "quick-filter-text" : "quick-filter-toggle");
+      break;
+    case "toggle-quick-filter-facet": {
+      const facet = button.dataset.facet;
+      if (facet === "unread" || facet === "starred" || facet === "attachments" || facet === "tagged") {
+        state.quickFilter = toggleQuickFilterFacet(state.quickFilter, facet);
+        render();
+      }
+      break;
+    }
+    case "toggle-quick-filter-tag":
+      if (button.dataset.tagId) {
+        state.quickFilter = toggleQuickFilterTag(state.quickFilter, button.dataset.tagId);
+        render();
+      }
+      break;
+    case "toggle-quick-filter-mode":
+      state.quickFilter = { ...state.quickFilter, mode: state.quickFilter.mode === "regex" ? "plain" : "regex" };
+      render();
+      focusByKey("quick-filter-text");
+      break;
+    case "toggle-quick-filter-case":
+      state.quickFilter = { ...state.quickFilter, caseSensitive: !state.quickFilter.caseSensitive };
+      render();
+      break;
+    case "clear-quick-filter":
+      state.quickFilter = emptyQuickFilterState();
+      render();
+      focusByKey("quick-filter-toggle");
+      break;
+    case "toggle-message-tag": {
+      const tagId = button.dataset.tagId;
+      const detail = state.detail;
+      if (!tagId || !detail) break;
+      const applied = new Set(tagIdsFor(detail.id));
+      if (applied.has(tagId)) applied.delete(tagId);
+      else applied.add(tagId);
+      await withBusy("tags", async () => {
+        try {
+          await api.setMessageTags(detail.accountId, detail.folderPath, detail.uid, [...applied]);
+          state.messageTagAssignments = await api.listMessageTagAssignments();
+          state.messageTags = await api.listMessageTags();
+        } catch (error) {
+          pushToast("error", "Could not change tags", errorMessage(error), "改唔到標籤", errorMessage(error));
+        }
+      });
+      break;
+    }
+    case "classify-junk": {
+      const detail = state.detail;
+      if (!detail) break;
+      await withBusy("junk", async () => {
+        try {
+          state.junkAssessment = await api.classifyMessageJunk(detail.accountId, detail.folderPath, detail.uid);
+        } catch (error) {
+          pushToast("error", "Could not assess the message", errorMessage(error), "評估唔到呢封郵件", errorMessage(error));
+        }
+      });
+      break;
+    }
+    case "train-junk": {
+      const detail = state.detail;
+      const label = button.dataset.junkLabel;
+      if (!detail || (label !== "junk" && label !== "good")) break;
+      await withBusy("junk", async () => {
+        try {
+          state.junkSummary = await api.trainMessageJunk(detail.accountId, detail.folderPath, detail.uid, label);
+          state.junkAssessment = await api.classifyMessageJunk(detail.accountId, detail.folderPath, detail.uid);
+          pushToast(
+            "success",
+            "Junk filter trained",
+            label === "junk" ? "This message now teaches the local filter what junk looks like." : "This message now teaches the local filter what you want to keep.",
+            "垃圾郵件過濾器學咗嘢",
+            label === "junk" ? "呢封信教咗本機過濾器乜嘢係垃圾郵件。" : "呢封信教咗本機過濾器你想留低啲乜。",
+          );
+        } catch (error) {
+          pushToast("error", "Could not train the junk filter", errorMessage(error), "訓練唔到垃圾郵件過濾器", errorMessage(error));
+        }
+      });
+      break;
+    }
+    case "create-folder": {
+      const accountId = state.accountId;
+      if (!accountId) break;
+      const name = window.prompt(tx("Name for the new folder", "新資料夾名稱")) ?? "";
+      if (!name.trim()) break;
+      await withBusy("folder-admin", async () => {
+        try {
+          state.folders = await api.createFolder(accountId, name.trim());
+          pushToast("success", "Folder created", name.trim(), "資料夾已建立", name.trim());
+        } catch (error) {
+          pushToast("error", "Could not create the folder", errorMessage(error), "建立唔到資料夾", errorMessage(error));
+        }
+      });
+      break;
+    }
+    case "rename-folder": {
+      const accountId = state.accountId;
+      const folderPath = state.folderPath;
+      if (!accountId || !folderPath) break;
+      const current = state.folders.find(folder => folder.path === folderPath);
+      const name = window.prompt(tx("New name for this folder", "呢個資料夾嘅新名稱"), current?.name ?? "") ?? "";
+      if (!name.trim() || name.trim() === current?.name) break;
+      await withBusy("folder-admin", async () => {
+        try {
+          state.folders = await api.renameFolder(accountId, folderPath, name.trim());
+          const renamed = state.folders.find(folder => folder.name === name.trim());
+          if (renamed) await loadFolder(renamed.path);
+        } catch (error) {
+          pushToast("error", "Could not rename the folder", errorMessage(error), "改唔到資料夾名", errorMessage(error));
+        }
+      });
+      break;
+    }
+    case "delete-folder": {
+      const accountId = state.accountId;
+      const folderPath = state.folderPath;
+      if (!accountId || !folderPath) break;
+      const current = state.folders.find(folder => folder.path === folderPath);
+      if (!window.confirm(tx(
+        `Remove ${current?.name ?? folderPath} from the mail server? Messages inside it are removed with it.`,
+        `喺郵件伺服器移除 ${current?.name ?? folderPath}？入面嘅郵件會一齊冇咗。`,
+      ))) break;
+      await withBusy("folder-admin", async () => {
+        try {
+          state.folders = await api.deleteFolder(accountId, folderPath);
+          const next = state.folders.find(folder => folder.role === "inbox") ?? state.folders[0];
+          if (next) await loadFolder(next.path);
+          else {
+            state.folderPath = null;
+            state.messages = [];
+          }
+        } catch (error) {
+          pushToast("error", "Could not remove the folder", errorMessage(error), "移除唔到資料夾", errorMessage(error));
+        }
+      });
+      break;
+    }
+    case "mark-folder-read": {
+      const accountId = state.accountId;
+      const folderPath = state.folderPath;
+      if (!accountId || !folderPath) break;
+      await withBusy("folder-admin", async () => {
+        try {
+          const changed = await api.markFolderRead(accountId, folderPath);
+          state.messages = state.messages.map(message => (message.unread ? { ...message, unread: false } : message));
+          if (state.detail?.unread) state.detail = { ...state.detail, unread: false };
+          state.folders = await api.listFolders(accountId);
+          pushToast(
+            "success",
+            "Folder marked read",
+            `${changed} message${changed === 1 ? "" : "s"} changed.`,
+            "資料夾已標為已讀",
+            `${changed} 封郵件有改動。`,
+          );
+        } catch (error) {
+          pushToast("error", "Could not mark the folder read", errorMessage(error), "標唔到成個資料夾做已讀", errorMessage(error));
+        }
+      });
+      break;
+    }
+    case "run-filters": {
+      const accountId = state.accountId;
+      const folderPath = state.folderPath;
+      if (!accountId || !folderPath) break;
+      await withBusy("filters", async () => {
+        try {
+          const preview = await api.previewMessageFilterRun(accountId, folderPath);
+          if (!preview.matchedCount) {
+            state.filterRunSummary = preview;
+            return;
+          }
+          if (!window.confirm(tx(
+            `Apply filters to ${preview.matchedCount} matching message(s) in this folder?`,
+            `對呢個資料夾入面 ${preview.matchedCount} 封符合嘅郵件執行篩選規則？`,
+          ))) {
+            state.filterRunSummary = preview;
+            return;
+          }
+          state.filterRunSummary = await api.runMessageFilters(accountId, folderPath);
+          state.messages = await api.listMessages(accountId, folderPath);
+          state.messageTagAssignments = await api.listMessageTagAssignments();
+          state.junkSummary = await api.getJunkSummary();
+        } catch (error) {
+          pushToast("error", "Could not run filters", errorMessage(error), "執行唔到篩選規則", errorMessage(error));
+        }
+      });
+      break;
+    }
+    case "dismiss-filter-summary":
+      state.filterRunSummary = null;
+      render();
+      break;
     case "toggle-selected-star": await toggleSelectedFlag("starred"); break;
     case "toggle-selected-unread": await toggleSelectedFlag("unread"); break;
     case "toggle-remote-content": {
@@ -7278,6 +7711,13 @@ app.addEventListener("input", event => {
     state.pimEditorLastFocusKey = control.dataset.focusKey ?? state.pimEditorLastFocusKey;
     state.pimEditorLastFocusName = control.name;
     updatePimEditorDirty();
+  }
+  const quickFilterField = control.dataset.quickFilter;
+  if (quickFilterField === "pattern" || quickFilterField === "flags") {
+    state.quickFilter = quickFilterField === "pattern"
+      ? { ...state.quickFilter, pattern: control.value.slice(0, regexLimits.pattern) }
+      : { ...state.quickFilter, flags: control.value.slice(0, 8) };
+    render(); return;
   }
   const searchKey = control.dataset.searchKey;
   if (searchKey) {
