@@ -44,7 +44,7 @@ The current foundation provides:
 - an integrated local organizer for structured contacts, mailing lists, bounded vCard import/export, a Home calendar, events, tasks, append-only transaction recovery, cross-process-safe atomic persistence, stale-refresh protection, and a no-network CardDAV/CalDAV/ICS profile and interchange foundation;
 - an NSIS x64 packaging configuration whose local harness now rejects missing absent-isolated-profile defaults or retained settings/window-state evidence across packaged candidate launch, optional upgrade, and uninstall; the current corrections still require an exact rebuilt installer plus clean-machine/default Windows-profile and Authenticode verification.
 
-The renderer is integrated with the typed mail and local-organizer preload surface. The current tree passes `npm run check` with 56 unit/integration files and 308 tests, all bundled-asset/site/source-policy checks, and a production build; 7 / 7 focused installer-contract cases guard default/retained isolated-profile evidence and false stronger claims. The focused real-Electron Outbox recovery workflow passes 1 of 1, forced-colors/focus passes 2 of 2, Windows window controls pass 3 of 3, and the per-tab appearance and preset/theme-transfer workflows each pass 1 of 1. Previously recorded broader Electron results remain historical evidence rather than a current full-suite claim. This is local development evidence, not release, clean-machine/default Windows-profile delivery, Authenticode, or native Windows High Contrast certification. Rebuilt-installer proof, audited message cryptography, the complete every-search-surface and screen-reader/display-scale matrices, remote PIM synchronization, and live public-provider verification are still incomplete. See [Roadmap](ROADMAP.md) for the explicit gaps.
+The renderer is integrated with the typed mail and local-organizer preload surface. The current tree passes `npm run check` with 73 unit/integration files and 522 tests, all bundled-asset/site/source-policy checks, and a production build; 7 / 7 focused installer-contract cases guard default/retained isolated-profile evidence and false stronger claims. The focused real-Electron Outbox recovery workflow passes 1 of 1, forced-colors/focus passes 2 of 2, Windows window controls pass 3 of 3, and the per-tab appearance and preset/theme-transfer workflows each pass 1 of 1. Previously recorded broader Electron results remain historical evidence rather than a current full-suite claim. This is local development evidence, not release, clean-machine/default Windows-profile delivery, Authenticode, or native Windows High Contrast certification. Rebuilt-installer proof, audited message cryptography, the complete every-search-surface and screen-reader/display-scale matrices, remote PIM synchronization, and live public-provider verification are still incomplete. See [Roadmap](ROADMAP.md) for the explicit gaps.
 
 </details>
 
@@ -85,6 +85,61 @@ Serve the documentation site locally so its module and content-security policy r
 ```powershell
 npx vite --host 127.0.0.1 site
 ```
+
+</details>
+
+<details>
+<summary><strong>Line count</strong></summary>
+
+`npm run count:lines` measures one commit: it enumerates tracked files with `git ls-tree`, so ignored paths cannot enter the figures, and attributes every surviving line with `git blame` rather than by summing added lines from the log. Pass `--rev <commit>` to measure another commit and `--json` for the same figures in machine form. The release workflow runs it at the tagged commit and appends its table to the published release notes; **those notes are the record**, and the copy below is a convenience snapshot that is stale the moment the tree moves.
+
+The table below is a local run at `69a161f`, not release evidence: no release has published a line count yet, because the workflow step that does so has not run.
+
+### Project code
+
+| Area | Files | Lines | Non-blank |
+| --- | ---: | ---: | ---: |
+| Main process (`src/main`) | 28 | 11,586 | 10,737 |
+| Preload bridge (`src/preload`) | 1 | 142 | 140 |
+| Shared contracts (`src/shared`) | 18 | 3,677 | 3,297 |
+| Renderer styles (`src/renderer`) | 1 | 1,494 | 1,435 |
+| Renderer markup (`src/renderer`) | 1 | 28 | 28 |
+| Renderer source (`src/renderer`) | 17 | 9,776 | 9,222 |
+| End-to-end tests (`tests/e2e`) | 27 | 4,396 | 3,920 |
+| Test fixtures (`tests/fixtures`) | 3 | 70 | 70 |
+| Unit and integration tests (`tests`) | 70 | 8,744 | 7,855 |
+| Build and verification scripts (`scripts`) | 14 | 2,110 | 1,954 |
+| Site styles (`site`) | 1 | 451 | 430 |
+| Site markup (`site`) | 1 | 32 | 32 |
+| Site data (`site`) | 1 | 10 | 10 |
+| Site source (`site`) | 1 | 320 | 310 |
+| Feature documentation (`docs`) | 38 | 1,689 | 1,089 |
+| CI workflow (`.github`) | 1 | 389 | 359 |
+| Repository documentation (root Markdown) | 8 | 646 | 491 |
+| Project configuration (repository root) | 9 | 173 | 166 |
+| Other tracked files (uncategorised) | 0 | 0 | 0 |
+| **Project total** | **240** | **45,733** | **41,545** |
+
+### Counted, but held out of the project total
+
+| Area | Files | Lines | Non-blank | Why it is held out |
+| --- | ---: | ---: | ---: | --- |
+| Vendored submodule (`vendor/`) | 1 | 0 | 0 | Another project's source, recorded as a gitlink; it has no lines of ours to count. |
+| Bundled binary assets | 20 | 0 | 0 | Dim-sum catalog images and other binaries have no lines. |
+| Generated lockfile (`package-lock.json`) | 1 | 6,924 | 6,924 | Emitted by npm from `package.json`; nobody wrote it. |
+| Generated dim-sum catalog index | 1 | 75 | 75 | Generated record of the bundled images, not hand-written code. |
+| Upstream licence text (`LICENSE`) | 1 | 373 | 293 | Verbatim MPL-2.0 boilerplate, not written for this project. |
+| **Grand total (everything tracked)** | **264** | **53,105** | **48,837** | |
+
+### Who wrote the surviving lines
+
+| Author | Lines | Share |
+| --- | ---: | ---: |
+| Agents | 4,398 | 8.3% |
+| People | 48,707 | 91.7% |
+| **Total** | **53,105** | **100.0%** |
+
+A commit counts as agent-written when its author identity, or a `Co-Authored-By:` trailer in its message, matches `\[bot\]|\bbot\b|\bclaude\b|\bcodex\b|\bcopilot\b|\bcursor\b|\bdevin\b|\bopencode\b|@anthropic\.com|@openai\.com`; 2 of the 90 commits still surviving at `69a161f` match. That rule reads commit metadata, not the work itself, so it undercounts agent-written lines whose commits carry no automation identity or trailer. The counter refuses to print at all when the attributed total and the measured total disagree.
 
 </details>
 

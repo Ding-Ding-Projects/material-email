@@ -30,6 +30,12 @@ import {
   MESSAGE_FILTER_VALUE_LIMIT,
 } from "../shared/message-filters.js";
 import { validateTabAppearanceThemeDocument, type TabAppearanceThemeDocument } from "../shared/tab-appearance-theme.js";
+import {
+  IDENTITY_NAME_LIMIT,
+  IDENTITY_ORGANIZATION_LIMIT,
+  IDENTITY_SIGNATURE_LIMIT,
+  type MailIdentityInput,
+} from "../shared/identities.js";
 
 const noControlCharacters = (value: string): boolean => !/[\u0000-\u001f\u007f]/u.test(value);
 const noHeaderBreaks = (value: string): boolean => !/[\r\n\u0000]/u.test(value);
@@ -141,6 +147,7 @@ const recipientSchema = z
 export const composeDraftSchema = z.strictObject({
   id: identifierSchema.optional(),
   accountId: identifierSchema,
+  identityId: identifierSchema.optional(),
   to: z.array(recipientSchema).max(500),
   cc: z.array(recipientSchema).max(500),
   bcc: z.array(recipientSchema).max(500),
@@ -154,6 +161,30 @@ export const composeDraftSchema = z.strictObject({
   attachments: z.array(nativePathSchema).max(100),
 }) as z.ZodType<ComposeDraft>;
 
+/**
+ * Names and organizations become header values, so the boundary refuses a line break outright
+ * rather than relying on the model folding it away.
+ */
+const identityLineSchema = (limit: number) =>
+  z.string().max(limit).refine(noHeaderBreaks, "Identity names cannot contain line breaks or NUL.");
+const identityAddressSchema = z
+  .string()
+  .min(1)
+  .max(320)
+  .refine(noHeaderBreaks, "Addresses cannot contain line breaks or NUL.");
+
+export const mailIdentityInputSchema = z.strictObject({
+  id: identifierSchema.optional(),
+  accountId: identifierSchema,
+  displayName: identityLineSchema(IDENTITY_NAME_LIMIT).min(1),
+  email: identityAddressSchema,
+  replyTo: identityAddressSchema.or(z.literal("")).optional(),
+  organization: identityLineSchema(IDENTITY_ORGANIZATION_LIMIT).optional(),
+  signature: z.string().max(IDENTITY_SIGNATURE_LIMIT).optional(),
+  signaturePlacement: z.enum(["below-body", "below-quote"]).optional(),
+  isDefault: z.boolean().optional(),
+}) as z.ZodType<MailIdentityInput>;
+
 const preferencesObjectSchema = z.strictObject({
   language: z.enum(["en", "yue", "bilingual"]),
   funnyEnglish: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
@@ -164,7 +195,6 @@ const preferencesObjectSchema = z.strictObject({
   fontFamily: z.string().trim().min(1).max(256).refine(noControlCharacters, "Font names cannot contain control characters."),
   fontScale: z.number().finite().min(0.5).max(3),
   fontWeight: z.number().int().min(100).max(1_000),
-  dimSumEnabled: z.boolean(),
   narratorEnabled: z.boolean(),
   narratorLanguage: z.enum(["en", "yue", "bilingual"]),
   nativeNotificationsEnabled: z.boolean().default(false),
@@ -174,7 +204,19 @@ const preferencesObjectSchema = z.strictObject({
   selectedFolderPath: folderPathSchema.optional(),
 });
 
-export const preferencesSchema = preferencesObjectSchema as z.ZodType<Preferences>;
+/**
+ * A profile or settings revision written while the dim-sum surprise was still optional carries its
+ * retired switch, and a strict object would reject the entire record over that one dead key, locking
+ * the owner out of their own mail. Accept it, drop it, and let the profile rejoin the draw. The
+ * renderer never sends it, so the patch schema stays strict.
+ */
+export const preferencesSchema = preferencesObjectSchema
+  .extend({ dimSumEnabled: z.boolean().optional() })
+  .transform(preferences => {
+    const retained = { ...preferences };
+    delete retained.dimSumEnabled;
+    return retained;
+  }) as unknown as z.ZodType<Preferences>;
 export const preferencesPatchSchema = preferencesObjectSchema.partial() as z.ZodType<Partial<Preferences>>;
 
 type MessageFlagPatch = { unread?: boolean; starred?: boolean };
@@ -308,6 +350,8 @@ export const ipcPayloadSchemas = {
   messageFlags: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, flagPatchSchema]),
   moveMessage: z.tuple([identifierSchema, folderPathSchema, messageUidSchema, folderPathSchema]),
   composeDraft: z.tuple([composeDraftSchema]),
+  identitySave: z.tuple([mailIdentityInputSchema]),
+  identityId: z.tuple([identifierSchema]),
   accountItem: z.tuple([identifierSchema, identifierSchema]),
   preferences: z.tuple([preferencesPatchSchema]),
   notificationRead: z.tuple([identifierSchema, z.boolean()]),

@@ -206,9 +206,14 @@ export interface FilterRunContext {
   folders: readonly FolderSummary[];
 }
 
-export const buildFilterSubjects = (state: PersistedState, context: FilterRunContext): MessageFilterSubject[] => {
+export const buildFilterSubjects = (
+  state: PersistedState,
+  context: FilterRunContext,
+  options: { messageIds?: ReadonlySet<string> } = {},
+): MessageFilterSubject[] => {
   const folderName = context.folders.find(folder => folder.path === context.folderPath)?.name ?? context.folderPath;
-  return cachedMessages(state, context.accountId, context.folderPath).map(message => {
+  const wanted = options.messageIds;
+  return cachedMessages(state, context.accountId, context.folderPath).filter(message => !wanted || wanted.has(message.id)).map(message => {
     const detail = state.details[message.id];
     const body = detail?.text;
     return {
@@ -224,9 +229,11 @@ export const buildFilterSubjects = (state: PersistedState, context: FilterRunCon
 export const planFilterRun = (
   state: PersistedState,
   context: FilterRunContext,
-  options: { runOnSyncOnly?: boolean; now?: number } = {},
-): MessageFilterRunPlan =>
-  planMessageFilterRun(listFilters(state), buildFilterSubjects(state, context), options);
+  options: { runOnSyncOnly?: boolean; now?: number; messageIds?: ReadonlySet<string> } = {},
+): MessageFilterRunPlan => {
+  const { messageIds, ...run } = options;
+  return planMessageFilterRun(listFilters(state), buildFilterSubjects(state, context, messageIds ? { messageIds } : {}), run);
+};
 
 export const summarizeFilterPlan = (
   plan: MessageFilterRunPlan,

@@ -89,7 +89,7 @@ import {
   type RuntimeAccount,
 } from "./mail-service.js";
 import { assertMimeSourceSize } from "./mime-safety.js";
-import { accountDraftSchema, composeDraftSchema, pimProviderProfileInputSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
+import { accountDraftSchema, composeDraftSchema, mailIdentityInputSchema, pimProviderProfileInputSchema, preferencesPatchSchema, preferencesSchema, quarantineIdSchema } from "./ipc-validation.js";
 import { AttachmentAuthorization, inspectEditorExecutable, sameWindowsPath } from "./local-file-authorization.js";
 import {
   parsePersistedState,
@@ -121,6 +121,17 @@ import {
   type FilterRunContext,
 } from "./mail-organization.js";
 import { emptyMessageTagState } from "../shared/message-tags.js";
+import { MESSAGE_FILTER_RUN_LIMIT } from "../shared/message-filters.js";
+import {
+  deleteIdentity,
+  forgetAccountIdentities,
+  identityForDraft,
+  listIdentities,
+  promoteIdentityToDefault,
+  seedAccountIdentity,
+  upsertIdentity,
+} from "./identity-store.js";
+import type { MailIdentity, MailIdentityInput } from "../shared/identities.js";
 import { emptyJunkModel } from "../shared/junk-classifier.js";
 import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
 import { collectCachedUnifiedMessages } from "../shared/unified-folders.js";
@@ -144,7 +155,6 @@ const defaultPreferences = (): Preferences => ({
   funnyEnglish: 2,
   funnyCantonese: 3,
   ...DEFAULT_APPEARANCE_PREFERENCES,
-  dimSumEnabled: true,
   narratorEnabled: false,
   narratorLanguage: "en",
   nativeNotificationsEnabled: false,
@@ -152,6 +162,12 @@ const defaultPreferences = (): Preferences => ({
 });
 
 const folderKey = (accountId: string, folderPath: string): string => `${accountId}\u0000${folderPath}`;
+
+/** A UID is reused in a later mailbox generation, so the run-on-sync ledger key carries UIDVALIDITY. */
+const syncFilterLedgerKey = (message: MessageSummary): string => `${message.id}\u0000${message.uidValidity ?? ""}`;
+
+/** The ledger is a same-process guard only; the arrival diff against the cache is what survives a restart. */
+const SYNC_FILTER_LEDGER_LIMIT = 50_000;
 
 const fileErrorCode = (error: unknown): string | undefined =>
   error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
@@ -306,6 +322,7 @@ export class AppService {
   readonly #attachmentAuthorization = new AttachmentAuthorization();
   readonly #detectedEditorPaths = new Set<string>();
   readonly #queueFlights = new Set<string>();
+  readonly #syncFilteredMessages = new Set<string>();
   #pop3TestController: AbortController | null = null;
 
   constructor(userDataPath: string) {
@@ -321,6 +338,7 @@ export class AppService {
         messageFilters: [],
         junkModel: emptyJunkModel(),
         accounts: [],
+        identities: [],
         preferences: defaultPreferences(),
         folders: {},
         messages: {},
@@ -363,9 +381,26 @@ export class AppService {
         );
       });
     }
+    // Accounts saved before identities existed have none, so give them their default one here
+    // rather than leaving the composer without a From address on the first launch after upgrade.
+    if (state.accounts.some(account => !(state.identities ?? []).some(identity => identity.accountId === account.id))) {
+      state = await this.#store.update(next => {
+        for (const account of next.accounts) {
+          const seeded = seedAccountIdentity(next, account, () => randomUUID());
+          if (seeded) {
+            this.#record(next, "created", "settings", `identity:${seeded.id}`, `Created the default identity for ${account.email}`, {
+              accountId: account.id,
+              displayName: seeded.displayName,
+              email: seeded.email,
+            });
+          }
+        }
+      });
+    }
     const release = await this.#releaseIdentity();
     return {
       accounts: state.accounts.map(this.#publicAccount),
+      identities: listIdentities(state),
       preferences: state.preferences,
       notifications: state.notifications.map(notification => hasLegacyMailErrorBody(notification)
         ? { ...notification, body: mailErrorMessage(notification.body) }
@@ -384,6 +419,7 @@ export class AppService {
     const messages = demoMessages();
     await this.#store.update(state => {
       if (!state.accounts.some(candidate => candidate.id === account.id)) state.accounts.push(account);
+      seedAccountIdentity(state, account, () => randomUUID());
       state.preferences.selectedAccountId = account.id;
       state.preferences.selectedFolderPath = "Inbox";
       state.folders[account.id] = demoFolders();
@@ -449,6 +485,7 @@ export class AppService {
     }
     await this.#store.update(state => {
       state.accounts.push(account);
+      seedAccountIdentity(state, account, () => randomUUID());
       state.preferences.selectedAccountId = account.id;
       this.#record(state, "created", "account", account.id, `Added account ${account.email}`, this.#publicAccount(account));
       this.#notify(state, "success", "Account connected", `${account.email} passed incoming and outgoing server checks.`, {
@@ -517,6 +554,7 @@ export class AppService {
       state.outbox = state.outbox.filter(item => item.draft.accountId !== accountId);
       state.pendingOperations = state.pendingOperations.filter(operation => operation.accountId !== accountId);
       forgetAccountTags(state, accountId);
+      forgetAccountIdentities(state, accountId);
       if (state.preferences.selectedAccountId === accountId) {
         const nextAccount = state.accounts[0];
         if (nextAccount) state.preferences.selectedAccountId = nextAccount.id;
@@ -550,7 +588,9 @@ export class AppService {
       const targets = folders.filter(folder => folder.role === "inbox" || folder.path === selected);
       const batches = await Promise.all(targets.map(async folder => [folder.path, await this.#mail.listMessages(account, folder.path)] as const));
       const syncedAt = new Date().toISOString();
+      const arrived = new Map<string, MessageSummary[]>();
       await this.#store.update(draft => {
+        arrived.clear();
         this.#requireAccount(draft, accountId);
         const previousFolders = draft.folders[accountId] ?? [];
         for (const folder of folders) {
@@ -576,7 +616,14 @@ export class AppService {
           );
         }
         draft.folders[accountId] = folders;
-        for (const [folderPath, messages] of batches) draft.messages[folderKey(accountId, folderPath)] = messages;
+        for (const [folderPath, messages] of batches) {
+          const key = folderKey(accountId, folderPath);
+          // Anything already cached was offered to the filters by an earlier sync, so only the new
+          // rows are collected. A UIDVALIDITY reset cleared the cache above, so its rows count as new.
+          const known = new Set((draft.messages[key] ?? []).map(syncFilterLedgerKey));
+          arrived.set(folderPath, messages.filter(message => !known.has(syncFilterLedgerKey(message))));
+          draft.messages[key] = messages;
+        }
         const item = draft.accounts.find(candidate => candidate.id === accountId);
         if (item) {
           item.lastSyncAt = syncedAt;
@@ -587,6 +634,7 @@ export class AppService {
           action: { kind: "open", target: "page", page: "mail" },
         });
       });
+      await this.#runFiltersAfterSync(accountId, arrived);
       return { folders, messages: batches.flatMap(([, rows]) => rows), syncedAt };
     } catch (error) {
       const message = mailErrorMessage(error);
@@ -1093,6 +1141,59 @@ export class AppService {
     return changed;
   }
 
+  async listIdentities(): Promise<MailIdentity[]> {
+    return listIdentities(await this.#store.read());
+  }
+
+  async saveIdentity(input: MailIdentityInput): Promise<MailIdentity[]> {
+    const parsed = mailIdentityInputSchema.parse(input);
+    let identities: MailIdentity[] = [];
+    await this.#store.update(state => {
+      this.#requireAccount(state, parsed.accountId);
+      identities = upsertIdentity(state, parsed, () => randomUUID());
+      this.#record(state, parsed.id ? "updated" : "created", "settings", `identity:${parsed.id ?? parsed.email}`, `Saved identity ${parsed.email}`, {
+        accountId: parsed.accountId,
+        displayName: parsed.displayName,
+        email: parsed.email,
+        replyTo: parsed.replyTo ?? "",
+        signaturePlacement: parsed.signaturePlacement ?? "below-body",
+        // The signature is the user's own prose; its length is the auditable fact, not its text.
+        signatureLength: (parsed.signature ?? "").length,
+      });
+    });
+    return identities;
+  }
+
+  async deleteIdentity(id: string): Promise<MailIdentity[]> {
+    let identities: MailIdentity[] = [];
+    await this.#store.update(state => {
+      const identity = (state.identities ?? []).find(candidate => candidate.id === id);
+      identities = deleteIdentity(state, id);
+      // Drafts pointing at the removed identity fall back to the account default rather than
+      // failing to send later with an id that no longer resolves.
+      for (const draft of state.drafts) if (draft.identityId === id) delete draft.identityId;
+      for (const item of state.outbox) if (item.draft.identityId === id) delete item.draft.identityId;
+      this.#record(state, "deleted", "settings", `identity:${id}`, `Removed identity ${identity?.email ?? id}`, {
+        accountId: identity?.accountId ?? "",
+        email: identity?.email ?? "",
+      });
+    });
+    return identities;
+  }
+
+  async setDefaultIdentity(id: string): Promise<MailIdentity[]> {
+    let identities: MailIdentity[] = [];
+    await this.#store.update(state => {
+      identities = promoteIdentityToDefault(state, id);
+      const identity = identities.find(candidate => candidate.id === id);
+      this.#record(state, "updated", "settings", `identity:${id}`, `Made ${identity?.email ?? id} the default identity`, {
+        accountId: identity?.accountId ?? "",
+        email: identity?.email ?? "",
+      });
+    });
+    return identities;
+  }
+
   async listMessageTags(): Promise<MessageTagCatalog> {
     return tagCatalogOf(await this.#store.read());
   }
@@ -1252,6 +1353,87 @@ export class AppService {
     return summary ?? this.getJunkSummary();
   }
 
+  /**
+   * Applies the run-on-sync filters to the messages this synchronization actually brought in. It never
+   * rethrows: filtering is layered on a completed sync, so a filter problem is reported on its own
+   * rather than turning a synchronization that succeeded into one that failed.
+   */
+  async #runFiltersAfterSync(accountId: string, arrived: ReadonlyMap<string, MessageSummary[]>): Promise<void> {
+    try {
+      const state = await this.#store.read();
+      if (!listFilters(state).some(filter => filter.enabled && filter.runOnSync)) return;
+      let budget = MESSAGE_FILTER_RUN_LIMIT;
+      let limitReached = false;
+      const fresh = new Map<string, Set<string>>();
+      for (const [folderPath, messages] of arrived) {
+        const messageIds = new Set<string>();
+        for (const message of messages) {
+          const ledgerKey = syncFilterLedgerKey(message);
+          if (this.#syncFilteredMessages.has(ledgerKey)) continue;
+          if (budget <= 0) {
+            limitReached = true;
+            break;
+          }
+          // Recorded before the run so a concurrent sync cannot act on the same message twice.
+          this.#syncFilteredMessages.add(ledgerKey);
+          budget -= 1;
+          messageIds.add(message.id);
+        }
+        if (messageIds.size) fresh.set(folderPath, messageIds);
+      }
+      while (this.#syncFilteredMessages.size > SYNC_FILTER_LEDGER_LIMIT) {
+        const oldest = this.#syncFilteredMessages.values().next();
+        if (oldest.done) break;
+        this.#syncFilteredMessages.delete(oldest.value);
+      }
+      if (!fresh.size) return;
+
+      let matchedCount = 0;
+      let appliedCount = 0;
+      const failures: string[] = [];
+      for (const [folderPath, messageIds] of fresh) {
+        const context = this.#filterContext(state, accountId, folderPath);
+        const plan = planFilterRun(state, context, { runOnSyncOnly: true, messageIds });
+        if (plan.limitReached) limitReached = true;
+        if (!plan.matchedCount) continue;
+        const outcome = await this.#applyFilterPlan(state, context, plan);
+        matchedCount += plan.matchedCount;
+        appliedCount += outcome.appliedCount;
+        failures.push(...outcome.failures);
+      }
+      if (!matchedCount) return;
+
+      const ceiling = limitReached ? " The run stopped at its safety ceiling; messages beyond it were not examined." : "";
+      await this.#store.update(draft => {
+        this.#record(draft, "updated", "message", `${accountId}:sync-filters`, `Ran filters on ${matchedCount} newly synchronized messages`, {
+          accountId,
+          matched: matchedCount,
+          applied: appliedCount,
+          failed: failures.length,
+          limitReached,
+        });
+        this.#notify(
+          draft,
+          failures.length ? "warning" : "success",
+          "Filters ran after synchronization",
+          failures.length
+            ? `${appliedCount} of ${matchedCount} newly arrived messages were updated. ${failures.length} could not be completed.${ceiling}`
+            : `${appliedCount} of ${matchedCount} newly arrived messages were updated.${ceiling}`,
+          { category: "mail", action: { kind: "open", target: "page", page: "mail" } },
+        );
+      });
+    } catch (error) {
+      await this.#store
+        .update(draft => {
+          this.#notify(draft, "warning", "Filters did not run after synchronization", mailErrorMessage(error), {
+            category: "mail",
+            action: { kind: "open", target: "page", page: "settings" },
+          });
+        })
+        .catch(() => undefined);
+    }
+  }
+
   async #refreshFolders(accountId: string, label: string): Promise<FolderSummary[]> {
     const state = await this.#store.read();
     const account = this.#requireAccount(state, accountId);
@@ -1335,13 +1517,14 @@ export class AppService {
     const draft = await this.#attachmentAuthorization.authorizeDraft(parsedDraft, persistedDraft, { requireExistingFiles: true });
     const account = this.#requireAccount(state, draft.accountId);
     if (!draft.to.length && !draft.cc.length && !draft.bcc.length) throw new Error("Add at least one recipient before sending.");
+    const identity = identityForDraft(state, draft);
     let result: SendResult;
     let networkError = "";
     if (account.kind === "demo") {
       result = { messageId: `<${randomUUID()}@material-email.local>`, accepted: [...draft.to, ...draft.cc, ...draft.bcc], rejected: [], queued: false };
     } else {
       try {
-        result = await this.#mail.sendMessage(this.#runtimeAccount(account), draft);
+        result = await this.#mail.sendMessage(this.#runtimeAccount(account), draft, identity);
       } catch (error) {
         networkError = mailErrorMessage(error);
         result = { messageId: `outbox:${randomUUID()}`, accepted: [], rejected: [], queued: true };
@@ -1375,6 +1558,8 @@ export class AppService {
       if (persistedDraftUnchanged) next.drafts = next.drafts.filter(item => item.id !== draft.id);
       this.#record(next, "created", result.queued ? "draft" : "message", result.messageId, `${result.queued ? "Queued" : result.rejected.length ? "Partially sent" : "Sent"} “${draft.subject || "(No subject)"}”`, {
         accountId: draft.accountId,
+        from: identity?.email ?? account.email,
+        replyTo: identity?.replyTo || "",
         to: draft.to,
         cc: draft.cc,
         bcc: draft.bcc,
@@ -2129,8 +2314,11 @@ export class AppService {
 
   async #deliverOutboxItem(account: RuntimeAccount, item: OutboxItem): Promise<SendResult> {
     let sent: SendResult;
+    // Resolved here rather than captured when the item was queued, so a queued message leaves with
+    // the same From address an immediate send would have used.
+    const identity = identityForDraft(await this.#store.read(), item.draft);
     try {
-      sent = await this.#mail.sendMessage(account, item.draft);
+      sent = await this.#mail.sendMessage(account, item.draft, identity);
     } catch (error) {
       await this.#recordOutboxFailure(item.id, error);
       throw publicMailError(error);

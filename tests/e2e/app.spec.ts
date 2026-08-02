@@ -523,7 +523,8 @@ test("filters and copies verified releases from the live Changelog page", async 
     { version: "0.11.1", title: "Queue recovery and privacy-safe notifications", codeName: "Bamboo Shoot Har Gow · 筍尖蝦餃" },
   ];
 
-  await expect(cards).toHaveCount(12);
+  // Twelve released versions plus the undated unreleased entry.
+  await expect(cards).toHaveCount(13);
   for (const release of releases) {
     const card = cards.filter({ hasText: `VERSION ${release.version}` });
     await expect(card).toContainText(`VERSION ${release.version}`);

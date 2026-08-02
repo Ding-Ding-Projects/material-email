@@ -56,11 +56,27 @@ import type {
   JunkSummary,
   MessageFilter,
   MessageFilterAction,
+  MessageFilterActionKind,
+  MessageFilterCondition,
+  MessageFilterField,
+  MessageFilterInput,
+  MessageFilterOperator,
   MessageFilterRunSummary,
   MessageTag,
   MessageTagAssignmentMap,
   MessageTagCatalog,
+  MailIdentity,
+  SignaturePlacement,
 } from "../shared/contracts";
+import {
+  IDENTITY_LIMIT_PER_ACCOUNT,
+  IDENTITY_SIGNATURE_LIMIT,
+  applySignature,
+  recoverSignaturePlacement,
+  identitiesForAccount,
+  identityForReply,
+  resolveIdentity,
+} from "../shared/identities";
 import {
   AUTOMATIC_MAIL_QUEUE_ATTEMPT_LIMIT,
   LOCAL_HISTORY_RETENTION_DAYS_DEFAULT,
@@ -70,6 +86,15 @@ import {
   POP3_MESSAGE_LIMIT_MAX,
   POP3_MESSAGE_LIMIT_MIN,
 } from "../shared/contracts";
+import {
+  MESSAGE_FILTER_ACTION_LIMIT,
+  MESSAGE_FILTER_CONDITION_LIMIT,
+  MESSAGE_FILTER_LIMIT,
+  MESSAGE_FILTER_NAME_LIMIT,
+  MESSAGE_FILTER_VALUE_LIMIT,
+  messageFilterFieldKind,
+  messageFilterOperators,
+} from "../shared/message-filters";
 import { userVisibleErrorMessage } from "../shared/user-visible-error";
 import {
   QUICK_FILTER_FACETS,
@@ -235,9 +260,47 @@ interface ComposerState {
   showCopies: boolean;
   minimized: boolean;
   cleanBaseline: string;
+  /**
+   * The first line of the quoted material, held as text rather than an index so that typing above
+   * the quote does not send the next signature into the middle of a sentence.
+   */
+  quoteMarker: string | null;
+  /**
+   * The exact signature text currently in the body. Tracked rather than re-derived from the draft's
+   * identity, because that identity can be edited or removed while the composer is open — and a
+   * mismatched guess makes the next switch strip the wrong span.
+   */
+  appliedSignature: string;
 }
 
 type ComposerMode = "new" | "reply" | "forward";
+
+interface IdentityEditorState {
+  accountId: string;
+  /** `null` while composing a new identity, so save creates instead of updating. */
+  id: string | null;
+  displayName: string;
+  email: string;
+  replyTo: string;
+  organization: string;
+  signature: string;
+  signaturePlacement: SignaturePlacement;
+  error: string;
+}
+
+interface MessageFilterEditorState {
+  /** `null` while composing a new filter, so save creates instead of updating. */
+  id: string | null;
+  name: string;
+  enabled: boolean;
+  match: "all" | "any";
+  runOnSync: boolean;
+  /** Empty means the filter is not scoped to one account. */
+  accountId: string;
+  conditions: MessageFilterCondition[];
+  actions: MessageFilterAction[];
+  error: string;
+}
 
 interface MailtoComposition {
   to: string[];
@@ -282,6 +345,8 @@ type ConfirmationState =
   | { kind: "send-empty-subject" }
   | { kind: "discard-pending-operation"; accountId: string; operationId: string; label: string }
   | { kind: "delete-pim"; entityKind: PimEntityKind; uid: string; label: string }
+  | { kind: "delete-identity"; identityId: string; label: string }
+  | { kind: "delete-message-filter"; filterId: string; label: string }
   | {
     kind: "bulk-close-tabs";
     tabIds: PageId[];
@@ -400,6 +465,8 @@ interface RendererState {
   selectedMailingListUid: string | null;
   selectedMailingListMembers: Contact[];
   pimEditor: PimEditorState | null;
+  identityEditor: IdentityEditorState | null;
+  messageFilterEditor: MessageFilterEditorState | null;
   pimDraftMemberUids: Set<string> | null;
   pimEditorBaseline: string | null;
   pimEditorDirty: boolean;
@@ -515,7 +582,6 @@ const DEFAULT_PREFERENCES: Preferences = {
   fontFamily: "Segoe UI Variable",
   fontScale: 1,
   fontWeight: 400,
-  dimSumEnabled: true,
   narratorEnabled: false,
   narratorLanguage: "en",
   nativeNotificationsEnabled: false,
@@ -641,6 +707,8 @@ const state: RendererState = {
   selectedMailingListUid: null,
   selectedMailingListMembers: [],
   pimEditor: null,
+  identityEditor: null,
+  messageFilterEditor: null,
   pimDraftMemberUids: null,
   pimEditorBaseline: null,
   pimEditorDirty: false,
@@ -1050,6 +1118,19 @@ const withBusy = async (key: string, operation: () => Promise<void>): Promise<vo
     state.busy.delete(key);
     render();
   }
+};
+
+/**
+ * Every identity mutation returns the whole list, so the cached bootstrap is updated in place
+ * rather than re-fetched — and an open composer keeps a From address that still exists.
+ */
+const applyIdentities = (identities: MailIdentity[]): void => {
+  if (state.bootstrap) state.bootstrap = { ...state.bootstrap, identities };
+  const composer = state.compose;
+  if (composer && composer.draft.identityId && !identities.some(identity => identity.id === composer.draft.identityId)) {
+    delete composer.draft.identityId;
+  }
+  render();
 };
 
 const refreshMetadata = async (isCurrent: () => boolean = () => true): Promise<boolean> => {
@@ -1514,6 +1595,7 @@ const prefixedSubject = (prefix: "Re" | "Fwd", subject: string): string =>
 const composeFingerprint = (draft: ComposeDraft): string => JSON.stringify({
   id: draft.id ?? null,
   accountId: draft.accountId,
+  identityId: draft.identityId ?? null,
   to: draft.to,
   cc: draft.cc,
   bcc: draft.bcc,
@@ -1541,12 +1623,13 @@ const beginComposer = (mode: ComposerMode = "new", mailto?: MailtoComposition): 
     text: "",
     attachments: [],
   };
-  const cleanBaseline = composeFingerprint(base);
+  let quoteMarker: string | null = null;
   if (mode === "reply" && detail) {
     const recipients = detail.replyTo.length > 0 ? detail.replyTo : detail.from;
     base.to = recipients.map(item => item.address);
     base.subject = prefixedSubject("Re", detail.subject);
-    base.text = `\n\n— ${displayAddress(detail.from[0] ?? { name: "", address: "Sender" })} wrote on ${formatDate(detail.date)} —\n${detail.text.replace(/^/gm, "> ")}`;
+    quoteMarker = `— ${displayAddress(detail.from[0] ?? { name: "", address: "Sender" })} wrote on ${formatDate(detail.date)} —`;
+    base.text = `\n\n${quoteMarker}\n${detail.text.replace(/^/gm, "> ")}`;
     if (detail.messageId) {
       base.inReplyTo = detail.messageId;
       base.references = [detail.messageId];
@@ -1554,7 +1637,8 @@ const beginComposer = (mode: ComposerMode = "new", mailto?: MailtoComposition): 
   }
   if (mode === "forward" && detail) {
     base.subject = prefixedSubject("Fwd", detail.subject);
-    base.text = `\n\n—— Forwarded message ——\nFrom: ${addressLine(detail.from)}\nDate: ${formatDate(detail.date)}\nSubject: ${detail.subject}\nTo: ${addressLine(detail.to)}\n\n${detail.text}`;
+    quoteMarker = "—— Forwarded message ——";
+    base.text = `\n\n${quoteMarker}\nFrom: ${addressLine(detail.from)}\nDate: ${formatDate(detail.date)}\nSubject: ${detail.subject}\nTo: ${addressLine(detail.to)}\n\n${detail.text}`;
   }
   if (mailto) {
     base.to = mailto.to;
@@ -1563,7 +1647,25 @@ const beginComposer = (mode: ComposerMode = "new", mailto?: MailtoComposition): 
     base.subject = mailto.subject;
     base.text = mailto.body;
   }
-  state.compose = { draft: base, showCopies: Boolean(mailto && (mailto.cc.length || mailto.bcc.length)), minimized: false, cleanBaseline };
+  const identities = state.bootstrap?.identities ?? [];
+  const identity = mode === "reply" && detail
+    ? identityForReply(identities, account.id, detail)
+    : resolveIdentity(identities, account.id, undefined);
+  if (identity) base.identityId = identity.id;
+  // A fresh body has no signature of ours in it, so "" forbids any strip. A forwarded message that
+  // carries its own separator would otherwise be truncated at it.
+  const signed = applySignature(base.text, identity, quoteMarker, "");
+  base.text = signed.text;
+  // Taken after the signature so an untouched composer is not already dirty.
+  const cleanBaseline = composeFingerprint(base);
+  state.compose = {
+    draft: base,
+    showCopies: Boolean(mailto && (mailto.cc.length || mailto.bcc.length)),
+    minimized: false,
+    cleanBaseline,
+    quoteMarker,
+    appliedSignature: signed.applied ? identity?.signature.trim() ?? "" : "",
+  };
   render();
   requestAnimationFrame(() => document.querySelector<HTMLInputElement>("#compose-to")?.focus());
 };
@@ -3290,6 +3392,8 @@ function renderSettingsPage(): string {
     settingSectionMatches("appearance theme light dark system density compact comfortable relaxed accent color font family size weight") ? renderAppearanceSettings(prefs) : "",
     settingSectionMatches("language English Cantonese bilingual funny humour voice narrator warning error dim sum startup") ? renderLanguageSettings(prefs) : "",
     settingSectionMatches("accounts email IMAP POP3 SMTP server TLS STARTTLS capability test cancel remove add credentials OAuth") ? renderAccountSettings() : "",
+    settingSectionMatches(IDENTITY_SETTING_KEYWORDS) ? renderIdentitySettings() : "",
+    settingSectionMatches(MESSAGE_FILTER_SETTING_KEYWORDS) ? renderMessageFilterSettings() : "",
     settingSectionMatches("contacts calendars tasks PIM CardDAV CalDAV ICS provider URL HTTPS authentication import export recurrence capability local") ? renderPimProviderSettings() : "",
     settingSectionMatches("OAuth token vault Windows safeStorage encrypted access refresh rotation revoke clear provider registration credentials") ? renderOAuthTokenVaultSettings() : "",
     settingSectionMatches("external editor Visual Studio Code Cursor Notepad detect open") ? renderEditorSettings(prefs) : "",
@@ -3335,9 +3439,9 @@ function renderLanguageSettings(prefs: Preferences): string {
       <label class="switch-row"><span><strong>${escapeHtml(tx("Optional narrator", "選用旁白"))}</strong><small>${escapeHtml(tx("Off by default; speaks one event at a time.", "預設關閉；每次只讀一個事件。"))}</small></span><input type="checkbox" role="switch" data-pref="narratorEnabled" ${prefs.narratorEnabled ? "checked" : ""}/></label>
       <label class="switch-row"><span><strong>${escapeHtml(tx("Native Windows notifications", "原生 Windows 通知"))}</strong><small>${escapeHtml(tx("Off by default. Shows only generic, privacy-safe summaries; never message text or recipients.", "預設關閉。只顯示通用、保障私隱嘅摘要；永遠唔會顯示郵件內容或者收件人。"))}</small></span><input type="checkbox" role="switch" data-pref="nativeNotificationsEnabled" ${prefs.nativeNotificationsEnabled ? "checked" : ""}/></label>
       <label class="field"><span>${escapeHtml(tx("Narrator language", "旁白語言"))}</span><select data-pref="narratorLanguage" ${!prefs.narratorEnabled ? "disabled" : ""}><option value="en" ${prefs.narratorLanguage === "en" ? "selected" : ""}>English</option><option value="yue" ${prefs.narratorLanguage === "yue" ? "selected" : ""}>香港粵語</option><option value="bilingual" ${prefs.narratorLanguage === "bilingual" ? "selected" : ""}>English, then 香港粵語</option></select></label>
-      <label class="switch-row"><span><strong>${escapeHtml(tx("One-percent dim-sum surprise", "百分之一點心驚喜"))}</strong><small>${escapeHtml(tx("Non-blocking, local, and disabled during first run or errors.", "唔阻住你、只用本機，而且首次啟動同錯誤流程唔會出現。"))}</small></span><input type="checkbox" role="switch" data-pref="dimSumEnabled" ${prefs.dimSumEnabled ? "checked" : ""}/></label>
     </div>
     <div class="inline-banner">${icon("info")}<span>${escapeHtml(tx("Funny levels style every message, including errors and warnings, without changing names, dates, affected data, choices, or consequences. Reset them any time.", "搞笑程度會調整所有訊息，包括錯誤同警告，但唔會改名稱、日期、受影響資料、選項同後果。隨時都可以重設。"))}</span></div>
+    <div class="inline-banner">${icon("info")}<span>${escapeHtml(tx("About one launch in ten opens with a dim-sum photo from the bundled local catalog. It has no off switch. It never blocks startup, never takes focus, dismisses itself, and stays away during first run, errors, and updates.", "大約每十次啟動就有一次會彈出一張內置本機點心相。佢冇開關熄得。佢唔會阻住開機、唔會搶焦點、自己會走，而且首次啟動、錯誤同更新流程都唔會出現。"))}</span></div>
   </section>`;
 }
 
@@ -3347,6 +3451,299 @@ function renderAccountSettings(): string {
     <header><span class="settings-card__icon">${icon("mail")}</span><div><h2>${escapeHtml(tx("Mail accounts", "郵件帳戶"))}</h2><p>${escapeHtml(tx("Incoming, outgoing, and identity scope", "收取、寄出同身份範圍"))}</p></div><span class="action-spacer"></span><button class="button button--filled" type="button" data-action="open-account-setup">${icon("account")}<span>${escapeHtml(tx("Add account", "新增帳戶"))}</span></button></header>
     <div class="account-list">${accounts.length ? accounts.map(account => `<article class="account-card"><span class="avatar">${escapeHtml((account.displayName.charAt(0) || "?").toUpperCase())}</span><div><strong>${escapeHtml(account.displayName)}</strong><p>${escapeHtml(account.email)}</p><small>${escapeHtml(account.kind === "demo" ? tx("Local demo · no network", "本機示範 · 唔連網") : `${account.incoming.host}:${account.incoming.port} · ${account.outgoing.host}:${account.outgoing.port}`)}</small></div><span class="account-kind">${escapeHtml(account.kind.toUpperCase())}</span><button class="icon-button danger-action" type="button" data-action="request-remove-account" data-account-id="${escapeHtml(account.id)}" aria-label="${escapeHtml(tx(`Remove ${account.email}`, `移除 ${account.email}`))}" data-tooltip="${escapeHtml(tx("Remove account", "移除帳戶"))}">${icon("trash")}</button></article>`).join("") : `<p>${escapeHtml(tx("No accounts are configured.", "未有設定帳戶。"))}</p>`}</div>
   </section>`;
+}
+
+const IDENTITY_SETTING_KEYWORDS = "identities identity signature signatures From Reply-To alias display name organization default sender placement quoted";
+
+function renderIdentitySettings(): string {
+  const accounts = state.bootstrap?.accounts ?? [];
+  const all = state.bootstrap?.identities ?? [];
+  const editor = state.identityEditor;
+  const groups = accounts.map(account => {
+    const identities = identitiesForAccount(all, account.id);
+    const atLimit = identities.length >= IDENTITY_LIMIT_PER_ACCOUNT;
+    const rows = identities.map(identity => `<article class="identity-card" data-testid="identity-row" data-identity-id="${escapeHtml(identity.id)}">
+      <div class="identity-card__copy">
+        <strong>${escapeHtml(identity.displayName)}</strong>
+        <p>${escapeHtml(identity.email)}</p>
+        ${identity.replyTo ? `<small>${escapeHtml(tx(`Reply-To ${identity.replyTo}`, `回覆地址 ${identity.replyTo}`))}</small>` : ""}
+        ${identity.signature ? `<small>${escapeHtml(tx(identity.signaturePlacement === "below-quote" ? "Signature below quoted material" : "Signature above quoted material", identity.signaturePlacement === "below-quote" ? "簽名放喺引文下面" : "簽名放喺引文上面"))}</small>` : `<small>${escapeHtml(tx("No signature", "冇簽名"))}</small>`}
+      </div>
+      ${identity.isDefault ? `<span class="identity-default-badge" data-testid="identity-default-badge">${escapeHtml(tx("Default", "預設"))}</span>` : `<button class="button button--text" type="button" data-action="make-identity-default" data-identity-id="${escapeHtml(identity.id)}" data-focus-key="identity-default-${identity.id}">${escapeHtml(tx("Make default", "設為預設"))}</button>`}
+      <button class="icon-button" type="button" data-action="open-identity-editor" data-account-id="${escapeHtml(account.id)}" data-identity-id="${escapeHtml(identity.id)}" data-focus-key="identity-edit-${identity.id}" aria-label="${escapeHtml(tx(`Edit identity ${identity.email}`, `編輯身分 ${identity.email}`))}" data-tooltip="${escapeHtml(tx("Edit identity", "編輯身分"))}">${icon("edit")}</button>
+      <button class="icon-button danger-action" type="button" data-action="request-delete-identity" data-identity-id="${escapeHtml(identity.id)}" data-focus-key="identity-delete-${identity.id}" ${identities.length < 2 ? "disabled" : ""} aria-label="${escapeHtml(tx(`Remove identity ${identity.email}`, `移除身分 ${identity.email}`))}" data-tooltip="${escapeHtml(identities.length < 2 ? tx("An account keeps at least one identity", "一個帳戶至少保留一個身分") : tx("Remove identity", "移除身分"))}">${icon("trash")}</button>
+    </article>`).join("");
+    return `<div class="identity-group" data-testid="identity-group" data-account-id="${escapeHtml(account.id)}">
+      <div class="identity-group__header"><h3>${escapeHtml(account.email)}</h3><span class="action-spacer"></span><button class="button button--tonal" type="button" data-action="open-identity-editor" data-account-id="${escapeHtml(account.id)}" data-focus-key="identity-add-${account.id}" ${atLimit ? "disabled" : ""}>${icon("account")}<span>${escapeHtml(tx("Add identity", "新增身分"))}</span></button></div>
+      ${rows}
+      ${atLimit ? `<p class="engine-note">${escapeHtml(tx(`This account holds the maximum of ${IDENTITY_LIMIT_PER_ACCOUNT} identities. Remove one before adding another.`, `呢個帳戶已經去到上限 ${IDENTITY_LIMIT_PER_ACCOUNT} 個身分。要加就要先移除一個。`))}</p>` : ""}
+      ${editor && editor.accountId === account.id ? renderIdentityEditor(editor) : ""}
+    </div>`;
+  }).join("");
+  return `<section class="settings-card settings-card--wide" data-setting-section="identities" data-testid="identity-settings" tabindex="-1" data-focus-key="identity-settings">
+    <header><span class="settings-card__icon">${icon("edit")}</span><div><h2>${escapeHtml(tx("Identities and signatures", "身分同簽名"))}</h2><p>${escapeHtml(tx("The From address and signature each account can send as", "每個帳戶可以用嘅寄件地址同簽名"))}</p></div></header>
+    ${accounts.length ? groups : `<p>${escapeHtml(tx("Add an account before creating identities.", "要先新增帳戶先可以建立身分。"))}</p>`}
+    <div class="inline-banner">${icon("info")}<span>${escapeHtml(tx("The selected identity sets the From header, and its Reply-To header is written only when that address differs. Nothing here is verified by a mail server; a provider can still refuse an address it does not own.", "所揀嘅身分會決定 From 標頭；只有當回覆地址唔同嗰陣先會寫 Reply-To 標頭。呢度冇任何嘢經郵件伺服器驗證；供應商仍然可以拒絕唔屬於佢嘅地址。"))}</span></div>
+  </section>`;
+}
+
+function renderIdentityEditor(editor: IdentityEditorState): string {
+  return `<form class="identity-editor" data-form="identity-editor" data-testid="identity-editor" aria-label="${escapeHtml(editor.id ? tx("Edit identity", "編輯身分") : tx("New identity", "新增身分"))}">
+    <div class="form-grid">
+      <label class="field"><span>${escapeHtml(tx("Display name", "顯示名稱"))}</span><input type="text" name="displayName" value="${escapeHtml(editor.displayName)}" maxlength="120" required data-focus-key="identity-editor-displayName"/></label>
+      <label class="field"><span>${escapeHtml(tx("Email address", "電郵地址"))}</span><input type="text" name="email" value="${escapeHtml(editor.email)}" maxlength="320" spellcheck="false" required/></label>
+      <label class="field"><span>${escapeHtml(tx("Reply-To (optional)", "回覆地址（可選）"))}</span><input type="text" name="replyTo" value="${escapeHtml(editor.replyTo)}" maxlength="320" spellcheck="false"/></label>
+      <label class="field"><span>${escapeHtml(tx("Organization (optional)", "機構（可選）"))}</span><input type="text" name="organization" value="${escapeHtml(editor.organization)}" maxlength="200"/></label>
+      <label class="field"><span>${escapeHtml(tx("Signature placement", "簽名位置"))}</span><select name="signaturePlacement"><option value="below-body" ${editor.signaturePlacement === "below-body" ? "selected" : ""}>${escapeHtml(tx("Above quoted material", "喺引文上面"))}</option><option value="below-quote" ${editor.signaturePlacement === "below-quote" ? "selected" : ""}>${escapeHtml(tx("Below quoted material", "喺引文下面"))}</option></select></label>
+    </div>
+    <label class="field field--wide"><span>${escapeHtml(tx("Signature", "簽名"))}</span><textarea name="signature" rows="4" maxlength="${IDENTITY_SIGNATURE_LIMIT}" spellcheck="true" data-testid="identity-signature">${escapeHtml(editor.signature)}</textarea></label>
+    ${editor.error ? `<div class="inline-banner inline-banner--error" role="alert" data-testid="identity-editor-error">${icon("warning")}<span>${escapeHtml(editor.error)}</span></div>` : ""}
+    <footer class="button-row">
+      <button class="button button--filled" type="submit" ${isBusy("save-identity") ? "disabled" : ""}>${icon("archive")}<span>${escapeHtml(isBusy("save-identity") ? tx("Saving…", "儲存緊……") : tx("Save identity", "儲存身分"))}</span></button>
+      <span class="action-spacer"></span>
+      <button class="button button--text" type="button" data-action="close-identity-editor">${escapeHtml(tx("Cancel", "取消"))}</button>
+    </footer>
+  </form>`;
+}
+
+const MESSAGE_FILTER_SEARCH_KEY = "message-filters";
+
+const MESSAGE_FILTER_SETTING_KEYWORDS =
+  "message filters filter rules conditions actions order enable disable duplicate run after synchronization tag move archive trash junk stop regex";
+
+const MESSAGE_FILTER_FIELDS: readonly MessageFilterField[] = [
+  "from", "to", "cc", "recipient", "subject", "body", "account", "folder", "tag", "size", "age-days", "attachments", "read-state", "star-state",
+];
+
+const MESSAGE_FILTER_ACTION_KINDS: readonly MessageFilterActionKind[] = [
+  "mark-read", "mark-unread", "star", "unstar", "add-tag", "remove-tag", "move", "archive", "trash", "mark-junk", "mark-not-junk", "stop",
+];
+
+/** Mirrors the model's valueless-action set: everything else carries a tag identifier or folder path. */
+const MESSAGE_FILTER_ACTIONS_WITH_VALUE = new Set<MessageFilterActionKind>(["add-tag", "remove-tag", "move"]);
+
+function filterFieldLabel(field: MessageFilterField): string {
+  switch (field) {
+    case "from": return tx("Sender", "寄件人");
+    case "to": return tx("To recipients", "收件人");
+    case "cc": return tx("Cc recipients", "副本收件人");
+    case "recipient": return tx("Any recipient", "任何收件人");
+    case "subject": return tx("Subject", "主旨");
+    case "body": return tx("Body text", "郵件內容");
+    case "account": return tx("Account address", "帳戶地址");
+    case "folder": return tx("Folder", "資料夾");
+    case "tag": return tx("Tag", "標籤");
+    case "size": return tx("Size in bytes", "大小（位元組）");
+    case "age-days": return tx("Age in days", "郵齡（日）");
+    case "attachments": return tx("Has attachments", "有附件");
+    case "read-state": return tx("Already read", "已讀");
+    case "star-state": return tx("Starred", "有星號");
+  }
+}
+
+function filterOperatorLabel(operator: MessageFilterOperator): string {
+  switch (operator) {
+    case "contains": return tx("contains", "包含");
+    case "not-contains": return tx("does not contain", "唔包含");
+    case "is": return tx("is", "係");
+    case "is-not": return tx("is not", "唔係");
+    case "starts-with": return tx("starts with", "開頭係");
+    case "ends-with": return tx("ends with", "結尾係");
+    case "regex": return tx("matches the regular expression", "符合正規表達式");
+    case "greater-than": return tx("is greater than", "大過");
+    case "less-than": return tx("is less than", "細過");
+  }
+}
+
+function filterActionKindLabel(kind: MessageFilterActionKind): string {
+  switch (kind) {
+    case "mark-read": return tx("Mark read", "標為已讀");
+    case "mark-unread": return tx("Mark unread", "標為未讀");
+    case "star": return tx("Add star", "加星號");
+    case "unstar": return tx("Remove star", "移除星號");
+    case "add-tag": return tx("Add tag", "加標籤");
+    case "remove-tag": return tx("Remove tag", "移除標籤");
+    case "move": return tx("Move to folder", "移去資料夾");
+    case "archive": return tx("Archive", "封存");
+    case "trash": return tx("Move to trash", "移去垃圾桶");
+    case "mark-junk": return tx("Mark junk", "標為垃圾郵件");
+    case "mark-not-junk": return tx("Mark not junk", "標為唔係垃圾郵件");
+    case "stop": return tx("Stop the later filters", "停止之後嘅規則");
+  }
+}
+
+const messageTagLabel = (id: string): string =>
+  state.messageTags.tags.find(tag => tag.id === id)?.name ?? tx(`${id} (no such tag)`, `${id}（冇呢個標籤）`);
+
+function filterConditionSummary(condition: MessageFilterCondition): string {
+  const kind = messageFilterFieldKind(condition.field);
+  const value = kind === "boolean"
+    ? (condition.value.trim() === "true" ? tx("true", "真") : tx("false", "假"))
+    : kind === "tag"
+      ? messageTagLabel(condition.value.trim())
+      : condition.value;
+  const sensitivity = kind === "text" && condition.caseSensitive ? ` ${tx("(case sensitive)", "（分大小寫）")}` : "";
+  return `${filterFieldLabel(condition.field)} ${filterOperatorLabel(condition.operator)} ${value}${sensitivity}`;
+}
+
+function filterActionSummary(action: MessageFilterAction): string {
+  if (action.kind === "add-tag" || action.kind === "remove-tag") return `${filterActionKindLabel(action.kind)} ${messageTagLabel(action.value.trim())}`;
+  if (action.kind === "move") return `${filterActionKindLabel(action.kind)} ${action.value}`;
+  return filterActionKindLabel(action.kind);
+}
+
+function filterScopeLabel(accountId: string | null): string {
+  if (!accountId) return tx("Every account", "所有帳戶");
+  const account = state.bootstrap?.accounts.find(item => item.id === accountId);
+  return account ? account.email : tx(`${accountId} (not on this computer)`, `${accountId}（唔喺呢部電腦）`);
+}
+
+const filterSearchText = (filter: MessageFilter): string => visibleBilingualText([
+  filter.name,
+  filter.match,
+  filter.enabled ? "enabled" : "disabled",
+  filter.runOnSync ? "run on sync synchronization automatic" : "manual",
+  filterScopeLabel(filter.accountId),
+  ...filter.conditions.map(condition => `${condition.field} ${condition.operator} ${condition.value} ${filterConditionSummary(condition)}`),
+  ...filter.actions.map(action => `${action.kind} ${action.value} ${filterActionSummary(action)}`),
+].join("\n"));
+
+function renderMessageFilterSettings(): string {
+  const filters = state.messageFilters;
+  const model = searchFor(MESSAGE_FILTER_SEARCH_KEY);
+  const validation = validatePattern(model);
+  const searchRequested = model.pattern.length > 0;
+  const invalid = searchRequested && !validation.valid;
+  const matcher = createMatcher(model);
+  const positions = new Map(filters.map((filter, index) => [filter.id, index]));
+  const visible = searchRequested ? filters.filter(filter => matcher(filterSearchText(filter))) : filters;
+  const runOnSyncCount = filters.filter(filter => filter.enabled && filter.runOnSync).length;
+  const atLimit = filters.length >= MESSAGE_FILTER_LIMIT;
+  const status = invalid
+    ? tx("Search not applied. Fix the invalid JavaScript regular expression.", "搜尋未套用。請修正無效嘅 JavaScript 正規表達式。")
+    : searchRequested
+      ? tx(
+        `Showing ${visible.length} of ${filters.length} filter${filters.length === 1 ? "" : "s"}.`,
+        `顯示緊 ${filters.length} 條規則入面嘅 ${visible.length} 條。`,
+      )
+      : tx(
+        `${filters.length} filter${filters.length === 1 ? "" : "s"}; ${runOnSyncCount} set to run after every synchronization.`,
+        `${filters.length} 條規則；其中 ${runOnSyncCount} 條設定咗每次同步之後執行。`,
+      );
+  const editor = state.messageFilterEditor;
+  return `<section class="settings-card settings-card--wide" data-setting-section="message-filters" data-testid="message-filter-settings">
+    <header><span class="settings-card__icon">${icon("regex")}</span><div><h2>${escapeHtml(tx("Message filters", "郵件篩選規則"))}</h2><p>${escapeHtml(tx("Conditions and actions applied in order, by hand or after synchronization", "按次序套用嘅條件同動作，可以手動執行或者同步之後執行"))}</p></div><span class="action-spacer"></span><button class="button button--filled" type="button" data-action="open-message-filter-editor" data-focus-key="message-filter-add" ${atLimit ? "disabled" : ""}>${icon("compose")}<span>${escapeHtml(tx("New filter", "新增規則"))}</span></button></header>
+    <div class="page-search" data-testid="message-filter-search">${renderSearchField(MESSAGE_FILTER_SEARCH_KEY, tx("Search filter names, conditions, and actions", "搜尋規則名稱、條件同動作"))}</div>
+    <p class="pim-search-status" role="status" aria-live="polite" aria-atomic="true" data-search-state="${invalid ? "invalid" : searchRequested ? (visible.length ? "matches" : "no-match") : "idle"}" data-testid="message-filter-search-status">${escapeHtml(status)}</p>
+    ${filters.length === 0
+      ? `<div class="filter-empty" role="status">${icon("regex")}<h2>${escapeHtml(tx("No filters yet", "仲未有規則"))}</h2><p>${escapeHtml(tx("A filter needs at least one condition and one action. Nothing runs until you create one.", "一條規則至少要有一個條件同一個動作。未建立之前，乜都唔會執行。"))}</p></div>`
+      : visible.length === 0
+        ? `<div class="filter-empty" role="${invalid ? "alert" : "status"}" data-testid="message-filter-search-empty">${icon(invalid ? "warning" : "search")}<h2>${escapeHtml(invalid ? tx("Invalid filter search", "規則搜尋無效") : tx("No filters match", "冇符合嘅規則"))}</h2><p>${escapeHtml(invalid
+          ? tx("The JavaScript regular expression is invalid, so it was not run. Fix the pattern or switch back to plain text; no filter was changed.", "JavaScript 正規表達式無效，所以冇執行過。請修正模式或者切返純文字；冇任何規則被更改。")
+          : tx("Every filter is still here; none of them matched this search.", "所有規則都仲喺度；只係冇一條符合呢個搜尋。"))}</p><button class="button button--tonal" type="button" data-action="focus-message-filter-search">${icon("search")}<span>${escapeHtml(tx("Edit filter search", "修改規則搜尋"))}</span></button></div>`
+        : `<div class="filter-list" data-testid="message-filter-list">${visible.map(filter => renderMessageFilterRow(filter, positions.get(filter.id) ?? 0, filters.length)).join("")}</div>`}
+    ${editor ? renderMessageFilterEditor(editor) : ""}
+    <div class="inline-banner">${icon("info")}<span>${escapeHtml(tx("Filters run in the order shown, top first, and a Stop action ends the run for that message. Only the ones marked “run after synchronization” act on newly arrived mail; the rest wait for Run filters in the folder actions.", "規則會由上而下按次序執行，「停止」動作會即刻結束嗰封郵件嘅處理。只有標示咗「同步之後執行」嘅規則會處理啱啱收到嘅新郵件；其餘要喺資料夾操作撳「執行篩選規則」先會行。"))}</span></div>
+  </section>`;
+}
+
+function renderMessageFilterRow(filter: MessageFilter, position: number, total: number): string {
+  const separator = filter.match === "all" ? tx(" and ", " 同埋 ") : tx(" or ", " 或者 ");
+  const conditions = filter.conditions.map(filterConditionSummary).join(separator);
+  const actions = filter.actions.map(filterActionSummary).join(" · ");
+  return `<article class="filter-card" data-testid="message-filter-row" data-filter-id="${escapeHtml(filter.id)}">
+    <span class="filter-card__ordinal">${escapeHtml(tx(`#${position + 1}`, `第 ${position + 1} 條`))}</span>
+    <div class="filter-card__copy">
+      <strong>${escapeHtml(filter.name)}</strong>
+      <p>${escapeHtml(tx(`When ${conditions}`, `當 ${conditions}`))}</p>
+      <small>${escapeHtml(tx(`Then ${actions}`, `就 ${actions}`))}</small>
+      <small>${escapeHtml(`${filterScopeLabel(filter.accountId)} · ${filter.runOnSync ? tx("Runs after synchronization", "同步之後執行") : tx("Manual runs only", "只手動執行")}`)}</small>
+    </div>
+    <div class="filter-card__controls">
+      <button class="button button--text" type="button" data-action="toggle-message-filter" data-filter-id="${escapeHtml(filter.id)}" data-focus-key="message-filter-toggle-${escapeHtml(filter.id)}" aria-pressed="${filter.enabled}" ${isBusy("message-filters") ? "disabled" : ""}>${icon(filter.enabled ? "check" : "close")}<span>${escapeHtml(filter.enabled ? tx("Enabled", "已啟用") : tx("Disabled", "已停用"))}</span></button>
+      <button class="icon-button" type="button" data-action="move-message-filter" data-filter-id="${escapeHtml(filter.id)}" data-direction="up" data-focus-key="message-filter-up-${escapeHtml(filter.id)}" ${position === 0 || isBusy("message-filters") ? "disabled" : ""} aria-label="${escapeHtml(tx(`Run ${filter.name} earlier`, `${filter.name} 早啲執行`))}" data-tooltip="${escapeHtml(tx("Run earlier", "早啲執行"))}">${icon("back")}</button>
+      <button class="icon-button" type="button" data-action="move-message-filter" data-filter-id="${escapeHtml(filter.id)}" data-direction="down" data-focus-key="message-filter-down-${escapeHtml(filter.id)}" ${position >= total - 1 || isBusy("message-filters") ? "disabled" : ""} aria-label="${escapeHtml(tx(`Run ${filter.name} later`, `${filter.name} 遲啲執行`))}" data-tooltip="${escapeHtml(tx("Run later", "遲啲執行"))}">${icon("forward")}</button>
+      <button class="icon-button" type="button" data-action="open-message-filter-editor" data-filter-id="${escapeHtml(filter.id)}" data-focus-key="message-filter-edit-${escapeHtml(filter.id)}" aria-label="${escapeHtml(tx(`Edit filter ${filter.name}`, `編輯規則 ${filter.name}`))}" data-tooltip="${escapeHtml(tx("Edit filter", "編輯規則"))}">${icon("edit")}</button>
+      <button class="icon-button" type="button" data-action="duplicate-message-filter" data-filter-id="${escapeHtml(filter.id)}" data-focus-key="message-filter-duplicate-${escapeHtml(filter.id)}" ${isBusy("message-filters") ? "disabled" : ""} aria-label="${escapeHtml(tx(`Duplicate filter ${filter.name}`, `複製規則 ${filter.name}`))}" data-tooltip="${escapeHtml(tx("Duplicate filter", "複製規則"))}">${icon("restore")}</button>
+      <button class="icon-button danger-action" type="button" data-action="request-delete-message-filter" data-filter-id="${escapeHtml(filter.id)}" data-focus-key="message-filter-delete-${escapeHtml(filter.id)}" aria-label="${escapeHtml(tx(`Delete filter ${filter.name}`, `刪除規則 ${filter.name}`))}" data-tooltip="${escapeHtml(tx("Delete filter", "刪除規則"))}">${icon("trash")}</button>
+    </div>
+  </article>`;
+}
+
+/** A stored tag that has since been deleted keeps its own option, so saving cannot silently retarget it. */
+function renderMessageFilterTagOptions(selected: string): string {
+  const known = state.messageTags.tags.some(tag => tag.id === selected);
+  const fallback = known
+    ? ""
+    : `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected ? tx(`${selected} (no such tag)`, `${selected}（冇呢個標籤）`) : tx("Choose a tag", "揀一個標籤"))}</option>`;
+  return `${fallback}${state.messageTags.tags.map(tag => `<option value="${escapeHtml(tag.id)}" ${tag.id === selected ? "selected" : ""}>${escapeHtml(tag.name)}</option>`).join("")}`;
+}
+
+function renderMessageFilterConditionRow(condition: MessageFilterCondition, index: number, total: number): string {
+  const kind = messageFilterFieldKind(condition.field);
+  const operators = messageFilterOperators(condition.field);
+  const value = kind === "tag"
+    ? `<select name="conditionValue" data-focus-key="filter-condition-${index}-value" aria-label="${escapeHtml(tx(`Condition ${index + 1} tag`, `第 ${index + 1} 個條件嘅標籤`))}">${renderMessageFilterTagOptions(condition.value.trim())}</select>`
+    : kind === "boolean"
+      ? `<select name="conditionValue" data-focus-key="filter-condition-${index}-value" aria-label="${escapeHtml(tx(`Condition ${index + 1} value`, `第 ${index + 1} 個條件嘅值`))}"><option value="true" ${condition.value.trim() !== "false" ? "selected" : ""}>${escapeHtml(tx("true", "真"))}</option><option value="false" ${condition.value.trim() === "false" ? "selected" : ""}>${escapeHtml(tx("false", "假"))}</option></select>`
+      : kind === "numeric"
+        ? `<input type="number" name="conditionValue" value="${escapeHtml(condition.value)}" min="0" step="1" required data-focus-key="filter-condition-${index}-value" aria-label="${escapeHtml(tx(`Condition ${index + 1} value`, `第 ${index + 1} 個條件嘅值`))}"/>`
+        : `<input type="text" name="conditionValue" value="${escapeHtml(condition.value)}" maxlength="${MESSAGE_FILTER_VALUE_LIMIT}" required spellcheck="false" ${condition.field === "folder" ? `list="message-filter-folder-paths"` : ""} data-focus-key="filter-condition-${index}-value" aria-label="${escapeHtml(tx(`Condition ${index + 1} value`, `第 ${index + 1} 個條件嘅值`))}"/>`;
+  return `<div class="filter-row" data-filter-condition="${index}">
+    <select name="conditionField" data-focus-key="filter-condition-${index}-field" aria-label="${escapeHtml(tx(`Condition ${index + 1} field`, `第 ${index + 1} 個條件嘅欄位`))}">${MESSAGE_FILTER_FIELDS.map(field => `<option value="${field}" ${field === condition.field ? "selected" : ""}>${escapeHtml(filterFieldLabel(field))}</option>`).join("")}</select>
+    <select name="conditionOperator" data-focus-key="filter-condition-${index}-operator" aria-label="${escapeHtml(tx(`Condition ${index + 1} comparison`, `第 ${index + 1} 個條件嘅比較方式`))}">${operators.map(operator => `<option value="${operator}" ${operator === condition.operator ? "selected" : ""}>${escapeHtml(filterOperatorLabel(operator))}</option>`).join("")}</select>
+    ${value}
+    ${kind === "text"
+      ? `<label class="check-row"><input type="checkbox" name="conditionCase" value="${index}" ${condition.caseSensitive ? "checked" : ""} data-focus-key="filter-condition-${index}-case"/><span>${escapeHtml(tx("Case sensitive", "分大小寫"))}</span></label>`
+      : ""}
+    <button class="icon-button danger-action" type="button" data-action="remove-filter-condition" data-row-index="${index}" data-focus-key="filter-condition-${index}-remove" ${total < 2 ? "disabled" : ""} aria-label="${escapeHtml(tx(`Remove condition ${index + 1}`, `移除第 ${index + 1} 個條件`))}" data-tooltip="${escapeHtml(total < 2 ? tx("A filter keeps at least one condition", "一條規則至少保留一個條件") : tx("Remove condition", "移除條件"))}">${icon("close")}</button>
+  </div>`;
+}
+
+function renderMessageFilterActionRow(action: MessageFilterAction, index: number, total: number): string {
+  const value = action.kind === "add-tag" || action.kind === "remove-tag"
+    ? `<select name="actionValue" data-focus-key="filter-action-${index}-value" aria-label="${escapeHtml(tx(`Action ${index + 1} tag`, `第 ${index + 1} 個動作嘅標籤`))}">${renderMessageFilterTagOptions(action.value.trim())}</select>`
+    : action.kind === "move"
+      ? `<input type="text" name="actionValue" value="${escapeHtml(action.value)}" maxlength="${MESSAGE_FILTER_VALUE_LIMIT}" required spellcheck="false" list="message-filter-folder-paths" data-focus-key="filter-action-${index}-value" aria-label="${escapeHtml(tx(`Action ${index + 1} destination folder`, `第 ${index + 1} 個動作嘅目的地資料夾`))}"/>`
+      : `<input type="hidden" name="actionValue" value=""/><span class="filter-row__note">${escapeHtml(tx("No target needed", "唔使填目標"))}</span>`;
+  return `<div class="filter-row" data-filter-action="${index}">
+    <select name="actionKind" data-focus-key="filter-action-${index}-kind" aria-label="${escapeHtml(tx(`Action ${index + 1}`, `第 ${index + 1} 個動作`))}">${MESSAGE_FILTER_ACTION_KINDS.map(kind => `<option value="${kind}" ${kind === action.kind ? "selected" : ""}>${escapeHtml(filterActionKindLabel(kind))}</option>`).join("")}</select>
+    ${value}
+    <button class="icon-button danger-action" type="button" data-action="remove-filter-action" data-row-index="${index}" data-focus-key="filter-action-${index}-remove" ${total < 2 ? "disabled" : ""} aria-label="${escapeHtml(tx(`Remove action ${index + 1}`, `移除第 ${index + 1} 個動作`))}" data-tooltip="${escapeHtml(total < 2 ? tx("A filter keeps at least one action", "一條規則至少保留一個動作") : tx("Remove action", "移除動作"))}">${icon("close")}</button>
+  </div>`;
+}
+
+function renderMessageFilterEditor(editor: MessageFilterEditorState): string {
+  const accounts = state.bootstrap?.accounts ?? [];
+  const folderPaths = [...new Set(state.folders.map(folder => folder.path))];
+  const conditionsAtLimit = editor.conditions.length >= MESSAGE_FILTER_CONDITION_LIMIT;
+  const actionsAtLimit = editor.actions.length >= MESSAGE_FILTER_ACTION_LIMIT;
+  return `<form class="filter-editor" data-form="message-filter-editor" data-testid="message-filter-editor" aria-label="${escapeHtml(editor.id ? tx("Edit filter", "編輯規則") : tx("New filter", "新增規則"))}">
+    <datalist id="message-filter-folder-paths">${folderPaths.map(path => `<option value="${escapeHtml(path)}"></option>`).join("")}</datalist>
+    <div class="form-grid">
+      <label class="field"><span>${escapeHtml(tx("Filter name", "規則名稱"))}</span><input type="text" name="name" value="${escapeHtml(editor.name)}" maxlength="${MESSAGE_FILTER_NAME_LIMIT}" required data-focus-key="message-filter-editor-name"/></label>
+      <label class="field"><span>${escapeHtml(tx("Applies to", "適用範圍"))}</span><select name="accountId"><option value="" ${editor.accountId ? "" : "selected"}>${escapeHtml(tx("Every account", "所有帳戶"))}</option>${accounts.map(account => `<option value="${escapeHtml(account.id)}" ${account.id === editor.accountId ? "selected" : ""}>${escapeHtml(account.email)}</option>`).join("")}</select></label>
+      <label class="field"><span>${escapeHtml(tx("Condition match", "條件配對"))}</span><select name="match"><option value="all" ${editor.match === "all" ? "selected" : ""}>${escapeHtml(tx("All conditions must match", "所有條件都要符合"))}</option><option value="any" ${editor.match === "any" ? "selected" : ""}>${escapeHtml(tx("Any condition may match", "符合任何一個條件"))}</option></select></label>
+    </div>
+    <label class="switch-row"><span><strong>${escapeHtml(tx("Enabled", "啟用"))}</strong><small>${escapeHtml(tx("A disabled filter stays in the list and never runs.", "停用嘅規則會留喺清單，但永遠唔會執行。"))}</small></span><input type="checkbox" role="switch" name="enabled" ${editor.enabled ? "checked" : ""}/></label>
+    <label class="switch-row"><span><strong>${escapeHtml(tx("Run after synchronization", "同步之後執行"))}</strong><small>${escapeHtml(tx("Acts once on each message a synchronization newly brought in; already-cached messages are left alone.", "只會處理每次同步啱啱收到嘅新郵件一次；已經喺快取入面嘅郵件唔會再處理。"))}</small></span><input type="checkbox" role="switch" name="runOnSync" ${editor.runOnSync ? "checked" : ""}/></label>
+    <fieldset class="filter-rows">
+      <legend>${escapeHtml(tx(`Conditions (${editor.conditions.length} of ${MESSAGE_FILTER_CONDITION_LIMIT})`, `條件（${editor.conditions.length} / ${MESSAGE_FILTER_CONDITION_LIMIT}）`))}</legend>
+      ${editor.conditions.map((condition, index) => renderMessageFilterConditionRow(condition, index, editor.conditions.length)).join("")}
+      <button class="button button--tonal" type="button" data-action="add-filter-condition" data-focus-key="add-filter-condition" ${conditionsAtLimit ? "disabled" : ""}>${icon("compose")}<span>${escapeHtml(tx("Add condition", "新增條件"))}</span></button>
+    </fieldset>
+    <fieldset class="filter-rows">
+      <legend>${escapeHtml(tx(`Actions (${editor.actions.length} of ${MESSAGE_FILTER_ACTION_LIMIT})`, `動作（${editor.actions.length} / ${MESSAGE_FILTER_ACTION_LIMIT}）`))}</legend>
+      ${editor.actions.map((action, index) => renderMessageFilterActionRow(action, index, editor.actions.length)).join("")}
+      <button class="button button--tonal" type="button" data-action="add-filter-action" data-focus-key="add-filter-action" ${actionsAtLimit ? "disabled" : ""}>${icon("compose")}<span>${escapeHtml(tx("Add action", "新增動作"))}</span></button>
+    </fieldset>
+    ${editor.error ? `<div class="inline-banner inline-banner--error" role="alert" data-testid="message-filter-editor-error">${icon("warning")}<span>${escapeHtml(editor.error)}</span></div>` : ""}
+    <footer class="button-row">
+      <button class="button button--filled" type="submit" ${isBusy("message-filters") ? "disabled" : ""}>${icon("archive")}<span>${escapeHtml(isBusy("message-filters") ? tx("Saving…", "儲存緊……") : tx("Save filter", "儲存規則"))}</span></button>
+      <span class="action-spacer"></span>
+      <button class="button button--text" type="button" data-action="close-message-filter-editor">${escapeHtml(tx("Cancel", "取消"))}</button>
+    </footer>
+  </form>`;
 }
 
 function pimProviderCapabilityLabel(name: string): string {
@@ -3801,6 +4198,21 @@ function changelogEntries(): ChangelogEntry[] {
     { version: "0.8.1", date: "2026-08-01", title: tx("Windows desktop foundation", "Windows 桌面基礎"), codeName: "Classic Har Gow · 蝦餃", image: "hk-dish-0001-classic-har-gow.png", changes: [{ category: tx("Mail", "郵件"), detail: tx("Secure account setup, three-pane mail, isolated reading, compose, and attachment saving.", "安全帳戶設定、三欄郵件、隔離閱讀、撰寫同附件儲存。") }, { category: tx("Workspace", "工作空間"), detail: tx("Persistent tabs, search, pinning, and reviewed bulk close.", "持久分頁、搜尋、釘選同經審閱批量關閉。") }] },
     { version: "0.10.1", date: "2026-08-01", title: tx("Drafts and reading continuity", "草稿同閱讀連貫性"), codeName: "Scallop Har Gow · 帶子蝦餃", image: "hk-dish-0002-scallop-har-gow.png", changes: [{ category: tx("Mail", "郵件"), detail: tx("Drafts and Outbox became visible workspaces with retry, cancel, and delete actions.", "草稿同寄件匣變成可見工作空間，有重試、取消同刪除操作。") }, { category: tx("Reading", "閱讀"), detail: tx("Reader documents stay alive while message chrome updates.", "郵件介面更新嗰陣，閱讀文件保持連貫。") }] },
     { version: "0.11.1", date: "2026-08-01", title: tx("Queue recovery and privacy-safe notifications", "佇列復原同保障私隱通知"), codeName: "Bamboo Shoot Har Gow · 筍尖蝦餃", image: "hk-dish-0003-bamboo-shoot-har-gow.png", changes: [{ category: tx("Reliability", "可靠性"), detail: tx("Queued mail operations have retry ceilings, queue-head ordering, conflict visibility, and explicit discard.", "排隊郵件操作有重試上限、隊頭排序、衝突顯示同明確丟棄。") }, { category: tx("Privacy", "私隱"), detail: tx("Native Windows notifications are opt-in and contain only generic summaries.", "原生 Windows 通知要主動開啟，而且只包含通用摘要。") }] },
+    // In this build's source but never published, so it has no version number, no release date, and a
+    // placeholder where the commit hash belongs. The empty date keeps it out of date-filtered views.
+    // It stays last because openChangelogCalendar seeds its first visible month from entries[0].date.
+    {
+      version: tx("Unreleased", "未發佈"),
+      date: "",
+      title: tx("Sending identities, message filters, and release line counts", "寄件身分、郵件篩選規則同發佈行數統計"),
+      changes: [
+        { category: tx("Mail", "郵件"), detail: tx("Compose picks the sending identity, places its signature above or below quoted material, and writes Reply-To only when that address differs from From.", "撰寫郵件可以揀寄件身分，簽名可以擺喺引文上面或者下面，而 Reply-To 只會喺個地址同 From 唔同嗰陣先寫。") },
+        { category: tx("Mail", "郵件"), detail: tx("Message filters have an editor in Settings, and the ones set to run after synchronization now run over newly arrived messages.", "郵件篩選規則喺設定入面有得編輯，而設定咗同步之後執行嗰啲，而家會處理新收到嘅郵件。") },
+        { category: tx("Startup", "啟動"), detail: tx("The dim-sum surprise draws on about one launch in ten instead of one in a hundred, and its off switch is gone.", "點心驚喜由大約每一百次啟動出一次，變成大約每十次出一次，而個熄掣就冇咗。") },
+        { category: tx("Release", "發佈"), detail: tx("Release notes carry a line-count table that CI counts at the released commit, and publishing is refused when that table is missing.", "發佈記錄會附上由 CI 喺該次提交數出嚟嘅程式碼行數表；冇咗個表就唔會發佈。") },
+        { category: tx("Commit", "提交"), detail: tx("Written before these changes were committed, so the commit hash is still the placeholder PENDING-COMMIT.", "呢條記錄喺 commit 之前寫低，所以 commit 雜湊仲係佔位符 PENDING-COMMIT。") },
+      ],
+    },
   ];
   return entries;
 }
@@ -4001,7 +4413,7 @@ function renderDimSumSurprise(): string {
   const dish = state.dimSumDish;
   const name = dish ? `${dish.name.en} · ${dish.name.zhHant}` : state.bootstrap?.release.codeName ?? tx("Dim sum surprise", "點心驚喜");
   const source = dish ? `./assets/dim-sum/${dish.file}` : releaseImageSource();
-  return `<aside class="dim-sum-surprise" role="status" aria-label="${escapeHtml(tx("Dim sum surprise", "點心驚喜"))}"><img src="${escapeHtml(source)}" alt="${escapeHtml(name)}"/><div><p class="eyebrow">${escapeHtml(tx("TODAY'S ONE-PERCENT HELLO", "今日百分之一招呼"))}</p><strong>${escapeHtml(name)}</strong><p>${escapeHtml(tone(
+  return `<aside class="dim-sum-surprise" role="status" aria-label="${escapeHtml(tx("Dim sum surprise", "點心驚喜"))}"><img src="${escapeHtml(source)}" alt="${escapeHtml(name)}"/><div><p class="eyebrow">${escapeHtml(tx("TODAY'S TEN-PERCENT HELLO", "今日百分之十招呼"))}</p><strong>${escapeHtml(name)}</strong><p>${escapeHtml(tone(
     ["A small local surprise. It will leave shortly.", "A small local surprise—dismiss it whenever you like.", "A tiny steamer basket rolled by to say hello.", "A tiny steamer basket rolled by, waved politely, and promised not to block your inbox.", "A tiny steamer basket achieved inbox zero before the rest of us. It will roll away shortly."],
     ["一個本機小驚喜，好快會自己離開。", "一個本機小驚喜，隨時可以關閉。", "一籠小點心過嚟打個招呼。", "一籠小點心過嚟揮揮手，仲保證唔會擋住你個收件匣。", "一籠小點心快過大家做到 inbox zero。佢好快會自己碌走。"],
   ))}</p></div><button class="icon-button" type="button" data-action="dismiss-dim-sum" aria-label="${escapeHtml(tx("Dismiss dim sum surprise", "關閉點心驚喜"))}">${icon("close")}</button></aside>`;
@@ -4317,6 +4729,33 @@ function renderTabAppearanceEditor(): string {
   </section>`;
 }
 
+/**
+ * The From row. With one identity it states the sending address; with several it is a real picker,
+ * because a select holding a single option looks operable and does nothing.
+ */
+function renderComposeIdentityRow(draft: ComposeDraft): string {
+  const identities = identitiesForAccount(state.bootstrap?.identities ?? [], draft.accountId);
+  const active = resolveIdentity(identities, draft.accountId, draft.identityId);
+  const label = tx("From", "寄件身分");
+  if (identities.length < 2) {
+    const address = active ? identityLabel(active) : (state.bootstrap?.accounts.find(account => account.id === draft.accountId)?.email ?? draft.accountId);
+    return `<div class="recipient-row"><span class="recipient-row__label" id="compose-identity-label">${escapeHtml(label)}</span><output class="compose-identity-static" data-testid="compose-identity-static" aria-labelledby="compose-identity-label">${escapeHtml(address)}</output></div>`;
+  }
+  return `<div class="recipient-row"><label for="compose-identity">${escapeHtml(label)}</label><select id="compose-identity" class="compose-identity" data-testid="compose-identity" data-action-change="select-compose-identity">${identities.map(identity => `<option value="${escapeHtml(identity.id)}" ${identity.id === active?.id ? "selected" : ""}>${escapeHtml(identityLabel(identity))}</option>`).join("")}</select></div>`;
+}
+
+const identityLabel = (identity: MailIdentity): string =>
+  identity.displayName ? `${identity.displayName} <${identity.email}>` : identity.email;
+
+/**
+ * The HTML parser drops a newline immediately after a `<textarea>` start tag, so one is emitted for
+ * it to eat. Without this a body that opens with a signature block loses its leading newline on the
+ * way into the DOM: the untouched composer reads back as edited, and the block no longer matches the
+ * text that would be stripped when the identity changes, so the next signature stacks instead.
+ */
+const composeBodyTextarea = (text: string): string =>
+  `<textarea class="compose-body" id="compose-body" name="text" data-compose-field="text" placeholder="${escapeHtml(tx("Write a message…", "撰寫郵件……"))}" spellcheck="true">\n${escapeHtml(text)}</textarea>`;
+
 function renderComposer(): string {
   const composer = state.compose;
   if (!composer) return "";
@@ -4324,14 +4763,15 @@ function renderComposer(): string {
   const sourceAccount = state.bootstrap?.accounts.find(account => account.id === draft.accountId);
   return `<aside class="compose-sheet${composer.minimized ? " is-minimized" : ""}" role="dialog" aria-modal="false" aria-labelledby="compose-title">
     <form data-form="compose">
-      <header class="compose-header"><div><p class="eyebrow">${escapeHtml(tx("FROM", "寄件帳戶"))} ${escapeHtml(sourceAccount?.email ?? draft.accountId)}</p><h2 id="compose-title">${escapeHtml(draft.subject || tx("New message", "新增郵件"))}</h2></div><div class="compose-header__actions"><button class="icon-button" type="button" data-action="minimize-compose" aria-label="${escapeHtml(tx("Minimize composer", "縮小撰寫視窗"))}">${icon("chevron")}</button><button class="icon-button" type="button" data-action="request-close-compose" aria-label="${escapeHtml(tx("Close composer", "關閉撰寫視窗"))}">${icon("close")}</button></div></header>
+      <header class="compose-header"><div><p class="eyebrow">${escapeHtml(tx("ACCOUNT", "寄件帳戶"))} ${escapeHtml(sourceAccount?.email ?? draft.accountId)}</p><h2 id="compose-title">${escapeHtml(draft.subject || tx("New message", "新增郵件"))}</h2></div><div class="compose-header__actions"><button class="icon-button" type="button" data-action="minimize-compose" aria-label="${escapeHtml(tx("Minimize composer", "縮小撰寫視窗"))}">${icon("chevron")}</button><button class="icon-button" type="button" data-action="request-close-compose" aria-label="${escapeHtml(tx("Close composer", "關閉撰寫視窗"))}">${icon("close")}</button></div></header>
       <div class="compose-fields">
+        ${renderComposeIdentityRow(draft)}
         <div class="recipient-row"><label for="compose-to">${escapeHtml(tx("To", "收件人"))}</label><input id="compose-to" name="to" value="${escapeHtml(draft.to.join(", "))}" data-compose-field="to" autocomplete="off" spellcheck="false"/><button type="button" class="button button--text" data-action="toggle-compose-copies">${escapeHtml(composer.showCopies ? tx("Hide Cc/Bcc", "收起副本/密件副本") : tx("Cc/Bcc", "副本/密件副本"))}</button></div>
         ${composer.showCopies || draft.cc.length || draft.bcc.length ? `<div class="recipient-row"><label for="compose-cc">${escapeHtml(tx("Cc", "副本"))}</label><input id="compose-cc" name="cc" value="${escapeHtml(draft.cc.join(", "))}" data-compose-field="cc" autocomplete="off" spellcheck="false"/></div><div class="recipient-row"><label for="compose-bcc">${escapeHtml(tx("Bcc", "密件副本"))}</label><input id="compose-bcc" name="bcc" value="${escapeHtml(draft.bcc.join(", "))}" data-compose-field="bcc" autocomplete="off" spellcheck="false"/></div>` : ""}
         <div class="recipient-row"><label for="compose-subject">${escapeHtml(tx("Subject", "主旨"))}</label><input id="compose-subject" name="subject" value="${escapeHtml(draft.subject)}" data-compose-field="subject" maxlength="998"/></div>
       </div>
       ${renderComposeCryptographyTrust(sourceAccount ?? null)}
-      <label class="visually-hidden" for="compose-body">${escapeHtml(tx("Message body", "郵件內容"))}</label><textarea class="compose-body" id="compose-body" name="text" data-compose-field="text" placeholder="${escapeHtml(tx("Write a message…", "撰寫郵件……"))}" spellcheck="true">${escapeHtml(draft.text)}</textarea>
+      <label class="visually-hidden" for="compose-body">${escapeHtml(tx("Message body", "郵件內容"))}</label>${composeBodyTextarea(draft.text)}
       ${draft.attachments.length ? `<div class="compose-attachments" aria-label="${escapeHtml(tx("Attached files", "已附加檔案"))}">${draft.attachments.map((file, index) => `<span class="attachment-chip">${icon("attach")}<span>${escapeHtml(file.split(/[\\/]/).pop() ?? file)}</span><button class="icon-button icon-button--small" type="button" data-action="remove-compose-attachment" data-attachment-index="${index}" aria-label="${escapeHtml(tx("Remove attachment", "移除附件"))}">${icon("close")}</button></span>`).join("")}</div>` : ""}
       <footer class="compose-footer"><button class="button button--filled" type="submit" data-compose-submit="send" ${isBusy("send") || isBusy("save-draft") ? "disabled" : ""}>${icon("send", isBusy("send") ? "is-spinning" : "")}<span>${escapeHtml(isBusy("send") ? tx("Sending or queueing…", "寄出或者排隊緊……") : tx("Send", "寄出"))}</span><kbd>Ctrl+Enter</kbd></button><button class="icon-button" type="button" data-action="choose-attachments" aria-label="${escapeHtml(tx("Attach files", "附加檔案"))}" data-tooltip="${escapeHtml(tx("Attach files", "附加檔案"))}">${icon("attach")}</button><span class="action-spacer"></span><button class="button button--outlined" type="submit" data-compose-submit="draft" ${isBusy("send") || isBusy("save-draft") ? "disabled" : ""}>${icon("archive")}<span>${escapeHtml(isBusy("save-draft") ? tx("Saving…", "儲存緊……") : tx("Save draft", "儲存草稿"))}</span></button></footer>
     </form>
@@ -4351,6 +4791,8 @@ const paletteCommands = (): PaletteCommand[] => [
   { id: "sync", en: "Synchronize current account", yue: "同步目前帳戶", icon: "refresh", shortcut: "Ctrl+Shift+S" },
   ...TAB_DEFINITIONS.map(tab => ({ id: `tab:${tab.id}`, en: `Open ${tab.en}`, yue: `開啟${tab.yue}`, icon: tab.icon })),
   { id: "regex", en: "Open mail regex builder", yue: "開啟郵件正規表達式建立器", icon: "regex", shortcut: "Alt+R" },
+  { id: "message-filters", en: "Open message filters", yue: "開啟郵件篩選規則", icon: "regex" },
+  { id: "identities", en: "Open identities and signatures", yue: "開啟身分同簽名", icon: "edit" },
   { id: "editor", en: "Open in external editor", yue: "用外部編輯器開啟", icon: "tools", shortcut: "Alt+E" },
 ];
 
@@ -4472,6 +4914,22 @@ function renderConfirmation(): string {
     title = tx(`Delete ${confirmation.label}?`, `刪除 ${confirmation.label}？`);
     body = tx(`This local ${confirmation.entityKind.replaceAll("-", " ")} will be removed. Its append-only transaction snapshot remains available for restore.`, `呢個本機${confirmation.entityKind.replaceAll("-", " ")}會被移除。只追加交易快照仍然可以用嚟還原。`);
     confirmLabel = tx("Delete local record", "刪除本機記錄");
+  } else if (confirmation.kind === "delete-identity") {
+    title = tx(`Remove the identity ${confirmation.label}?`, `移除身分 ${confirmation.label}？`);
+    body = tx(
+      `This identity and its signature will be removed from this computer. If it was the default, another identity on the account becomes the default. Drafts and queued messages that used it fall back to that default. Messages already sent are unchanged.`,
+      `呢個身分同佢嘅簽名會由呢部電腦移除。如果佢係預設，帳戶入面另一個身分會頂上做預設。用過佢嘅草稿同排隊郵件會改用嗰個預設。已經寄出嘅郵件唔會有變。`,
+    );
+    confirmLabel = tx("Remove identity", "移除身分");
+    cancelLabel = tx("Keep identity", "保留身分");
+  } else if (confirmation.kind === "delete-message-filter") {
+    title = tx(`Delete the filter ${confirmation.label}?`, `刪除規則 ${confirmation.label}？`);
+    body = tx(
+      "The filter is removed from this computer and stops acting on newly synchronized mail. The remaining filters close the gap in the order. Messages it already changed stay as they are; the deletion itself is recorded in local history and can be restored from there.",
+      "呢條規則會由呢部電腦移除，唔會再處理啱啱同步落嚟嘅郵件。其餘規則會補返個次序位。佢之前改過嘅郵件維持原樣；刪除本身會記入本機歷史，可以喺嗰度還原。",
+    );
+    confirmLabel = tx("Delete filter", "刪除規則");
+    cancelLabel = tx("Keep filter", "保留規則");
   } else if (confirmation.kind === "discard-compose") {
     title = tx("Discard this unsaved composer?", "放棄呢個未儲存撰寫視窗？");
     body = tx("Recipients, subject, body, and unsaved attachments in this window will be lost. Save a draft to keep them.", "呢個視窗入面嘅收件人、主旨、內容同未儲存附件會遺失。要保留就儲存草稿。 ");
@@ -5196,7 +5654,6 @@ const preferencePatchFromControl = (control: HTMLInputElement | HTMLSelectElemen
     case "funnyCantonese": return { funnyCantonese: Math.min(5, Math.max(1, Number(control.value))) as Preferences["funnyCantonese"] };
     case "fontScale": return { fontScale: Math.min(1.5, Math.max(0.8, Number(control.value))) };
     case "fontWeight": return { fontWeight: Math.min(700, Math.max(300, Number(control.value))) };
-    case "dimSumEnabled": return control instanceof HTMLInputElement ? { dimSumEnabled: control.checked } : null;
     case "narratorEnabled": return control instanceof HTMLInputElement ? { narratorEnabled: control.checked } : null;
     case "nativeNotificationsEnabled": return control instanceof HTMLInputElement ? { nativeNotificationsEnabled: control.checked } : null;
     case "historyRetentionDays": {
@@ -5415,8 +5872,13 @@ const handleMailtoActivation = (raw: string): void => {
   openComposer("new", parsed);
 };
 
+// A failed bootstrap can be retried from the error screen, so latch the draw to one per launch.
+let dimSumDrawn = false;
+
 const maybeShowDimSum = async (bootstrap: BootstrapState): Promise<void> => {
-  if (bootstrap.isFirstRun || !bootstrap.preferences.dimSumEnabled || Math.random() >= 0.01) return;
+  if (dimSumDrawn) return;
+  dimSumDrawn = true;
+  if (bootstrap.isFirstRun || Math.random() >= 0.1) return;
   try {
     const response = await fetch("./assets/dim-sum/release-catalog.json", { cache: "no-store" });
     if (!response.ok) return;
@@ -5447,6 +5909,26 @@ const maybeShowDimSum = async (bootstrap: BootstrapState): Promise<void> => {
 };
 
 const formText = (data: FormData, name: string): string => String(data.get(name) ?? "").trim();
+
+const identityEditorForm = (): HTMLFormElement | null => app.querySelector<HTMLFormElement>('[data-form="identity-editor"]');
+
+/**
+ * Pulls the open identity editor's fields into state. Re-rendering rebuilds the form from state, so
+ * anything typed but not captured would be discarded by an unrelated render — a settings search
+ * keystroke, a preference toggle, or promoting another identity.
+ */
+const captureIdentityEditor = (form: HTMLFormElement | null = identityEditorForm()): void => {
+  const editor = state.identityEditor;
+  if (!editor || !form) return;
+  const data = new FormData(form);
+  const placement = formText(data, "signaturePlacement");
+  editor.displayName = formText(data, "displayName");
+  editor.email = formText(data, "email");
+  editor.replyTo = formText(data, "replyTo");
+  editor.organization = formText(data, "organization");
+  editor.signature = String(data.get("signature") ?? "").slice(0, IDENTITY_SIGNATURE_LIMIT);
+  editor.signaturePlacement = placement === "below-quote" ? "below-quote" : "below-body";
+};
 
 const pimEditorFingerprint = (): string | null => {
   const form = app.querySelector<HTMLFormElement>('[data-testid="pim-editor"] form');
@@ -5627,6 +6109,176 @@ const contactMethodsFromForm = (data: FormData, existing?: Contact): { emails: C
     emails: email ? [{ value: email, types: oldEmail?.types ?? ["work"], preferred: true }, ...additionalEmails.map(item => ({ ...item, preferred: false }))] : additionalEmails,
     phones: phone ? [{ value: phone, types: oldPhone?.types ?? ["work"], preferred: true }, ...additionalPhones.map(item => ({ ...item, preferred: false }))] : additionalPhones,
   };
+};
+
+const saveIdentityForm = async (form: HTMLFormElement): Promise<void> => {
+  const editor = state.identityEditor;
+  if (!editor || !form.reportValidity()) return;
+  // Captured so a rejected save re-renders with what the user typed, not the old values.
+  captureIdentityEditor(form);
+  editor.error = "";
+  await withBusy("save-identity", async () => {
+    try {
+      const identities = await api.saveIdentity({
+        ...(editor.id ? { id: editor.id } : {}),
+        accountId: editor.accountId,
+        displayName: editor.displayName,
+        email: editor.email,
+        replyTo: editor.replyTo,
+        organization: editor.organization,
+        signature: editor.signature,
+        signaturePlacement: editor.signaturePlacement,
+      });
+      const wasEditing = editor.id;
+      state.identityEditor = null;
+      applyIdentities(identities);
+      focusByKey(wasEditing ? `identity-edit-${wasEditing}` : `identity-add-${editor.accountId}`);
+      pushToast(
+        "success",
+        wasEditing ? "Identity saved" : "Identity added",
+        `${editor.email} is ready to send from. No mail server was contacted to verify it.`,
+        wasEditing ? "身分已儲存" : "身分已新增",
+        `${editor.email} 可以用嚟寄件喇。冇聯絡過任何郵件伺服器去驗證佢。`,
+      );
+    } catch (error) {
+      editor.error = userVisibleErrorMessage(error);
+      render();
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="identity-editor-error"]')?.scrollIntoView({ block: "nearest" }));
+    }
+  });
+};
+
+const defaultFilterCondition = (): MessageFilterCondition => ({ field: "subject", operator: "contains", value: "", caseSensitive: false });
+
+const defaultFilterAction = (): MessageFilterAction => ({ kind: "mark-read", value: "" });
+
+const messageFilterEditorFrom = (filter: MessageFilter | undefined): MessageFilterEditorState => filter
+  ? {
+    id: filter.id,
+    name: filter.name,
+    enabled: filter.enabled,
+    match: filter.match,
+    runOnSync: filter.runOnSync,
+    accountId: filter.accountId ?? "",
+    conditions: filter.conditions.map(condition => ({ ...condition })),
+    actions: filter.actions.map(action => ({ ...action })),
+    error: "",
+  }
+  : {
+    id: null,
+    name: "",
+    enabled: true,
+    match: "all",
+    runOnSync: true,
+    accountId: "",
+    conditions: [defaultFilterCondition()],
+    actions: [defaultFilterAction()],
+    error: "",
+  };
+
+const filterInputFrom = (filter: MessageFilter, patch: Partial<MessageFilter> = {}): MessageFilterInput => ({
+  id: filter.id,
+  name: filter.name,
+  enabled: filter.enabled,
+  match: filter.match,
+  runOnSync: filter.runOnSync,
+  accountId: filter.accountId,
+  ...patch,
+  conditions: (patch.conditions ?? filter.conditions).map(condition => ({ ...condition })),
+  actions: (patch.actions ?? filter.actions).map(action => ({ ...action })),
+});
+
+const isMessageFilterField = (value: string): value is MessageFilterField =>
+  MESSAGE_FILTER_FIELDS.includes(value as MessageFilterField);
+
+const isMessageFilterActionKind = (value: string): value is MessageFilterActionKind =>
+  MESSAGE_FILTER_ACTION_KINDS.includes(value as MessageFilterActionKind);
+
+/** Keeps a value the model could never accept from surviving a field change; a tag id is left alone. */
+const normalizedFilterConditionValue = (field: MessageFilterField, value: string): string => {
+  switch (messageFilterFieldKind(field)) {
+    case "boolean": return value.trim() === "false" ? "false" : "true";
+    case "numeric": return /^\d+$/u.test(value.trim()) ? value.trim() : "";
+    default: return value;
+  }
+};
+
+/** Reads the live form back into the editor so a re-render never discards what the user typed. */
+const captureMessageFilterEditor = (form: HTMLFormElement | null): void => {
+  const editor = state.messageFilterEditor;
+  if (!editor || !form) return;
+  const data = new FormData(form);
+  editor.name = formText(data, "name").slice(0, MESSAGE_FILTER_NAME_LIMIT);
+  editor.enabled = data.get("enabled") !== null;
+  editor.runOnSync = data.get("runOnSync") !== null;
+  editor.match = data.get("match") === "any" ? "any" : "all";
+  editor.accountId = String(data.get("accountId") ?? "");
+  const caseSensitive = new Set(data.getAll("conditionCase").map(String));
+  const operators = data.getAll("conditionOperator").map(String);
+  const conditionValues = data.getAll("conditionValue").map(String);
+  editor.conditions = data.getAll("conditionField").map(String).map((raw, index) => {
+    const field = isMessageFilterField(raw) ? raw : "subject";
+    const allowed = messageFilterOperators(field);
+    return {
+      field,
+      operator: allowed.find(candidate => candidate === operators[index]) ?? allowed[0] ?? "contains",
+      value: normalizedFilterConditionValue(field, (conditionValues[index] ?? "").slice(0, MESSAGE_FILTER_VALUE_LIMIT)),
+      caseSensitive: caseSensitive.has(String(index)),
+    } satisfies MessageFilterCondition;
+  });
+  const actionValues = data.getAll("actionValue").map(String);
+  editor.actions = data.getAll("actionKind").map(String).map((raw, index) => {
+    const kind = isMessageFilterActionKind(raw) ? raw : "mark-read";
+    return {
+      kind,
+      value: MESSAGE_FILTER_ACTIONS_WITH_VALUE.has(kind) ? (actionValues[index] ?? "").slice(0, MESSAGE_FILTER_VALUE_LIMIT) : "",
+    } satisfies MessageFilterAction;
+  });
+};
+
+const messageFilterEditorForm = (): HTMLFormElement | null => app.querySelector<HTMLFormElement>('[data-form="message-filter-editor"]');
+
+const saveMessageFilterForm = async (form: HTMLFormElement): Promise<void> => {
+  const editor = state.messageFilterEditor;
+  if (!editor || !form.reportValidity()) return;
+  captureMessageFilterEditor(form);
+  editor.error = "";
+  await withBusy("message-filters", async () => {
+    try {
+      state.messageFilters = await api.saveMessageFilter({
+        ...(editor.id ? { id: editor.id } : {}),
+        name: editor.name,
+        enabled: editor.enabled,
+        match: editor.match,
+        runOnSync: editor.runOnSync,
+        accountId: editor.accountId || null,
+        conditions: editor.conditions,
+        actions: editor.actions,
+      });
+      const wasEditing = editor.id;
+      state.messageFilterEditor = null;
+      pendingFocusKey = wasEditing ? `message-filter-edit-${wasEditing}` : "message-filter-add";
+      pushToast(
+        "success",
+        wasEditing ? "Filter saved" : "Filter created",
+        `“${editor.name}” ${editor.enabled
+          ? editor.runOnSync
+            ? "runs after every synchronization and whenever you choose Run filters."
+            : "runs only when you choose Run filters in the folder actions."
+          : "is stored but disabled, so it will not run."}`,
+        wasEditing ? "規則已儲存" : "規則已建立",
+        `「${editor.name}」${editor.enabled
+          ? editor.runOnSync
+            ? "會喺每次同步之後、同你撳「執行篩選規則」嗰陣執行。"
+            : "淨係喺你撳資料夾操作嘅「執行篩選規則」嗰陣先會執行。"
+          : "已儲存但停用咗，所以唔會執行。"}`,
+      );
+    } catch (error) {
+      editor.error = userVisibleErrorMessage(error);
+      render();
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="message-filter-editor-error"]')?.scrollIntoView({ block: "nearest" }));
+    }
+  });
 };
 
 const saveContactForm = async (form: HTMLFormElement): Promise<void> => {
@@ -6251,6 +6903,37 @@ const handleConfirmation = async (): Promise<void> => {
     });
     return;
   }
+  if (confirmation.kind === "delete-identity") {
+    await withBusy("save-identity", async () => {
+      const identities = await api.deleteIdentity(confirmation.identityId);
+      if (state.identityEditor?.id === confirmation.identityId) state.identityEditor = null;
+      applyIdentities(identities);
+      pushToast(
+        "success",
+        "Identity removed",
+        `${confirmation.label} was removed from this computer. Sent messages are unchanged.`,
+        "身分已移除",
+        `${confirmation.label} 已經由呢部電腦移除。已寄出嘅郵件冇變。`,
+      );
+    });
+    return;
+  }
+  if (confirmation.kind === "delete-message-filter") {
+    await withBusy("message-filters", async () => {
+      state.messageFilters = await api.deleteMessageFilter(confirmation.filterId);
+      if (state.messageFilterEditor?.id === confirmation.filterId) state.messageFilterEditor = null;
+      // The row that held the focus is gone, so focus returns to the control that creates another.
+      pendingFocusKey = "message-filter-add";
+      pushToast(
+        "success",
+        "Filter deleted",
+        `“${confirmation.label}” no longer runs. ${state.messageFilters.length} filter${state.messageFilters.length === 1 ? "" : "s"} remain, renumbered from the top. Messages it already changed are unchanged.`,
+        "規則已刪除",
+        `「${confirmation.label}」唔會再執行。仲有 ${state.messageFilters.length} 條規則，由頭重新編號。佢之前改過嘅郵件冇變。`,
+      );
+    });
+    return;
+  }
   if (confirmation.kind === "delete-pim") {
     await deletePimEntity(confirmation.entityKind, confirmation.uid, confirmation.label);
     pendingFocusKey = pimEntityPresent(confirmation.entityKind, confirmation.uid)
@@ -6319,6 +7002,7 @@ const sampleForSearch = (key: string): string => {
   if (key === "tasks") return state.tasks.slice(0, 30).map(task => `${task.title}\n${task.status}\n${task.description ?? ""}`).join("\n\n");
   if (key === "pim-history") return state.pimTransactions.slice(-50).map(transaction => `${transaction.action} ${transaction.entityKind} ${transaction.entityUid}`).join("\n");
   if (key === "commands") return paletteCommands().map(command => `${command.en}\n${command.yue}`).join("\n\n");
+  if (key === MESSAGE_FILTER_SEARCH_KEY) return state.messageFilters.slice(0, 30).map(filterSearchText).join("\n\n");
   if (key.startsWith("tabs") || key === "bulk-tabs" || key === "tab-groups") return TAB_DEFINITIONS.map(tab => `${tab.en} · ${tab.yue}`).join("\n");
   return "Invoice #20261 arrived. Receipt 4471 is attached.\n發票 #20261 已到，收據 4471 已附上。";
 };
@@ -6416,6 +7100,22 @@ const runPaletteCommand = (commandId: string): void => {
     model.builderOpen = true;
     if (!model.sample) model.sample = sampleForSearch("mail");
     activateTab("mail");
+  } else if (commandId === "message-filters") {
+    // A Settings search that hides the card would land the user on a page without the control.
+    if (!settingSectionMatches(MESSAGE_FILTER_SETTING_KEYWORDS)) {
+      searchFor("settings").pattern = "";
+      persistSearch("settings");
+    }
+    activateTab("settings");
+    pendingFocusKey = "message-filter-add";
+  } else if (commandId === "identities") {
+    // A Settings search that hides the card would land the user on a page without the control.
+    if (!settingSectionMatches(IDENTITY_SETTING_KEYWORDS)) {
+      searchFor("settings").pattern = "";
+      persistSearch("settings");
+    }
+    activateTab("settings");
+    pendingFocusKey = "identity-settings";
   } else if (commandId === "editor") void api.openExternalEditor().catch(error => pushToast("error", "Editor did not open", errorMessage(error), "編輯器開唔到", errorMessage(error)));
   else if (commandId.startsWith("tab:")) {
     const id = commandId.slice(4) as PageId;
@@ -6795,7 +7495,18 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
       if (!accountId || !id) break;
       if (state.accountId !== accountId) await loadAccount(accountId, false);
       const draft = await api.getDraft(accountId, id);
-      state.compose = { draft, showCopies: Boolean(draft.cc.length || draft.bcc.length), minimized: false, cleanBaseline: composeFingerprint(draft) };
+      // A saved draft records neither the signature it carries nor where its quote began, so both
+      // are recovered by matching the account's own signatures against the body. Guessing from the
+      // separator instead would truncate a draft that merely quotes a signed message.
+      const recovered = recoverSignaturePlacement(draft.text, identitiesForAccount(state.bootstrap?.identities ?? [], accountId));
+      state.compose = {
+        draft,
+        showCopies: Boolean(draft.cc.length || draft.bcc.length),
+        minimized: false,
+        cleanBaseline: composeFingerprint(draft),
+        quoteMarker: recovered.quoteMarker,
+        appliedSignature: recovered.signature,
+      };
       state.activeTab = "drafts";
       render();
       break;
@@ -7169,9 +7880,179 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
         if (state.pendingMailto) { const pending = state.pendingMailto; state.pendingMailto = null; handleMailtoActivation(pending); }
       });
       break;
+    case "open-identity-editor": {
+      const accountId = button.dataset.accountId;
+      if (!accountId) break;
+      const identity = (state.bootstrap?.identities ?? []).find(item => item.id === button.dataset.identityId);
+      state.identityEditor = identity
+        ? { ...identity, id: identity.id, error: "" }
+        : {
+          accountId,
+          id: null,
+          displayName: state.bootstrap?.accounts.find(item => item.id === accountId)?.displayName ?? "",
+          email: "",
+          replyTo: "",
+          organization: "",
+          signature: "",
+          signaturePlacement: "below-body",
+          error: "",
+        };
+      render();
+      requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-focus-key="identity-editor-displayName"]')?.focus());
+      break;
+    }
+    case "close-identity-editor": {
+      const editor = state.identityEditor;
+      // A new identity has no row to go back to, so focus returns to the button that opened it.
+      const returnTo = editor?.id ? `identity-edit-${editor.id}` : editor ? `identity-add-${editor.accountId}` : null;
+      state.identityEditor = null;
+      render();
+      focusByKey(returnTo);
+      break;
+    }
+    case "make-identity-default": {
+      const id = button.dataset.identityId;
+      if (!id) break;
+      captureIdentityEditor();
+      await withBusy("save-identity", async () => {
+        const identities = await api.setDefaultIdentity(id);
+        applyIdentities(identities);
+        const identity = identities.find(item => item.id === id);
+        pushToast(
+          "success",
+          "Default identity changed",
+          `New messages for this account now come from ${identity?.email ?? id}.`,
+          "預設身分已更改",
+          `呢個帳戶嘅新郵件而家會由 ${identity?.email ?? id} 寄出。`,
+        );
+      });
+      break;
+    }
+    case "request-delete-identity": {
+      const identity = (state.bootstrap?.identities ?? []).find(item => item.id === button.dataset.identityId);
+      if (identity) showConfirmation({ kind: "delete-identity", identityId: identity.id, label: identity.email });
+      break;
+    }
     case "request-remove-account": {
       const account = state.bootstrap?.accounts.find(item => item.id === button.dataset.accountId);
       if (account) showConfirmation({ kind: "remove-account", accountId: account.id, label: account.email });
+      break;
+    }
+    case "focus-message-filter-search":
+      focusByKey(`search-${MESSAGE_FILTER_SEARCH_KEY}`);
+      break;
+    case "open-message-filter-editor": {
+      const filterId = button.dataset.filterId;
+      state.messageFilterEditor = messageFilterEditorFrom(filterId ? state.messageFilters.find(item => item.id === filterId) : undefined);
+      render();
+      requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-focus-key="message-filter-editor-name"]')?.focus());
+      break;
+    }
+    case "close-message-filter-editor": {
+      const returnTo = state.messageFilterEditor?.id;
+      state.messageFilterEditor = null;
+      render();
+      focusByKey(returnTo ? `message-filter-edit-${returnTo}` : "message-filter-add");
+      break;
+    }
+    case "add-filter-condition": {
+      const editor = state.messageFilterEditor;
+      if (!editor || editor.conditions.length >= MESSAGE_FILTER_CONDITION_LIMIT) break;
+      captureMessageFilterEditor(messageFilterEditorForm());
+      editor.conditions.push(defaultFilterCondition());
+      pendingFocusKey = `filter-condition-${editor.conditions.length - 1}-field`;
+      render();
+      break;
+    }
+    case "remove-filter-condition": {
+      const editor = state.messageFilterEditor;
+      const index = Number(button.dataset.rowIndex);
+      if (!editor || !Number.isInteger(index) || editor.conditions.length < 2) break;
+      captureMessageFilterEditor(messageFilterEditorForm());
+      editor.conditions.splice(index, 1);
+      pendingFocusKey = `filter-condition-${Math.min(index, editor.conditions.length - 1)}-remove`;
+      render();
+      break;
+    }
+    case "add-filter-action": {
+      const editor = state.messageFilterEditor;
+      if (!editor || editor.actions.length >= MESSAGE_FILTER_ACTION_LIMIT) break;
+      captureMessageFilterEditor(messageFilterEditorForm());
+      editor.actions.push(defaultFilterAction());
+      pendingFocusKey = `filter-action-${editor.actions.length - 1}-kind`;
+      render();
+      break;
+    }
+    case "remove-filter-action": {
+      const editor = state.messageFilterEditor;
+      const index = Number(button.dataset.rowIndex);
+      if (!editor || !Number.isInteger(index) || editor.actions.length < 2) break;
+      captureMessageFilterEditor(messageFilterEditorForm());
+      editor.actions.splice(index, 1);
+      pendingFocusKey = `filter-action-${Math.min(index, editor.actions.length - 1)}-remove`;
+      render();
+      break;
+    }
+    case "toggle-message-filter": {
+      const filter = state.messageFilters.find(item => item.id === button.dataset.filterId);
+      if (!filter) break;
+      await withBusy("message-filters", async () => {
+        state.messageFilters = await api.saveMessageFilter(filterInputFrom(filter, { enabled: !filter.enabled }));
+        if (state.messageFilterEditor?.id === filter.id) state.messageFilterEditor.enabled = !filter.enabled;
+        pendingFocusKey = `message-filter-toggle-${filter.id}`;
+        announce(filter.enabled
+          ? tx(`${filter.name} is disabled and will not run.`, `${filter.name} 已停用，唔會執行。`)
+          : tx(`${filter.name} is enabled.`, `${filter.name} 已啟用。`));
+      });
+      break;
+    }
+    case "move-message-filter": {
+      const direction = button.dataset.direction === "up" ? -1 : 1;
+      const index = state.messageFilters.findIndex(item => item.id === button.dataset.filterId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= state.messageFilters.length) break;
+      const name = state.messageFilters[index]?.name ?? "";
+      const ordered = state.messageFilters.map(item => item.id);
+      const [moved] = ordered.splice(index, 1);
+      if (!moved) break;
+      ordered.splice(target, 0, moved);
+      await withBusy("message-filters", async () => {
+        state.messageFilters = await api.reorderMessageFilters(ordered);
+        // The button that was clicked is disabled at either end, so focus moves to the one that is not.
+        pendingFocusKey = target === 0
+          ? `message-filter-down-${moved}`
+          : target === ordered.length - 1
+            ? `message-filter-up-${moved}`
+            : `message-filter-${direction < 0 ? "up" : "down"}-${moved}`;
+        announce(tx(`${name} now runs at position ${target + 1} of ${ordered.length}.`, `${name} 而家排喺 ${ordered.length} 條之中嘅第 ${target + 1} 位。`));
+      });
+      break;
+    }
+    case "duplicate-message-filter": {
+      const filter = state.messageFilters.find(item => item.id === button.dataset.filterId);
+      if (!filter) break;
+      // Stored text, so the suffix is a plain word rather than a bilingual pair.
+      const suffix = preferences().language === "yue" ? "副本" : "copy";
+      const existingIds = new Set(state.messageFilters.map(item => item.id));
+      await withBusy("message-filters", async () => {
+        const { id: _id, ...copy } = filterInputFrom(filter, { name: `${filter.name} ${suffix}`.slice(0, MESSAGE_FILTER_NAME_LIMIT) });
+        state.messageFilters = await api.saveMessageFilter(copy);
+        const created = state.messageFilters.find(item => !existingIds.has(item.id));
+        if (created) state.messageFilterEditor = messageFilterEditorFrom(created);
+        pendingFocusKey = "message-filter-editor-name";
+        pushToast(
+          "success",
+          "Filter duplicated",
+          `“${copy.name}” was added at the end of the order, ${copy.enabled ? "enabled" : "disabled"} exactly like the filter it came from. Rename it before it competes with the original.`,
+          "規則已複製",
+          `「${copy.name}」已加到次序最後，同原本嗰條一樣${copy.enabled ? "啟用" : "停用"}。改個名先，唔好同原本嗰條撞。`,
+        );
+      });
+      break;
+    }
+    case "request-delete-message-filter": {
+      const filter = state.messageFilters.find(item => item.id === button.dataset.filterId);
+      if (filter) showConfirmation({ kind: "delete-message-filter", filterId: filter.id, label: filter.name });
       break;
     }
     case "detect-editors":
@@ -7569,7 +8450,35 @@ const handleControlChange = async (control: HTMLInputElement | HTMLSelectElement
     if (control.value === "oauth2") await refreshOAuthAuthorizationStatus().catch(() => undefined);
     return;
   }
+  const messageFilterForm = control.closest<HTMLFormElement>('[data-form="message-filter-editor"]');
+  if (messageFilterForm) {
+    captureMessageFilterEditor(messageFilterForm);
+    // A field or action choice decides which comparisons and which value control belong on that row.
+    if (control.name === "conditionField" || control.name === "actionKind") render();
+    return;
+  }
+  // The placement select fires change rather than input, so it is captured here too.
+  const identityEditorControl = control.closest<HTMLFormElement>('[data-form="identity-editor"]');
+  if (identityEditorControl) { captureIdentityEditor(identityEditorControl); return; }
   const changeAction = control.dataset.actionChange;
+  if (changeAction === "select-compose-identity") {
+    const composer = state.compose;
+    if (!composer) return;
+    captureComposer();
+    const identities = identitiesForAccount(state.bootstrap?.identities ?? [], composer.draft.accountId);
+    const chosen = identities.find(identity => identity.id === control.value);
+    if (!chosen) return;
+    composer.draft.identityId = chosen.id;
+    // The tracked signature names the exact block to cut, and the marker locates the quote in what
+    // is left after that cut — an index taken beforehand would be off by the block's length and
+    // splice the new signature into the middle of the quoted message.
+    const signed = applySignature(composer.draft.text, chosen, composer.quoteMarker, composer.appliedSignature);
+    composer.draft.text = signed.text;
+    composer.appliedSignature = signed.applied ? chosen.signature.trim() : "";
+    render();
+    requestAnimationFrame(() => document.querySelector<HTMLSelectElement>("#compose-identity")?.focus());
+    return;
+  }
   if (changeAction === "select-oauth-provider" && (control.value === "google" || control.value === "microsoft")) {
     state.oauthProvider = control.value;
     updateOAuthAuthorizationPanel();
@@ -7712,6 +8621,12 @@ app.addEventListener("input", event => {
     state.pimEditorLastFocusName = control.name;
     updatePimEditorDirty();
   }
+  // An unrelated render (a toast, a finished sync) rebuilds this form from state, so state has to
+  // hold every keystroke rather than only what the last change event committed.
+  const messageFilterForm = control.closest<HTMLFormElement>('[data-form="message-filter-editor"]');
+  if (messageFilterForm) { captureMessageFilterEditor(messageFilterForm); return; }
+  const identityForm = control.closest<HTMLFormElement>('[data-form="identity-editor"]');
+  if (identityForm) { captureIdentityEditor(identityForm); return; }
   const quickFilterField = control.dataset.quickFilter;
   if (quickFilterField === "pattern" || quickFilterField === "flags") {
     state.quickFilter = quickFilterField === "pattern"
@@ -7794,6 +8709,8 @@ app.addEventListener("submit", event => {
     else if (mode === "draft") void saveComposerDraft();
     return;
   }
+  if (form.dataset.form === "identity-editor") { void saveIdentityForm(form); return; }
+  if (form.dataset.form === "message-filter-editor") { void saveMessageFilterForm(form); return; }
   if (form.dataset.form === "pim-contact") { void saveContactForm(form); return; }
   if (form.dataset.form === "pim-mailing-list") { void saveMailingListForm(form); return; }
   if (form.dataset.form === "pim-calendar-event") { void saveCalendarEventForm(form); return; }

@@ -20,7 +20,7 @@ The preset section uses system-color boundaries when forced colors are active. B
 
 **Export theme** writes a version-1 JSON document containing only recognized workspace-tab style overrides and saved preset names/values. **Import theme…** uses a native desktop file chooser, validates the document in the main process, reports the selected basename and counts in a blocking review, then replaces only tab appearance overrides and the saved-preset library. Tab layout, global preferences, accounts, messages, credentials, and filesystem paths are outside the format and remain unchanged. Canceling either dialog changes nothing.
 
-The Appearance card also provides a persisted global reset for theme, density, accent, interface font, font scale, and font weight; language, humor, narrator, notification, account, folder, and dim-sum preferences are preserved. The broader completion target remains an anchored, non-modal editor available from every rendered element with Word-depth typography, complete color translation, picker self-customization, keyboard access, and focus return.
+The Appearance card also provides a persisted global reset for theme, density, accent, interface font, font scale, and font weight; language, humor, narrator, notification, account, and folder preferences are preserved. The broader completion target remains an anchored, non-modal editor available from every rendered element with Word-depth typography, complete color translation, picker self-customization, keyboard access, and focus return.
 
 ## Configuration
 

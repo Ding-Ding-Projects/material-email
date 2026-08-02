@@ -15,7 +15,6 @@ export interface InstallerPreferenceProbe {
   fontFamily: string;
   fontScale: number;
   fontWeight: number;
-  dimSumEnabled: boolean;
   narratorEnabled: boolean;
   narratorLanguage: "en" | "yue" | "bilingual";
   nativeNotificationsEnabled: boolean;

@@ -23,7 +23,8 @@
     "start": "npm run build && electron .",
     "dist:win": "npm run check && electron-builder --win nsis --x64",
     "verify:package": "node scripts/verify-package.mjs",
-    "verify:installer": "node scripts/verify-windows-installer.mjs"
+    "verify:installer": "node scripts/verify-windows-installer.mjs",
+    "count:lines": "node scripts/count-lines.mjs"
   },
   "dependencies": {
     "imapflow": "1.6.5",

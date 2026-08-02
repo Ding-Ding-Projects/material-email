@@ -526,7 +526,6 @@ try {
       localStorage.setItem(preferenceStorageKey, JSON.stringify({
         accent: "#6750a4",
         density: "comfortable",
-        dimSumEnabled: true,
         funnyCantonese: 3,
         funnyEnglish: 2,
         language: "en",

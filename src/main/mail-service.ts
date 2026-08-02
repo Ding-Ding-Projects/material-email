@@ -5,6 +5,8 @@ import sanitizeHtml from "sanitize-html";
 import { randomUUID } from "node:crypto";
 import { classifyAttachment } from "../shared/attachment-safety.js";
 import { assessMessageCryptography } from "../shared/message-cryptography.js";
+import { identityReplyTo, identitySender, type MailIdentity } from "../shared/identities.js";
+import { MESSAGE_TAGS_PER_MESSAGE_LIMIT, normalizeMessageTagName } from "../shared/message-tags.js";
 import {
   assertMimeAttachmentSizes,
   assertMimeSourceSize,
@@ -39,6 +41,23 @@ export interface MailMoveResult {
   destinationUidValidity?: string;
 }
 
+export interface MailKeywordResult {
+  added: string[];
+  removed: string[];
+  /** Every keyword the message now carries, foreign ones included, so a caller can see nothing was lost. */
+  keywords: string[];
+}
+
+export class MailKeywordError extends Error {
+  readonly code: "KEYWORDS_UNSUPPORTED" | "KEYWORD_UNENCODABLE" | "TOO_MANY_KEYWORDS" | "MESSAGE_UNAVAILABLE" | "KEYWORD_NOT_STORED";
+
+  constructor(code: MailKeywordError["code"], message: string) {
+    super(message);
+    this.name = "MailKeywordError";
+    this.code = code;
+  }
+}
+
 export class MailboxGenerationMismatchError extends Error {
   readonly code = "MAILBOX_GENERATION_MISMATCH";
 
@@ -51,6 +70,57 @@ export class MailboxGenerationMismatchError extends Error {
     this.name = "MailboxGenerationMismatchError";
   }
 }
+
+export const MESSAGE_TAG_KEYWORD_PREFIX = "mtag-";
+/** Servers cap keyword length without saying so, so an atom that would exceed this is refused instead of truncated. */
+export const MESSAGE_TAG_KEYWORD_LIMIT = 64;
+const KEYWORD_PLAIN_CHARACTER = /^[0-9a-z-]$/u;
+
+/**
+ * A tag becomes an IMAP keyword atom, which RFC 3501 forbids from holding a space, a control character
+ * or any of ( ) { } % * " \ ] and which servers compare case-insensitively. Every UTF-8 byte outside
+ * [0-9a-z-] is escaped as `_` plus two lowercase hex digits, so the whole atom stays lowercase: a server
+ * that folds case cannot corrupt it, and "Work" and "work" still encode to two distinct atoms rather than
+ * silently merging into one. The prefix is the only thing this application claims ownership of.
+ */
+export const messageTagKeyword = (tagName: string): string => {
+  const name = normalizeMessageTagName(tagName);
+  if (!name) throw new MailKeywordError("KEYWORD_UNENCODABLE", "A tag needs a name before it can be stored on the mail server.");
+  let atom = MESSAGE_TAG_KEYWORD_PREFIX;
+  for (const byte of Buffer.from(name, "utf8")) {
+    const character = String.fromCharCode(byte);
+    atom += KEYWORD_PLAIN_CHARACTER.test(character) ? character : `_${byte.toString(16).padStart(2, "0")}`;
+  }
+  if (atom.length > MESSAGE_TAG_KEYWORD_LIMIT) {
+    throw new MailKeywordError(
+      "KEYWORD_UNENCODABLE",
+      `The tag ${name} encodes to a ${atom.length}-character mail server keyword, over the ${MESSAGE_TAG_KEYWORD_LIMIT}-character limit. Shorten the tag name; it was not stored.`,
+    );
+  }
+  return atom;
+};
+
+/** The tag name an atom was built from, or null when the atom is not one this application wrote. */
+export const messageTagKeywordName = (keyword: string): string | null => {
+  const atom = keyword.toLowerCase();
+  if (!atom.startsWith(MESSAGE_TAG_KEYWORD_PREFIX)) return null;
+  const bytes: number[] = [];
+  for (let index = MESSAGE_TAG_KEYWORD_PREFIX.length; index < atom.length; index += 1) {
+    const character = atom[index] ?? "";
+    if (character === "_") {
+      const hex = atom.slice(index + 1, index + 3);
+      if (!/^[0-9a-f]{2}$/u.test(hex)) return null;
+      bytes.push(Number.parseInt(hex, 16));
+      index += 2;
+      continue;
+    }
+    if (!KEYWORD_PLAIN_CHARACTER.test(character)) return null;
+    bytes.push(character.charCodeAt(0));
+  }
+  return Buffer.from(bytes).toString("utf8") || null;
+};
+
+const isMessageTagKeyword = (flag: string): boolean => flag.toLowerCase().startsWith(MESSAGE_TAG_KEYWORD_PREFIX);
 
 const headerLength = (source: Buffer): number => {
   const endings = [source.indexOf("\r\n\r\n"), source.indexOf("\n\n"), source.indexOf("\r\r")]
@@ -451,6 +521,40 @@ export class MailService {
     });
   }
 
+  /**
+   * Stores a message's tags as IMAP keywords so a tag survives on the server and other clients can see
+   * it. Only atoms carrying the tag prefix are added or removed, so a keyword another client wrote is
+   * left exactly as it was.
+   */
+  async setMessageKeywords(
+    account: RuntimeAccount,
+    folderPath: string,
+    uid: number,
+    tagNames: readonly string[],
+    expectedUidValidity: string,
+  ): Promise<MailKeywordResult> {
+    if (tagNames.length > MESSAGE_TAGS_PER_MESSAGE_LIMIT) {
+      throw new MailKeywordError(
+        "TOO_MANY_KEYWORDS",
+        `Material Email stores at most ${MESSAGE_TAGS_PER_MESSAGE_LIMIT} tags on one message; ${tagNames.length} were requested and none were stored.`,
+      );
+    }
+    const desired = new Set(tagNames.map(name => messageTagKeyword(name)));
+    return this.#withImap(account, async client => {
+      const lock = await client.getMailboxLock(folderPath);
+      try {
+        return await this.#applyKeywords(client, folderPath, uid, desired, expectedUidValidity);
+      } catch (error) {
+        if (error instanceof MailKeywordError || error instanceof MailboxGenerationMismatchError) throw error;
+        // A provider failure proves nothing about what the server kept, so it fails closed under one
+        // stable message instead of surfacing the library's own error text.
+        throw new MailKeywordError("KEYWORD_NOT_STORED", "The mail server did not confirm the tag change.");
+      } finally {
+        lock.release();
+      }
+    });
+  }
+
   async moveMessage(
     account: RuntimeAccount,
     folderPath: string,
@@ -533,12 +637,18 @@ export class MailService {
     });
   }
 
-  async sendMessage(account: RuntimeAccount, draft: ComposeDraft): Promise<SendResult> {
+  /**
+   * `identity` selects the From address and an optional Reply-To. Without one the account's own
+   * name and address are used, which is what every draft written before identities existed expects.
+   */
+  async sendMessage(account: RuntimeAccount, draft: ComposeDraft, identity: MailIdentity | null = null): Promise<SendResult> {
     const transport = this.#smtpTransport(account);
+    const replyTo = identity ? identityReplyTo(identity) : null;
     try {
       try {
         const result = await transport.sendMail({
-          from: { name: account.displayName, address: account.email },
+          from: identity ? identitySender(identity) : { name: account.displayName, address: account.email },
+          ...(replyTo ? { replyTo } : {}),
           to: draft.to,
           cc: draft.cc,
           bcc: draft.bcc,
@@ -606,6 +716,54 @@ export class MailService {
       if (client.usable) await client.logout().catch(() => undefined);
       else client.close();
     }
+  }
+
+  async #applyKeywords(
+    client: ImapFlow,
+    folderPath: string,
+    uid: number,
+    desired: ReadonlySet<string>,
+    expectedUidValidity: string,
+  ): Promise<MailKeywordResult> {
+    this.#assertMailboxGeneration(client, folderPath, expectedUidValidity);
+    const current = await this.#messageKeywords(client, uid);
+    const added = [...desired].filter(keyword => !current.has(keyword)).sort();
+    const removed = [...current.keys()].filter(keyword => isMessageTagKeyword(keyword) && !desired.has(keyword)).sort();
+    if (!added.length && !removed.length) return { added, removed, keywords: [...current.values()].sort() };
+    this.#assertKeywordSupport(client, folderPath, [...added, ...removed]);
+    if (added.length && !(await client.messageFlagsAdd(uid, added, { uid: true }))) {
+      throw new MailKeywordError("KEYWORD_NOT_STORED", "The mail server did not confirm the tag change.");
+    }
+    if (removed.length && !(await client.messageFlagsRemove(uid, removed, { uid: true }))) {
+      throw new MailKeywordError("KEYWORD_NOT_STORED", "The mail server did not confirm the tag change.");
+    }
+    // A server can answer OK to STORE and keep nothing, so the keywords are read back rather than assumed.
+    const stored = await this.#messageKeywords(client, uid);
+    const ours = [...stored.keys()].filter(isMessageTagKeyword);
+    if (ours.length !== desired.size || ours.some(keyword => !desired.has(keyword))) {
+      throw new MailKeywordError("KEYWORD_NOT_STORED", "The mail server accepted the tag change but did not keep the keywords.");
+    }
+    return { added, removed, keywords: [...stored.values()].sort() };
+  }
+
+  /** The message's keywords as folded atom to the atom the server reported, system flags excluded. */
+  async #messageKeywords(client: ImapFlow, uid: number): Promise<Map<string, string>> {
+    const fetched = await client.fetchOne(uid, { uid: true, flags: true }, { uid: true });
+    if (!fetched || !fetched.flags) throw new MailKeywordError("MESSAGE_UNAVAILABLE", "The message is no longer available on the server.");
+    return new Map([...fetched.flags].filter(flag => !flag.startsWith("\\")).map(flag => [flag.toLowerCase(), flag]));
+  }
+
+  /**
+   * ImapFlow reads an absent PERMANENTFLAGS as "any flag is allowed", but a server that never advertised
+   * one is exactly the server that answers OK and drops the keyword, so an absent set refuses here.
+   */
+  #assertKeywordSupport(client: ImapFlow, folderPath: string, keywords: readonly string[]): void {
+    const permanent = client.mailbox ? client.mailbox.permanentFlags : undefined;
+    const refusal = `The mail server does not accept tag keywords in ${folderPath}, so the tags were left unchanged there.`;
+    if (!permanent || !permanent.size) throw new MailKeywordError("KEYWORDS_UNSUPPORTED", refusal);
+    if (permanent.has("\\*")) return;
+    const advertised = new Set([...permanent].map(flag => flag.toLowerCase()));
+    if (keywords.some(keyword => !advertised.has(keyword))) throw new MailKeywordError("KEYWORDS_UNSUPPORTED", refusal);
   }
 
   #assertMailboxGeneration(client: ImapFlow, folderPath: string, expectedUidValidity: string): void {

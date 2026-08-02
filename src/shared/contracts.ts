@@ -32,6 +32,7 @@ import type { TabAppearanceThemeDocument } from "./tab-appearance-theme.js";
 import type { MessageTag } from "./message-tags.js";
 import type { MessageFilter, MessageFilterAction, MessageFilterCondition } from "./message-filters.js";
 import type { JunkAssessment } from "./junk-classifier.js";
+import type { MailIdentity, MailIdentityInput } from "./identities.js";
 
 export type {
   CalendarEvent,
@@ -87,6 +88,7 @@ export type {
 } from "./message-cryptography.js";
 
 export type { MessageTag, MessageTagState } from "./message-tags.js";
+export type { MailIdentity, MailIdentityInput, SignaturePlacement } from "./identities.js";
 export type {
   MessageFilter,
   MessageFilterAction,
@@ -502,6 +504,8 @@ export interface CachedMailSearchResult {
 export interface ComposeDraft {
   id?: string;
   accountId: string;
+  /** Which of the account's identities sends this draft; absent means the account default. */
+  identityId?: string;
   to: string[];
   cc: string[];
   bcc: string[];
@@ -571,7 +575,6 @@ export interface Preferences {
   fontFamily: string;
   fontScale: number;
   fontWeight: number;
-  dimSumEnabled: boolean;
   narratorEnabled: boolean;
   narratorLanguage: LanguageMode;
   nativeNotificationsEnabled: boolean;
@@ -703,6 +706,7 @@ export interface ReleaseIdentity {
 
 export interface BootstrapState {
   accounts: AccountSummary[];
+  identities: MailIdentity[];
   preferences: Preferences;
   notifications: NotificationRecord[];
   history: HistoryRecord[];
@@ -782,6 +786,10 @@ export interface MaterialEmailApi {
   classifyMessageJunk(accountId: string, folderPath: string, uid: number): Promise<JunkAssessment>;
   trainMessageJunk(accountId: string, folderPath: string, uid: number, label: "junk" | "good"): Promise<JunkSummary>;
   resetJunkModel(): Promise<JunkSummary>;
+  listIdentities(): Promise<MailIdentity[]>;
+  saveIdentity(input: MailIdentityInput): Promise<MailIdentity[]>;
+  deleteIdentity(id: string): Promise<MailIdentity[]>;
+  setDefaultIdentity(id: string): Promise<MailIdentity[]>;
   sendMessage(draft: ComposeDraft): Promise<SendResult>;
   saveDraft(draft: ComposeDraft): Promise<ComposeDraft>;
   listDrafts(accountId: string): Promise<LocalDraftSummary[]>;

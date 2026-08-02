@@ -46,7 +46,7 @@ Use dependency versions and lockfiles declared by the repository. Prefer project
 - Every search surface defaults to plain text and has an adjacent, field-bound full regex builder. The builder uses the project's JavaScript regex dialect, validates input, bounds work, handles zero-width matches, exposes captures and flags, and never runs an empty or invalid destructive query.
 - Settings, history, changelog, tab lists, and appearance editors each have their own search field and builder state. Do not share hidden query state across unrelated fields.
 - Appearance editing is per element, persisted, resettable, exportable, and accessible. Unsupported styling values remain visible with a capability explanation rather than being discarded.
-- A startup dim-sum surprise, when implemented, is opt-out, local-only, non-blocking, focus-neutral, reduced-motion aware, suppressed during first run/errors/updates, and based only on verified repository-catalog assets. Do not generate or download substitute images.
+- A startup dim-sum surprise draws on one launch in ten and carries no off switch. It is local-only, non-blocking, focus-neutral, reduced-motion aware, suppressed during first run/errors/updates, and based only on verified repository-catalog assets. Do not generate or download substitute images.
 - External-editor integration detects installed editors, permits a user choice, persists it, and fails with a clear non-blocking message.
 
 ## Local data and history

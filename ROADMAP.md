@@ -95,8 +95,9 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Folder create, rename, and removal against the server with special-folder protection, subtree cache invalidation, and a bounded single-round-trip mark-folder-read that reports what actually changed
 - [x] Prove tagging, tag-narrowed quick filtering, mark-folder-read, restart persistence, and refused-pattern disclosure in 2 / 2 real-Electron scenarios
 - [x] Add the per-account identity and signature model: conservative address validation, control-character stripping, exactly one default per account, sibling promotion on removal, reply-address identity selection, and signature placement above or below quoted material without stacking
-- [ ] Wire identities and signatures through persistence, IPC, the composer identity picker, and the SMTP From/Reply-To headers (the pure model is not integration evidence)
-- [ ] Persist tags as server-side IMAP keywords, run filters automatically after synchronization, and add a filter editor surface with its own search and regex builder
+- [x] Wire identities and signatures through persistence, IPC, a composer From picker, a Settings editor, and the SMTP From/Reply-To headers, with signature replacement that preserves quoted material and a body that carries someone else's separator
+- [x] Add a filter editor surface with its own search and regex builder, and run `runOnSync` filters automatically over newly arrived messages without reprocessing across restarts
+- [ ] Persist tags as server-side IMAP keywords (a bounded fail-closed encoder and `setMessageKeywords` are implemented and unit-tested against a mocked client, but nothing in the application calls them and no real server has been exercised)
 - [ ] Server-complete all-account synchronization/threading and persistent scalable mail indexing
 - [ ] Conversation threading and complete search indexing
 - [x] Attachment risk classification and review-before-save warnings
@@ -131,12 +132,13 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Add an anchored bilingual changelog calendar with typed locale dates, range selection, month/year navigation, named presets, keyboard focus, and composed search
 - [x] Add the off-by-default serialized TTS narrator foundation
 - [ ] Prove narrator coexistence with screen readers, quiet settings, and natural Hong Kong Cantonese voices
-- [x] Add the 1% startup dim-sum draw using a bundled verified local catalog
+- [x] Draw the startup dim sum on one launch in ten from a bundled verified local catalog, with no off switch and a per-launch latch
 - [ ] Capture and accessibility-test the startup surprise in the packaged app
 
 ## Delivery open
 
 - [ ] Add push and manual-dispatch CI that tests before publishing
+- [x] Count the lines each commit ships from a committed script and require that table in the release notes (never executed on a runner)
 - [ ] Produce a real, uniquely tagged GitHub release with a verified Windows installer
 - [ ] Publish and verify the documentation site and configure the repository homepage
 - [ ] Create and synchronize the project wiki and GitHub Pages source

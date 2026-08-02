@@ -37,6 +37,13 @@ import {
 } from "../shared/message-filters.js";
 import { JUNK_MODEL_TOKEN_LIMIT, emptyJunkModel, type JunkModel } from "../shared/junk-classifier.js";
 import {
+  IDENTITY_LIMIT_PER_ACCOUNT,
+  IDENTITY_NAME_LIMIT,
+  IDENTITY_ORGANIZATION_LIMIT,
+  IDENTITY_SIGNATURE_LIMIT,
+  type MailIdentity,
+} from "../shared/identities.js";
+import {
   emptyMessageCryptoProfile,
   parseMessageCryptoProfile,
   parseMessageCryptographyAssessment,
@@ -79,6 +86,7 @@ export interface PersistedState {
   messageFilters: MessageFilter[];
   junkModel: JunkModel;
   accounts: StoredAccount[];
+  identities: MailIdentity[];
   preferences: Preferences;
   folders: Record<string, FolderSummary[]>;
   messages: Record<string, MessageSummary[]>;
@@ -367,6 +375,43 @@ const messageFilterSchema = z.strictObject({
   actions: z.array(messageFilterActionSchema).min(1).max(MESSAGE_FILTER_ACTION_LIMIT),
 }) as z.ZodType<MessageFilter>;
 
+const identitySchema = z.strictObject({
+  id: identifierSchema,
+  accountId: identifierSchema,
+  displayName: z.string().min(1).max(IDENTITY_NAME_LIMIT),
+  email: z.string().min(1).max(320),
+  replyTo: z.string().max(320),
+  organization: z.string().max(IDENTITY_ORGANIZATION_LIMIT),
+  signature: z.string().max(IDENTITY_SIGNATURE_LIMIT),
+  signaturePlacement: z.enum(["below-body", "below-quote"]),
+  isDefault: z.boolean(),
+  // Ordinals only ever climb, so a tight bound would reject a long-lived legitimate state.
+  ordinal: z.number().int().min(0).max(1_000_000),
+}) as z.ZodType<MailIdentity>;
+
+/**
+ * The model guarantees exactly one default per account. A file edited by hand could carry none or
+ * several, which would make the composer's From address depend on array order, so settle it here.
+ */
+const identityListSchema = z
+  .array(identitySchema)
+  .max(IDENTITY_LIMIT_PER_ACCOUNT * 100)
+  .transform(identities => {
+    const claimed = new Set<string>();
+    const demoted = identities.map(identity => {
+      if (!identity.isDefault) return identity;
+      if (claimed.has(identity.accountId)) return { ...identity, isDefault: false };
+      claimed.add(identity.accountId);
+      return identity;
+    });
+    const promoted = new Set<string>();
+    return demoted.map(identity => {
+      if (claimed.has(identity.accountId) || promoted.has(identity.accountId)) return identity;
+      promoted.add(identity.accountId);
+      return { ...identity, isDefault: true };
+    });
+  });
+
 const junkTokenCountSchema = z.strictObject({
   junk: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   good: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -386,6 +431,7 @@ export const persistedStateSchema = z.strictObject({
   messageFilters: z.array(messageFilterSchema).max(MESSAGE_FILTER_LIMIT).default([]),
   junkModel: junkModelSchema.default(emptyJunkModel()),
   accounts: z.array(accountSchema).max(100),
+  identities: identityListSchema.default([]),
   preferences: preferencesSchema,
   folders: folderRecordSchema,
   messages: messageRecordSchema,

@@ -2,7 +2,7 @@
 
 ## Current status
 
-**Verified local slice with live folder administration.** Material Email can label cached messages with colour-coded tags, narrow a folder with a quick filter, evaluate ordered filter rules and carry out their actions, learn a local junk classifier from explicit corrections, and create/rename/remove folders and mark a folder read on the server. Tags, filters, and junk training are local and are never sent to a mail server. Filter rules evaluate cached rows only; server-side filtering, server-stored keywords, and scheduled background filtering are not implemented.
+**Verified local slice with live folder administration.** Material Email can label cached messages with colour-coded tags, narrow a folder with a quick filter, evaluate ordered filter rules and carry out their actions, learn a local junk classifier from explicit corrections, and create/rename/remove folders and mark a folder read on the server. Tags, filters, and junk training are local and are never sent to a mail server. Filter rules are edited from Settings and run automatically over messages that arrive during a synchronization, as well as on demand. They evaluate cached rows only; server-side filtering and server-stored keywords are not implemented, and no schedule runs them outside a synchronization.
 
 ## Behavior
 
@@ -35,6 +35,21 @@
 - **Run filters** previews the plan first and states exactly how many cached messages would change before asking for confirmation. The preview and the run are produced by the same planner, so they agree.
 - A message that fails leaves the rest of the run alone; each failure is listed with its subject.
 
+### The filter editor
+
+- Filters are created and edited from the **Message filters** card in Settings. A rule carries a name, an enabled state, all/any matching, a per-account or all-account scope, its condition rows, its action rows, and whether it runs after synchronization.
+- Rows are added and removed individually. Choosing a condition's field narrows the comparisons offered to those the field supports, and choosing an action kind decides whether that row needs a value at all.
+- A filter can be duplicated, enabled or disabled without editing it, reordered, and deleted. Deletion goes through the application's ordinary confirmation dialog, because a rule cannot be recovered from the editor once removed.
+- The card carries its own search field with the project's regular-expression builder beside it. Plain text is the default and an invalid pattern is refused rather than executed.
+
+### Running after synchronization
+
+- A filter marked **run after synchronization** is evaluated when a synchronization brings new messages into that account, without the user asking.
+- Only messages that actually arrived in that synchronization are considered. The arrival set is computed against the persisted cache, so a restart does not make already-processed messages look new, and an in-memory ledger stops two concurrent synchronizations acting on the same message.
+- A UIDVALIDITY reset clears the folder's cache, so that generation's messages are deliberately treated as new.
+- One post-synchronization run examines at most 5,000 messages and says so when it stops at that ceiling.
+- The run reports what it changed as a non-blocking notification and a local-history record. A filter failure never fails the synchronization that triggered it.
+
 ### Junk classification
 
 - The classifier is a local token model trained only by explicit **It is junk** and **Not junk** corrections. Tokens keep their source (sender, sender domain, subject, body), so a word in an address is weighed separately from the same word in a body.
@@ -59,9 +74,9 @@ Tags, filters, and junk training live in the existing local application state fi
 ## Failure modes and limits
 
 - Filter rules see only messages already cached on this computer. A message that has never been synchronized cannot match.
-- One run examines at most 5,000 cached messages and reports when it stopped at that ceiling.
+- One run examines at most 5,000 cached messages and reports when it stopped at that ceiling. The same ceiling applies to a run after synchronization.
 - Tagging and junk training require the message's own account folder. In a unified view or a search result the controls are disabled with an explanation, because those views do not carry a single mailbox generation.
-- Tags are not written to the server as IMAP keywords, so they do not appear in other mail clients and do not survive reinstalling on another computer.
+- Tags are not written to the server as IMAP keywords, so they do not appear in other mail clients and do not survive reinstalling on another computer. A bounded keyword encoder and a fail-closed `setMessageKeywords` exist in the mail service and are unit-tested, but nothing in the application calls them yet, so no tag reaches a server today.
 - Junk classification never moves, deletes, or reports a message on its own.
 - A folder rename or removal that the server rejects leaves local state untouched; the failure is surfaced with its category preserved and without raw host paths.
 - Marking a folder read is bounded to 50,000 unseen messages in one operation.
@@ -77,8 +92,10 @@ Every operation in this article runs in the main process over validated local st
 - `tests/junk-classifier.test.ts` covers tokenization and its bounds, the untrained state, junk and wanted verdicts, the uncertain state, threshold clamping, long-message stability, correction, exact untraining, and model pruning.
 - `tests/quick-filter.test.ts` covers the inactive and inert states, each facet, facet conjunction, tag any/all matching, tag ceilings, scoped plain and regular-expression text, default case-insensitivity, invalid and unsafe patterns, and combined filtering.
 - `tests/mail-organization.test.ts` covers state migration, orphaned-assignment pruning, cached-message reads, every tag operation over persisted state, filter create/update/remove/reorder with dense ordinals, subject construction, run planning and summarizing, and junk training over persisted state.
+- `tests/message-filter-editor.test.ts` covers filter creation, editing, ordinal assignment, reordering with a partial identifier list, renumbering after a delete, the model's rejection reasons, the post-synchronization run, disabled and manual-only rules staying out of it, no reprocessing on a later synchronization or after a restart, the run ceiling, and a failing action leaving the synchronization successful.
+- `tests/imap-keyword-persistence.test.ts` covers the keyword encoding round trip, refusal of a tag name that cannot be encoded, the unsupported-server refusal, foreign keywords surviving, and the UIDVALIDITY guard. It runs against a mocked IMAP client, not a socket.
 - `npm run check` runs the type, unit, asset, site, source-policy, and build verification on this tree.
-- Not verified: a packaged Electron session exercising these surfaces, the accessibility and language matrices for the new controls, and folder administration against a live third-party IMAP server.
+- Not verified: a packaged Electron session exercising these surfaces, the accessibility and language matrices for the new controls, folder administration against a live third-party IMAP server, the filter editor's own rendering and keyboard behaviour (its tests are service-level), and keyword persistence against any real server.
 
 ## Suggested articles
 

@@ -141,6 +141,10 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("mail:mark-folder-read", ipcPayloadSchemas.accountFolder, ([accountId, folderPath]) =>
     service.markFolderRead(accountId, folderPath),
   );
+  handleValidated("identities:list", ipcPayloadSchemas.none, () => service.listIdentities());
+  handleValidated("identities:save", ipcPayloadSchemas.identitySave, ([input]) => service.saveIdentity(input));
+  handleValidated("identities:delete", ipcPayloadSchemas.identityId, ([id]) => service.deleteIdentity(id));
+  handleValidated("identities:default", ipcPayloadSchemas.identityId, ([id]) => service.setDefaultIdentity(id));
   handleValidated("tags:list", ipcPayloadSchemas.none, () => service.listMessageTags());
   handleValidated("tags:assignments", ipcPayloadSchemas.none, () => service.listMessageTagAssignments());
   handleValidated("tags:create", ipcPayloadSchemas.messageTagCreate, ([name, colour]) => service.createMessageTag(name, colour));

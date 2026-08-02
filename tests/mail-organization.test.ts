@@ -68,7 +68,6 @@ const baseState = (messages: MessageSummary[] = [message()]): PersistedState => 
       fontFamily: "Segoe UI Variable",
       fontScale: 1,
       fontWeight: 400,
-      dimSumEnabled: true,
       narratorEnabled: false,
       narratorLanguage: "en",
     },

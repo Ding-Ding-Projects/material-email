@@ -14,7 +14,6 @@ const minimalState = () => ({
     fontFamily: "Segoe UI Variable",
     fontScale: 1,
     fontWeight: 400,
-    dimSumEnabled: true,
     narratorEnabled: false,
     narratorLanguage: "en",
   },
@@ -33,6 +32,15 @@ describe("persisted application state schema", () => {
     expect(parsePersistedState(minimalState()).approvedEditorPaths).toEqual([]);
     expect(parsePersistedState(minimalState()).quarantinedAttachments).toEqual([]);
     expect(parsePersistedState(minimalState()).preferences.historyRetentionDays).toBe(365);
+  });
+
+  it("loads a profile that still carries the retired dim-sum switch and drops it", () => {
+    const legacy = minimalState();
+    const parsed = parsePersistedState({ ...legacy, preferences: { ...legacy.preferences, dimSumEnabled: false } });
+
+    expect(parsed.preferences).not.toHaveProperty("dimSumEnabled");
+    expect(parsed.preferences.language).toBe("en");
+    expect(() => parsePersistedState({ ...legacy, preferences: { ...legacy.preferences, unknownSwitch: false } })).toThrow();
   });
 
   it("migrates notification category and dismissal state while dropping legacy executable commands", () => {

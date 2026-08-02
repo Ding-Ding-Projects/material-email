@@ -68,6 +68,14 @@ const CONTROL_CHARACTERS = new RegExp("[\\x00-\\x08\\x0b-\\x1f\\x7f]", "gu");
 export const normalizeIdentityText = (value: string, limit: number): string =>
   value.normalize("NFKC").replace(new RegExp("\\r\\n?", "gu"), "\n").replace(CONTROL_CHARACTERS, "").slice(0, limit).trim();
 
+/**
+ * The display name and organization become header values, so they keep no newline at all — only a
+ * signature has a reason to contain one. Folding the newline to a space keeps the name readable
+ * rather than silently joining two words.
+ */
+export const normalizeIdentityLine = (value: string, limit: number): string =>
+  normalizeIdentityText(value, limit).replace(new RegExp("\\s*\\n\\s*", "gu"), " ").slice(0, limit).trim();
+
 export const sortIdentities = (identities: readonly MailIdentity[]): MailIdentity[] =>
   [...identities].sort((left, right) =>
     Number(right.isDefault) - Number(left.isDefault)
@@ -83,7 +91,7 @@ export const defaultIdentityFor = (identities: readonly MailIdentity[], accountI
   identitiesForAccount(identities, accountId)[0] ?? null;
 
 export const validateIdentityInput = (input: MailIdentityInput): void => {
-  if (!normalizeIdentityText(input.displayName, IDENTITY_NAME_LIMIT)) {
+  if (!normalizeIdentityLine(input.displayName, IDENTITY_NAME_LIMIT)) {
     throw new MailIdentityError("IDENTITY_NAME_REQUIRED", "An identity needs a display name.");
   }
   if (!isMailAddress(input.email)) {
@@ -113,10 +121,10 @@ export const buildIdentity = (
   const identity: MailIdentity = {
     id: current?.id ?? newId(),
     accountId: input.accountId,
-    displayName: normalizeIdentityText(input.displayName, IDENTITY_NAME_LIMIT),
+    displayName: normalizeIdentityLine(input.displayName, IDENTITY_NAME_LIMIT),
     email: input.email.trim(),
     replyTo: input.replyTo?.trim() ?? "",
-    organization: normalizeIdentityText(input.organization ?? "", IDENTITY_ORGANIZATION_LIMIT),
+    organization: normalizeIdentityLine(input.organization ?? "", IDENTITY_ORGANIZATION_LIMIT),
     signature: normalizeIdentityText(input.signature ?? "", IDENTITY_SIGNATURE_LIMIT),
     signaturePlacement: input.signaturePlacement ?? current?.signaturePlacement ?? "below-body",
     isDefault: forAccount.length === 0 ? true : isDefault,
@@ -173,9 +181,53 @@ export const identityForReply = (
   return defaultIdentityFor(identities, accountId);
 };
 
+/**
+ * Resolves the identity a draft should send from. An identity id that belongs to another account
+ * is ignored rather than honoured, so a stale draft cannot send From an unrelated account.
+ */
+export const resolveIdentity = (
+  identities: readonly MailIdentity[],
+  accountId: string,
+  identityId: string | undefined,
+): MailIdentity | null => {
+  const candidates = identitiesForAccount(identities, accountId);
+  if (!candidates.length) return null;
+  const requested = identityId ? candidates.find(identity => identity.id === identityId) : undefined;
+  return requested ?? defaultIdentityFor(identities, accountId);
+};
+
 export const identitySender = (identity: MailIdentity): Address => ({ name: identity.displayName, address: identity.email });
 
-const stripSignature = (body: string): string => {
+/** The Reply-To header is only worth writing when it actually differs from the From address. */
+export const identityReplyTo = (identity: MailIdentity): Address | null => {
+  const replyTo = identity.replyTo.trim();
+  if (!replyTo || replyTo.toLocaleLowerCase("en-US") === identity.email.trim().toLocaleLowerCase("en-US")) return null;
+  return { name: identity.displayName, address: replyTo };
+};
+
+const signatureBlock = (signature: string): string => `\n${SIGNATURE_SEPARATOR}\n${signature}`;
+
+/**
+ * Removes a signature already in the body.
+ *
+ * `previousSignature` is authoritative when the caller supplies it, including as an empty string,
+ * which asserts that nothing was applied and therefore nothing may be cut. The exact block is the
+ * only safe thing to remove: the separator marks where a signature starts and never where it ends,
+ * so cutting from it to the end of the body takes whatever follows — quoted material, or a
+ * forwarded message that carries its own separator — along with it.
+ *
+ * `undefined` means the caller genuinely does not know. Only then is the bare separator trusted,
+ * and a caller in that position is accepting that a body containing someone else's separator will
+ * be truncated. Every caller in this application supplies the value.
+ */
+const stripSignature = (body: string, previousSignature: string | undefined): string => {
+  if (previousSignature !== undefined) {
+    const previous = previousSignature.trim();
+    if (!previous) return body;
+    const block = signatureBlock(previous);
+    const index = body.lastIndexOf(block);
+    return index >= 0 ? `${body.slice(0, index)}${body.slice(index + block.length)}` : body;
+  }
   const marker = `\n${SIGNATURE_SEPARATOR}\n`;
   const index = body.lastIndexOf(marker);
   return index >= 0 ? body.slice(0, index) : body;
@@ -186,29 +238,84 @@ export interface SignatureApplication {
   applied: boolean;
 }
 
+export interface RecoveredSignaturePlacement {
+  /** The signature found in the body, or empty when none of these identities' signatures is there. */
+  signature: string;
+  /** The first line after the signature block, so a replacement lands where the old one sat. */
+  quoteMarker: string | null;
+}
+
+/**
+ * Works out which signature is already sitting in a body by matching the account's own identities
+ * against it. A draft reopened from disk carries no record of what was applied, and the separator
+ * alone cannot answer it — a body that merely quotes a signed message has one too.
+ */
+export const recoverSignaturePlacement = (
+  body: string,
+  identities: readonly MailIdentity[],
+): RecoveredSignaturePlacement => {
+  let found = { signature: "", index: -1 };
+  for (const identity of identities) {
+    const signature = identity.signature.trim();
+    if (!signature) continue;
+    const block = signatureBlock(signature);
+    const index = body.indexOf(block);
+    if (index < 0) continue;
+    // A block appearing twice cannot be told apart from a copy inside quoted or forwarded material,
+    // and cutting the wrong one edits someone else's message. Decline instead: the next signature
+    // is appended rather than replaced, which is visible and recoverable, unlike a silent edit.
+    if (body.indexOf(block, index + block.length) >= 0) return { signature: "", quoteMarker: null };
+    // A longer match wins, because one signature can be a prefix of another.
+    if (signature.length > found.signature.length) found = { signature, index };
+  }
+  if (found.index < 0) return { signature: "", quoteMarker: null };
+  const after = body.slice(found.index + signatureBlock(found.signature).length);
+  return { signature: found.signature, quoteMarker: after.split("\n").find(line => line.trim().length > 0) ?? null };
+};
+
+/**
+ * Where quoted material starts. A number is an index into the body *after* the previous signature
+ * has been removed; a string is the quote's first line, located after removal. Prefer the string:
+ * an index measured before the strip is off by the length of whatever was cut, which lands the new
+ * signature inside the quote.
+ */
+export type QuotePosition = number | string | null;
+
+const quoteIndexIn = (stripped: string, quotedFrom: QuotePosition): number | null => {
+  if (quotedFrom === null) return null;
+  if (typeof quotedFrom === "number") return quotedFrom > stripped.length ? null : quotedFrom;
+  const index = stripped.indexOf(quotedFrom);
+  return index >= 0 ? index : null;
+};
+
 /**
  * Places the identity's signature in a compose body, replacing any signature already there so
- * switching identities does not stack two of them.
- *
- * `quotedFrom` is the index where quoted material starts; `below-body` inserts before it and
+ * switching identities does not stack two of them. `below-body` inserts before quoted material and
  * `below-quote` appends after everything.
  */
 export const applySignature = (
   body: string,
   identity: MailIdentity | null,
-  quotedFrom: number | null = null,
+  quotedFrom: QuotePosition = null,
+  previousSignature?: string,
 ): SignatureApplication => {
-  const stripped = stripSignature(body);
+  const stripped = stripSignature(body, previousSignature);
   const signature = identity?.signature.trim() ?? "";
   if (!signature) return { text: stripped, applied: false };
-  const block = `\n${SIGNATURE_SEPARATOR}\n${signature}`;
-  if (identity?.signaturePlacement === "below-quote" || quotedFrom === null || quotedFrom > stripped.length) {
+  const block = signatureBlock(signature);
+  const quoteIndex = quoteIndexIn(stripped, quotedFrom);
+  if (identity?.signaturePlacement === "below-quote" || quoteIndex === null) {
     return { text: `${stripped}${block}`, applied: true };
   }
-  return { text: `${stripped.slice(0, quotedFrom).replace(/\s+$/u, "")}${block}\n\n${stripped.slice(quotedFrom)}`, applied: true };
+  return { text: `${stripped.slice(0, quoteIndex).replace(/\s+$/u, "")}${block}\n\n${stripped.slice(quoteIndex)}`, applied: true };
 };
 
-export const applyIdentityToDraft = (draft: ComposeDraft, identity: MailIdentity | null, quotedFrom: number | null = null): ComposeDraft => {
-  const signed = applySignature(draft.text, identity, quotedFrom);
+export const applyIdentityToDraft = (
+  draft: ComposeDraft,
+  identity: MailIdentity | null,
+  quotedFrom: QuotePosition = null,
+  previousSignature?: string,
+): ComposeDraft => {
+  const signed = applySignature(draft.text, identity, quotedFrom, previousSignature);
   return { ...draft, text: signed.text };
 };
