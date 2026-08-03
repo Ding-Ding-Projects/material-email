@@ -3220,26 +3220,26 @@ const renderConnectionPreflight = (settings: MailConnectionSettings): string => 
 };
 
 const oauthAuthorizationIsActive = (snapshot = state.oauthAuthorization): boolean =>
-  snapshot.phase === "preparing" || snapshot.phase === "opening-browser" || snapshot.phase === "waiting-for-callback";
+  snapshot.phase === "preparing" || snapshot.phase === "opening-browser" || snapshot.phase === "awaiting-redirect-paste";
 
 const oauthAuthorizationCopy = (): { title: string; body: string; alert: boolean } => {
   const snapshot = state.oauthAuthorization;
   switch (snapshot.phase) {
     case "preparing": return {
-      title: tx("Preparing the private callback", "準備緊私人回呼"),
-      body: tx("Material Email is binding a temporary loopback port and creating a fresh PKCE challenge. Nothing has been saved.", "Material Email 正綁定臨時 loopback 連接埠，同埋建立全新 PKCE challenge。仲未儲存任何嘢。"),
+      title: tx("Preparing sign-in", "準備緊登入"),
+      body: tx("Material Email is creating a fresh PKCE challenge. Nothing has been saved.", "Material Email 正建立全新 PKCE challenge。仲未儲存任何嘢。"),
       alert: false,
     };
     case "opening-browser": return {
-      title: tx("Opening browser authorization", "開緊瀏覽器授權"),
+      title: tx("Opening browser sign-in", "開緊瀏覽器登入"),
       body: tx("The authorization URL stays in the main process. This window receives status only—no URL, verifier, code, or token crosses the desktop bridge.", "授權網址留喺主程序。呢個視窗只會收到狀態——網址、verifier、授權碼同權杖全部唔會跨過桌面連接。"),
       alert: false,
     };
-    case "waiting-for-callback": return {
-      title: tx("Waiting for the exact loopback callback", "等緊完全吻合嘅 loopback 回呼"),
+    case "awaiting-redirect-paste": return {
+      title: tx("Paste the address after signing in", "登入完成之後貼返個網址"),
       body: tx(
-        `The temporary listener accepts only its exact 127.0.0.1 port, path, and state${snapshot.expiresAt ? ` until ${formatDate(snapshot.expiresAt)}` : ""}. You can cancel without saving anything.`,
-        `臨時監聽器只接受完全吻合嘅 127.0.0.1 連接埠、路徑同 state${snapshot.expiresAt ? `，有效至 ${formatDate(snapshot.expiresAt)}` : ""}。你可以取消，唔會儲存任何嘢。`,
+        `Complete sign-in in the browser tab that just opened. When it finishes, the browser shows a page whose address bar carries the result — copy that full address and paste it below${snapshot.expiresAt ? ` before ${formatDate(snapshot.expiresAt)}` : ""}. Nothing is saved until it matches.`,
+        `喺啱啱開嘅瀏覽器分頁完成登入。完成之後，瀏覽器個網址列會帶住結果——複製成個網址，貼落下面${snapshot.expiresAt ? `，記住喺 ${formatDate(snapshot.expiresAt)} 之前` : ""}。喺網址啱之前，唔會儲存任何嘢。`,
       ),
       alert: false,
     };
@@ -3262,31 +3262,31 @@ const oauthAuthorizationCopy = (): { title: string; body: string; alert: boolean
       };
     }
     case "cancelled": return {
-      title: tx("Browser authorization cancelled", "瀏覽器授權已取消"),
-      body: tx("The loopback listener closed and its temporary state was cleared. No code or token was saved.", "Loopback 監聽器已關閉，臨時狀態亦已清除。冇儲存授權碼或者權杖。"),
+      title: tx("Sign-in cancelled", "登入已取消"),
+      body: tx("The temporary sign-in state was cleared. No code or token was saved.", "臨時登入狀態已清除。冇儲存授權碼或者權杖。"),
       alert: false,
     };
     case "timed-out": return {
-      title: tx("Browser authorization timed out", "瀏覽器授權已逾時"),
-      body: tx("The temporary listener closed after its bounded wait. Start a new attempt only when provider registration is available.", "臨時監聽器喺有限等候時間之後已關閉。供應商註冊可用時先開始新一次。"),
+      title: tx("Sign-in timed out", "登入已逾時"),
+      body: tx("The bounded wait for a pasted address elapsed and the temporary state was cleared. Start a new attempt when ready.", "等候貼上網址嘅有限時間已過，臨時狀態已清除。準備好就可以再開始一次。"),
       alert: true,
     };
     case "error": {
       const copy = (() => {
         switch (snapshot.failure) {
-          case "provider-not-configured": return tx("This build has no client registration for that provider. No browser or listener was opened.", "呢個版本冇嗰個供應商嘅 client registration。未有開瀏覽器或者監聽器。") ;
-          case "callback-listener-failed": return tx("The temporary loopback listener could not start or remain available. No provider credential was sent or saved.", "臨時 loopback 監聽器啟動唔到或者未能維持。冇傳送或者儲存供應商憑證。") ;
-          case "browser-open-failed": return tx("Windows could not open the authorization URL. The temporary listener closed and its secrets were cleared.", "Windows 開唔到授權網址。臨時監聽器已關閉，秘密狀態亦已清除。") ;
+          case "provider-not-configured": return tx("This build has no client registration for that provider. No browser was opened.", "呢個版本冇嗰個供應商嘅 client registration。未有開瀏覽器。") ;
+          case "browser-open-failed": return tx("Windows could not open the authorization URL. Temporary state was cleared.", "Windows 開唔到授權網址。臨時狀態已清除。") ;
           case "provider-denied": return tx("The provider reported that authorization was denied. No code or token was retained.", "供應商報告授權被拒絕。冇保留授權碼或者權杖。") ;
           case "provider-error": return tx("The provider returned an error. Provider details were not copied into the app, and no code or token was retained.", "供應商傳回錯誤。供應商詳細資料冇複製入應用程式，亦冇保留授權碼或者權杖。") ;
-          default: return tx("The callback did not satisfy the exact local checks. Temporary authorization state was cleared.", "回呼未能通過精準本機檢查。臨時授權狀態已清除。") ;
+          case "redirect-invalid": return tx("The pasted address did not match after several attempts. Copy the exact address from the browser's own address bar and start again.", "貼上嘅網址試咗幾次都唔啱。請由瀏覽器嘅網址列度複製返完整網址，再開始一次。") ;
+          default: return tx("The pasted address did not satisfy the exact checks. Temporary authorization state was cleared.", "貼上嘅網址未能通過精準檢查。臨時授權狀態已清除。") ;
         }
       })();
-      return { title: tx("Browser authorization stopped safely", "瀏覽器授權已安全停止"), body: copy, alert: true };
+      return { title: tx("Sign-in stopped safely", "登入已安全停止"), body: copy, alert: true };
     }
     default: return {
-      title: tx("Browser authorization foundation", "瀏覽器授權地基"),
-      body: tx("Choose a provider to inspect availability. The current public build has no provider client registration, so it cannot complete a live login or token exchange.", "揀供應商查看可用狀態。目前公開版本冇供應商 client registration，所以唔可以完成即時登入或者 token exchange。"),
+      title: tx("Browser sign-in foundation", "瀏覽器登入地基"),
+      body: tx("Choose a provider to inspect availability. Sign-in needs a registered provider client, which this public build ships with none of by default.", "揀供應商查看可用狀態。登入需要已註冊嘅供應商 client；呢個公開版本預設冇附帶任何一個。"),
       alert: false,
     };
   }
@@ -3297,15 +3297,17 @@ const renderOAuthAuthorizationPanel = (): string => {
   const active = oauthAuthorizationIsActive(snapshot);
   const selected = snapshot.providers.find(provider => provider.id === state.oauthProvider) ?? snapshot.providers[0];
   const copy = oauthAuthorizationCopy();
+  const awaitingPaste = snapshot.phase === "awaiting-redirect-paste";
   return `<section class="oauth-foundation" data-testid="oauth-foundation" data-oauth-panel hidden aria-labelledby="oauth-foundation-title" aria-describedby="oauth-foundation-boundary">
-    <header><span class="settings-card__icon">${icon("account")}</span><div><h3 id="oauth-foundation-title">${escapeHtml(tx("OAuth browser authorization foundation", "OAuth 瀏覽器授權地基"))}</h3><p>${escapeHtml(tx("Local, bounded, and intentionally stopped before token exchange", "本機、有界，而且刻意喺 token exchange 之前停低"))}</p></div></header>
-    <p class="oauth-foundation__boundary" id="oauth-foundation-boundary">${icon("info")}<span>${escapeHtml(tx("No provider client registration ships in this build. The app never asks you to paste an OAuth token; the foundation keeps PKCE verifier, callback state, authorization URL, and code out of renderer IPC and persistent storage.", "呢個版本冇附帶供應商 client registration。應用程式永遠唔會叫你貼 OAuth 權杖；呢個地基會將 PKCE verifier、回呼 state、授權網址同授權碼留喺 renderer IPC 同持久儲存之外。"))}</span></p>
+    <header><span class="settings-card__icon">${icon("account")}</span><div><h3 id="oauth-foundation-title">${escapeHtml(tx("Browser sign-in", "瀏覽器登入"))}</h3><p>${escapeHtml(tx("No local listener; you copy the result back yourself", "冇本機監聽器；結果由你自己複製返嚟"))}</p></div></header>
+    <p class="oauth-foundation__boundary" id="oauth-foundation-boundary">${icon("info")}<span>${escapeHtml(tx("No provider client registration ships in this build. Sign-in opens your browser, then asks you to paste back the resulting address; the app never asks for a token directly, and the PKCE verifier, state, and code stay out of persistent storage until they are actually used.", "呢個版本冇附帶供應商 client registration。登入會開瀏覽器，然後叫你貼返個結果網址；應用程式唔會直接問你攞權杖，PKCE verifier、state 同授權碼喺真正用到之前都唔會寫入持久儲存。"))}</span></p>
     <div class="oauth-foundation__controls">
       <label class="field"><span>${escapeHtml(tx("Browser provider", "瀏覽器供應商"))}</span><select name="oauthProvider" data-action-change="select-oauth-provider" aria-describedby="oauth-provider-support" ${active ? "disabled" : ""}>${snapshot.providers.map(provider => `<option value="${provider.id}" ${provider.id === state.oauthProvider ? "selected" : ""}>${escapeHtml(`${provider.name} — ${provider.configured ? tx("configured", "已設定") : tx("not configured", "未設定")}`)}</option>`).join("")}</select></label>
-      <p id="oauth-provider-support" class="supporting-copy">${escapeHtml(selected?.configured ? tx("This provider is registered. Signing in exchanges the authorization code for a token over a direct HTTPS connection to the provider; nothing is written to disk until you test or connect the account below.", "呢個供應商已經註冊。登入會經直接 HTTPS 連線同供應商交換授權碼換取權杖；喺你喺下面測試或者連接帳戶之前，冇任何嘢會寫落磁碟。") : tx("Provider registration unavailable. The button stays disabled; no browser, loopback listener, mail server, or provider endpoint will be contacted.", "供應商註冊不可用。按鈕會保持停用；唔會聯絡瀏覽器、loopback 監聽器、郵件伺服器或者供應商端點。"))}</p>
+      <p id="oauth-provider-support" class="supporting-copy">${escapeHtml(selected?.configured ? tx("This provider is registered. Signing in exchanges the authorization code for a token over a direct HTTPS connection to the provider; nothing is written to disk until you test or connect the account below.", "呢個供應商已經註冊。登入會經直接 HTTPS 連線同供應商交換授權碼換取權杖；喺你喺下面測試或者連接帳戶之前，冇任何嘢會寫落磁碟。") : tx("Provider registration unavailable. The button stays disabled; no browser or provider endpoint will be contacted.", "供應商註冊不可用。按鈕會保持停用；唔會聯絡瀏覽器或者供應商端點。"))}</p>
     </div>
     <div class="oauth-foundation__status${copy.alert ? " oauth-foundation__status--error" : ""}" data-testid="oauth-status" role="${copy.alert ? "alert" : "status"}" aria-live="${copy.alert ? "assertive" : "polite"}" aria-atomic="true" aria-busy="${active}">${icon(copy.alert ? "warning" : active ? "refresh" : snapshot.phase === "authorization-received" ? "check" : "info", active ? "is-spinning" : "")}<div><strong>${escapeHtml(copy.title)}</strong><p>${escapeHtml(copy.body)}</p></div></div>
-    <div class="button-row oauth-foundation__actions"><button class="button button--tonal" type="button" data-action="start-oauth-authorization" data-focus-key="oauth-start" ${!selected?.configured || active ? "disabled" : ""}>${icon("forward")}<span>${escapeHtml(tx("Start browser authorization", "開始瀏覽器授權"))}</span></button>${active ? `<button class="button button--outlined" type="button" data-action="cancel-oauth-authorization" data-focus-key="oauth-cancel">${icon("close")}<span>${escapeHtml(tx("Cancel authorization", "取消授權"))}</span></button>` : ""}</div>
+    ${awaitingPaste ? `<div class="oauth-foundation__paste"><label class="field field--wide" for="oauth-redirect-paste"><span>${escapeHtml(tx("Pasted address", "已貼上嘅網址"))}</span><input type="text" id="oauth-redirect-paste" name="oauthRedirectUrl" data-testid="oauth-redirect-input" data-focus-key="oauth-redirect-paste" inputmode="url" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(tx("https://…", "https://……"))}"/></label><button class="button button--filled" type="button" data-action="submit-oauth-redirect" data-focus-key="oauth-redirect-submit">${icon("check")}<span>${escapeHtml(tx("Continue", "繼續"))}</span></button></div>` : ""}
+    <div class="button-row oauth-foundation__actions"><button class="button button--tonal" type="button" data-action="start-oauth-authorization" data-focus-key="oauth-start" ${!selected?.configured || active ? "disabled" : ""}>${icon("forward")}<span>${escapeHtml(tx("Start browser sign-in", "開始瀏覽器登入"))}</span></button>${active ? `<button class="button button--outlined" type="button" data-action="cancel-oauth-authorization" data-focus-key="oauth-cancel">${icon("close")}<span>${escapeHtml(tx("Cancel", "取消"))}</span></button>` : ""}</div>
   </section>`;
 };
 
@@ -3369,13 +3371,13 @@ function renderAccountSetup(): string {
             </div>
           </div>
           <div class="credential-grid">
-            <label class="field"><span>${escapeHtml(tx("Authentication", "驗證方式"))}</span><select name="authMode" aria-describedby="authentication-boundary"><option value="password" ${!discovery || discovery.authModes.includes("password") ? "" : "disabled"}>${escapeHtml(tx("Password", "密碼"))}</option><option value="oauth2">${escapeHtml(tx("OAuth 2 browser foundation", "OAuth 2 瀏覽器地基"))}</option></select></label>
+            <label class="field"><span>${escapeHtml(tx("Authentication", "驗證方式"))}</span><select name="authMode" aria-describedby="authentication-boundary"><option value="password" ${!discovery || discovery.authModes.includes("password") ? "" : "disabled"}>${escapeHtml(tx("Password", "密碼"))}</option><option value="oauth2">${escapeHtml(tx("OAuth 2 browser sign-in", "OAuth 2 瀏覽器登入"))}</option></select></label>
             <label class="field" data-password-credential><span>${escapeHtml(tx("Password", "密碼"))}</span><input type="password" name="secret" required maxlength="16384" autocomplete="current-password" /></label>
           </div>
-          <p id="authentication-boundary" class="supporting-copy">${escapeHtml(tx("Password mode can test and save an encrypted password. OAuth mode cannot accept a pasted token and cannot connect an account in this build.", "密碼模式可以測試同加密儲存密碼。OAuth 模式喺呢個版本唔接受貼上權杖，亦唔可以連接帳戶。"))}</p>
+          <p id="authentication-boundary" class="supporting-copy">${escapeHtml(tx("Password mode can test and save an encrypted password. OAuth mode never accepts a pasted token directly; it can test and connect an account once you have signed in below through a registered provider.", "密碼模式可以測試同加密儲存密碼。OAuth 模式永遠唔會直接接受貼上嘅權杖；喺你喺下面經已註冊供應商完成登入之後，就可以測試同連接帳戶。"))}</p>
           ${renderOAuthAuthorizationPanel()}
           ${renderConnectionPreflight({ incomingProtocol: "imap", incoming, outgoing })}
-          <p class="security-disclosure">${icon("info")}<span>${escapeHtml(tx("Required TLS never falls back to plain text. Password testing contacts the named mail servers; adding saves the encrypted password only after both checks succeed. OAuth foundation actions never test mail or save a token.", "必須使用 TLS 時絕對唔會降級到純文字。密碼測試會聯絡指定郵件伺服器；兩邊檢查成功之後先會加密儲存密碼。OAuth 地基操作唔會測試郵件或者儲存權杖。"))}</span></p>
+          <p class="security-disclosure">${icon("info")}<span>${escapeHtml(tx("Required TLS never falls back to plain text. Password testing contacts the named mail servers; adding saves the encrypted password only after both checks succeed. OAuth testing and connecting contact the named mail servers using the token from a completed sign-in.", "必須使用 TLS 時絕對唔會降級到純文字。密碼測試會聯絡指定郵件伺服器；兩邊檢查成功之後先會加密儲存密碼。OAuth 測試同連接會用完成登入攞到嘅權杖，聯絡指定郵件伺服器。"))}</span></p>
           <footer class="setup-actions">
             ${state.setupContext === "settings" ? `<button class="button button--text" type="button" data-action="close-account-setup">${escapeHtml(tx("Cancel", "取消"))}</button>` : ""}
             <span class="action-spacer"></span>
@@ -5137,13 +5139,15 @@ const syncIncomingProtocolMode = (form: HTMLFormElement, adjustConventionalPort 
   updateConnectionPreflight(form);
 };
 
-const updateOAuthAuthorizationPanel = (focusKey?: "oauth-start" | "oauth-cancel"): void => {
+type OAuthPanelFocusKey = "oauth-start" | "oauth-cancel" | "oauth-redirect-paste" | "oauth-redirect-submit";
+
+const updateOAuthAuthorizationPanel = (focusKey?: OAuthPanelFocusKey): void => {
   const form = document.querySelector<HTMLFormElement>('[data-form="account-setup"]');
   const panel = form?.querySelector<HTMLElement>("[data-oauth-panel]");
   if (!form || !panel) return;
   const preservedFocusKey = document.activeElement instanceof HTMLElement
     && document.activeElement.closest("[data-oauth-panel]")
-    ? document.activeElement.dataset.focusKey as "oauth-start" | "oauth-cancel" | undefined
+    ? document.activeElement.dataset.focusKey as OAuthPanelFocusKey | undefined
     : undefined;
   panel.outerHTML = renderOAuthAuthorizationPanel();
   syncAccountAuthenticationMode(form);
@@ -5225,7 +5229,7 @@ const startOAuthAuthorizationFromSetup = async (): Promise<void> => {
   updateOAuthAuthorizationPanel();
   try {
     state.oauthAuthorization = await api.startOAuthAuthorization(provider.id);
-    updateOAuthAuthorizationPanel(oauthAuthorizationIsActive() ? "oauth-cancel" : "oauth-start");
+    updateOAuthAuthorizationPanel(state.oauthAuthorization.phase === "awaiting-redirect-paste" ? "oauth-redirect-paste" : oauthAuthorizationIsActive() ? "oauth-cancel" : "oauth-start");
     scheduleOAuthStatusPoll();
   } catch {
     await refreshOAuthAuthorizationStatus().catch(() => undefined);
@@ -5248,10 +5252,38 @@ const cancelOAuthAuthorizationFromSetup = async (): Promise<void> => {
     pushToast(
       "error",
       "Authorization cancellation status unavailable",
-      "The desktop bridge did not confirm cancellation. Close account setup or the app to tear down the local listener.",
+      "The desktop bridge did not confirm cancellation. Close account setup or the app to clear the temporary sign-in state.",
       "授權取消狀態不可用",
-      "桌面連接未能確認取消。關閉帳戶設定或者應用程式，就會拆走本機監聽器。",
+      "桌面連接未能確認取消。關閉帳戶設定或者應用程式，就會清除臨時登入狀態。",
     );
+  }
+};
+
+const submitOAuthRedirectFromSetup = async (form: HTMLFormElement): Promise<void> => {
+  const input = form.querySelector<HTMLInputElement>('[data-testid="oauth-redirect-input"]');
+  const pastedUrl = input?.value.trim() ?? "";
+  if (!pastedUrl) {
+    pushToast("warning", "Paste the address first", "Copy the full address from the browser tab's address bar, then paste it here.", "請先貼上網址", "由瀏覽器分頁嘅網址列度複製成個網址，跟住貼落呢度。");
+    input?.focus();
+    return;
+  }
+  try {
+    state.oauthAuthorization = await api.submitOAuthRedirectUrl(pastedUrl);
+    if (input) input.value = "";
+    if (state.oauthAuthorization.phase === "authorization-received") {
+      state.oauthSignIn = await api.getOAuthSignInStatus().catch(() => null);
+      updateOAuthAuthorizationPanel();
+      scheduleOAuthStatusPoll();
+    } else if (oauthAuthorizationIsActive()) {
+      // A rejected paste stays in the same phase so the user can immediately try again; the
+      // toast names the reason without echoing the pasted value back.
+      pushToast("warning", "That address did not match", "Check that you copied the whole address from the browser's own address bar after sign-in finished, then paste it again.", "個網址唔啱", "請確認你係喺登入完成之後，由瀏覽器嘅網址列複製成個網址，跟住再貼一次。");
+      updateOAuthAuthorizationPanel("oauth-redirect-paste");
+    } else {
+      updateOAuthAuthorizationPanel("oauth-start");
+    }
+  } catch {
+    pushToast("error", "Could not submit that address", "The desktop bridge did not accept the pasted address. Try again.", "提交唔到個網址", "桌面連接冇接受貼上嘅網址。請再試一次。");
   }
 };
 
@@ -7898,6 +7930,11 @@ const handleAction = async (button: HTMLElement): Promise<void> => {
     case "discover-account": await discoverAccount(); break;
     case "start-oauth-authorization": await startOAuthAuthorizationFromSetup(); break;
     case "cancel-oauth-authorization": await cancelOAuthAuthorizationFromSetup(); break;
+    case "submit-oauth-redirect": {
+      const form = button.closest<HTMLFormElement>('[data-form="account-setup"]');
+      if (form) await submitOAuthRedirectFromSetup(form);
+      break;
+    }
     case "inspect-tls-certificate": await inspectTlsCertificateFromSetup(button); break;
     case "cancel-pop3-test":
       if (button instanceof HTMLButtonElement) await cancelPop3AccountTestFromSetup(button);

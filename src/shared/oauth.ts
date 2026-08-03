@@ -6,7 +6,7 @@ export type OAuthAuthorizationPhase =
   | "idle"
   | "preparing"
   | "opening-browser"
-  | "waiting-for-callback"
+  | "awaiting-redirect-paste"
   | "authorization-received"
   | "cancelled"
   | "timed-out"
@@ -14,11 +14,10 @@ export type OAuthAuthorizationPhase =
 
 export type OAuthAuthorizationFailure =
   | "provider-not-configured"
-  | "callback-listener-failed"
   | "browser-open-failed"
   | "provider-denied"
   | "provider-error"
-  | "callback-invalid";
+  | "redirect-invalid";
 
 export interface OAuthProviderAvailability {
   id: OAuthProviderId;

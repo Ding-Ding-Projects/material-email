@@ -361,6 +361,7 @@ export const ipcPayloadSchemas = {
   none: z.tuple([]),
   accountDiscover: z.tuple([emailSchema]),
   oauthProvider: z.tuple([z.enum(OAUTH_PROVIDER_IDS)]),
+  oauthRedirectUrl: z.tuple([z.string().trim().min(1).max(8_192)]),
   tlsCertificateInspection: z.tuple([tlsCertificateInspectionSchema]),
   pimProviderFoundation: z.tuple([pimProviderProfileInputSchema]),
   pimIcsImport: z.tuple([z.enum(["skip", "update"])]),

@@ -4,10 +4,16 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFile(path, "utf8");
 
 describe("OAuth security boundary", () => {
-  it("keeps the authorization machine ephemeral and free of persistence or logging calls", async () => {
+  it("keeps the authorization machine ephemeral and free of persistence, logging, or any local listener", async () => {
     const source = await read("src/main/oauth-authorization.ts");
     expect(source).not.toMatch(/\b(?:console|safeStorage|JsonStore|writeFile|appendFile|localStorage|sessionStorage)\b/u);
-    expect(source).toContain('server.listen({ host: "127.0.0.1", port: 0, exclusive: true })');
+    // The redirect is captured by asking the user to paste it back, not by a local listener — so
+    // there is no port to bind, no request to trust the transport of, and nothing on this machine
+    // ever accepts an inbound connection for this flow. Assert the listener is genuinely gone, not
+    // only unused: no node:http import, no server construction of any kind.
+    expect(source).not.toMatch(/\bnode:http\b/u);
+    expect(source).not.toMatch(/\bcreateServer\b/u);
+    expect(source).not.toMatch(/\.listen\(/u);
     expect(source).toContain('response_type", "code"');
     expect(source).toContain('code_challenge_method", "S256"');
     expect(source).toContain("session.stateBytes.fill(0)");

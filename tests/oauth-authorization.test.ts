@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
-import { request } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   OAuthAuthorizationService,
   createPkcePair,
-  validateLoopbackCallback,
+  validatePastedRedirect,
   type OAuthAuthorizationCodeGrant,
   type OAuthProviderConfiguration,
 } from "../src/main/oauth-authorization.js";
@@ -14,6 +13,7 @@ const fixtureConfiguration: OAuthProviderConfiguration = {
   authorizationEndpoint: "https://accounts.example.test/oauth/authorize",
   clientId: "public-desktop-fixture-client",
   scopes: ["openid", "email", "mail.read"],
+  redirectUri: "https://accounts.example.test/oauth/nativeclient",
 };
 
 const services: OAuthAuthorizationService[] = [];
@@ -32,27 +32,17 @@ const createService = (
   return service;
 };
 
-const loopbackRequest = (
-  url: URL,
-  options: { method?: string; host?: string } = {},
-): Promise<{ status: number; body: string }> => new Promise((resolve, reject) => {
-  const client = request(url, {
-    method: options.method ?? "GET",
-    ...(options.host ? { headers: { Host: options.host } } : {}),
-  }, response => {
-    const chunks: Buffer[] = [];
-    response.on("data", chunk => chunks.push(Buffer.from(chunk)));
-    response.once("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
-  });
-  client.once("error", reject);
-  client.end();
-});
-
-const authorizationDetails = (openedUrl: string): { authorization: URL; callback: URL; state: string } => {
+const authorizationDetails = (openedUrl: string): { authorization: URL; state: string } => {
   const authorization = new URL(openedUrl);
-  const callback = new URL(authorization.searchParams.get("redirect_uri") ?? "");
   const state = authorization.searchParams.get("state") ?? "";
-  return { authorization, callback, state };
+  return { authorization, state };
+};
+
+/** Builds the URL the browser would land on after a successful/errored/mismatched redirect. */
+const redirectResult = (query: Record<string, string>): string => {
+  const url = new URL(fixtureConfiguration.redirectUri);
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+  return url.toString();
 };
 
 afterEach(async () => {
@@ -74,94 +64,93 @@ describe("OAuth PKCE", () => {
   });
 });
 
-describe("OAuth loopback callback validation", () => {
-  const expectation = { host: "127.0.0.1:43821", path: "/oauth/callback", state: "expected-state" };
-  const claim = (requestTarget: string) => ({
-    method: "GET",
-    hostHeader: expectation.host,
-    remoteAddress: "127.0.0.1",
-    requestTarget,
-  });
+describe("OAuth pasted-redirect validation", () => {
+  const expectation = { redirectUri: "https://example.test/oauth/nativeclient", state: "expected-state" };
+  const url = (query: string) => `https://example.test/oauth/nativeclient${query}`;
 
   it("accepts one exact state and one bounded authorization code", () => {
-    expect(validateLoopbackCallback(claim("/oauth/callback?state=expected-state&code=opaque-code"), expectation)).toEqual({
+    expect(validatePastedRedirect(url("?state=expected-state&code=opaque-code"), expectation)).toEqual({
       kind: "authorization",
       code: "opaque-code",
     });
   });
 
-  it("rejects method, peer, host, path, state, token injection, and ambiguous results", () => {
-    expect(validateLoopbackCallback({ ...claim("/oauth/callback?state=expected-state&code=a"), method: "POST" }, expectation)).toMatchObject({ reason: "method" });
-    expect(validateLoopbackCallback({ ...claim("/oauth/callback?state=expected-state&code=a"), remoteAddress: "192.0.2.2" }, expectation)).toMatchObject({ reason: "remote-address" });
-    expect(validateLoopbackCallback({ ...claim("/oauth/callback?state=expected-state&code=a"), hostHeader: "localhost:43821" }, expectation)).toMatchObject({ reason: "host" });
-    expect(validateLoopbackCallback(claim("/other?state=expected-state&code=a"), expectation)).toMatchObject({ reason: "path" });
-    expect(validateLoopbackCallback(claim("/oauth/callback?state=wrong&code=a"), expectation)).toMatchObject({ reason: "state" });
-    expect(validateLoopbackCallback(claim("/oauth/callback?state=expected-state&access_token=never"), expectation)).toMatchObject({ reason: "unexpected-token" });
-    expect(validateLoopbackCallback(claim("/oauth/callback?state=expected-state&code=a&code=b"), expectation)).toMatchObject({ reason: "ambiguous-result" });
-    expect(validateLoopbackCallback(claim("/oauth/callback?state=expected-state&code=a&error=access_denied"), expectation)).toMatchObject({ reason: "ambiguous-result" });
+  it("rejects an unparseable, oversized, wrong-origin, wrong-path, wrong-state, token-carrying, or ambiguous result", () => {
+    expect(validatePastedRedirect("not a url at all", expectation)).toMatchObject({ reason: "unparseable" });
+    expect(validatePastedRedirect("a".repeat(9_000), expectation)).toMatchObject({ reason: "too-long" });
+    expect(validatePastedRedirect("", expectation)).toMatchObject({ reason: "too-long" });
+    expect(validatePastedRedirect("https://evil.example.test/oauth/nativeclient?state=expected-state&code=a", expectation)).toMatchObject({ reason: "wrong-redirect" });
+    expect(validatePastedRedirect("https://example.test/other?state=expected-state&code=a", expectation)).toMatchObject({ reason: "wrong-redirect" });
+    expect(validatePastedRedirect(url("?state=wrong&code=a"), expectation)).toMatchObject({ reason: "state" });
+    expect(validatePastedRedirect(url("?state=expected-state"), expectation)).toMatchObject({ reason: "missing-result" });
+    expect(validatePastedRedirect(url("?state=expected-state&access_token=never"), expectation)).toMatchObject({ reason: "unexpected-token" });
+    expect(validatePastedRedirect(url("?state=expected-state&code=a&code=b"), expectation)).toMatchObject({ reason: "ambiguous-result" });
+    expect(validatePastedRedirect(url("?state=expected-state&code=a&error=access_denied"), expectation)).toMatchObject({ reason: "ambiguous-result" });
+  });
+
+  it("tolerates surrounding whitespace from a pasted value, since a user's paste often carries it", () => {
+    expect(validatePastedRedirect(`  ${url("?state=expected-state&code=opaque-code")}  `, expectation)).toEqual({
+      kind: "authorization",
+      code: "opaque-code",
+    });
+  });
+
+  it("extracts a provider error distinctly from an authorization code", () => {
+    expect(validatePastedRedirect(url("?state=expected-state&error=access_denied"), expectation)).toEqual({
+      kind: "provider-error",
+      error: "access_denied",
+    });
   });
 });
 
 describe("OAuth authorization state machine", () => {
-  it("opens only an authorization-code PKCE URL and discards the callback code without exposing it", async () => {
+  it("opens only an authorization-code PKCE URL naming the exact registered redirect, with no verifier in it", async () => {
     let openedUrl = "";
     const service = createService(async url => { openedUrl = url; });
     const waiting = await service.start("google");
-    const { authorization, callback, state } = authorizationDetails(openedUrl);
+    const { authorization, state } = authorizationDetails(openedUrl);
 
-    expect(waiting).toMatchObject({ phase: "waiting-for-callback", provider: "google", failure: null });
+    expect(waiting).toMatchObject({ phase: "awaiting-redirect-paste", provider: "google", failure: null });
     expect(authorization.origin).toBe("https://accounts.example.test");
+    expect(authorization.searchParams.get("redirect_uri")).toBe(fixtureConfiguration.redirectUri);
     expect(authorization.searchParams.get("response_type")).toBe("code");
     expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
     expect(authorization.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     expect(authorization.searchParams.has("code_verifier")).toBe(false);
-    expect(callback.hostname).toBe("127.0.0.1");
-    expect(callback.pathname).toBe("/oauth/callback");
     expect(state).toMatch(/^[A-Za-z0-9_-]{43}$/u);
 
-    const sensitiveCode = "fixture-authorization-code-never-returned";
-    callback.searchParams.set("state", state);
-    callback.searchParams.set("code", sensitiveCode);
-    const response = await loopbackRequest(callback);
-
-    expect(response.status).toBe(200);
-    expect(response.body).not.toContain(sensitiveCode);
-    const finished = service.status();
-    expect(finished).toMatchObject({ phase: "authorization-received", provider: "google", expiresAt: null, failure: null });
-    const publicState = JSON.stringify(finished);
-    expect(publicState).not.toContain(sensitiveCode);
+    const publicState = JSON.stringify(service.status());
     expect(publicState).not.toContain(state);
     expect(publicState).not.toContain(authorization.searchParams.get("code_challenge")!);
   });
 
-  it("hands the code, verifier, and redirect URI to onAuthorizationCode exactly once on a real callback", async () => {
+  it("hands the code, verifier, and redirect URI to onAuthorizationCode exactly once on a matching paste", async () => {
     let openedUrl = "";
     let received: OAuthAuthorizationCodeGrant | null = null;
     const service = createService(async url => { openedUrl = url; }, { onAuthorizationCode: grant => { received = grant; } });
     await service.start("google");
-    const { authorization, callback, state } = authorizationDetails(openedUrl);
-    const verifier = authorization.searchParams.get("code_verifier");
-    // Confirmed absent from the authorization URL itself (that assertion belongs to the test above);
-    // this test only needs the challenge to prove the handed-off verifier is the one that produced it.
-    void verifier;
+    const { authorization, state } = authorizationDetails(openedUrl);
     const challenge = authorization.searchParams.get("code_challenge")!;
 
-    callback.searchParams.set("state", state);
-    callback.searchParams.set("code", "fixture-authorization-code");
-    const response = await loopbackRequest(callback);
-    expect(response.status).toBe(200);
+    const finished = service.submitRedirectUrl(redirectResult({ state, code: "fixture-authorization-code" }));
 
+    expect(finished).toMatchObject({ phase: "authorization-received", provider: "google", expiresAt: null, failure: null });
     expect(received).not.toBeNull();
     expect(received).toEqual({
       provider: "google",
       code: "fixture-authorization-code",
       codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43,86}$/u) as unknown as string,
-      redirectUri: callback.origin + callback.pathname,
+      redirectUri: fixtureConfiguration.redirectUri,
     });
     // The handed-off verifier must be the one whose S256 hash produced the challenge actually sent,
     // or a real exchange against a real provider would fail with a PKCE mismatch.
     const recomputedChallenge = createHash("sha256").update(received!.codeVerifier, "ascii").digest("base64url");
     expect(recomputedChallenge).toBe(challenge);
+
+    const sensitiveCode = "fixture-authorization-code";
+    const publicState = JSON.stringify(finished);
+    expect(publicState).not.toContain(sensitiveCode);
+    expect(publicState).not.toContain(state);
   });
 
   it("never calls onAuthorizationCode when the provider denies the request", async () => {
@@ -169,70 +158,70 @@ describe("OAuth authorization state machine", () => {
     const onAuthorizationCode = vi.fn();
     const service = createService(async url => { openedUrl = url; }, { onAuthorizationCode });
     await service.start("google");
-    const { callback, state } = authorizationDetails(openedUrl);
-    callback.searchParams.set("state", state);
-    callback.searchParams.set("error", "access_denied");
-    await loopbackRequest(callback);
+    const { state } = authorizationDetails(openedUrl);
+
+    service.submitRedirectUrl(redirectResult({ state, error: "access_denied" }));
     expect(onAuthorizationCode).not.toHaveBeenCalled();
     expect(service.status()).toMatchObject({ phase: "error", failure: "provider-denied" });
   });
 
-  it("never calls onAuthorizationCode for a rejected loopback request", async () => {
+  it("never calls onAuthorizationCode for a paste with the wrong state", async () => {
     let openedUrl = "";
     const onAuthorizationCode = vi.fn();
     const service = createService(async url => { openedUrl = url; }, { onAuthorizationCode });
     await service.start("google");
-    const { callback } = authorizationDetails(openedUrl);
-    callback.searchParams.set("state", "wrong-state-entirely");
-    callback.searchParams.set("code", "fixture-code");
-    const response = await loopbackRequest(callback);
-    expect(response.status).not.toBe(200);
+    void authorizationDetails(openedUrl);
+
+    const result = service.submitRedirectUrl(redirectResult({ state: "wrong-state-entirely", code: "fixture-code" }));
+    expect(result.phase).toBe("awaiting-redirect-paste");
     expect(onAuthorizationCode).not.toHaveBeenCalled();
   });
 
-  it("keeps waiting after rejected loopback requests, then accepts the exact callback", async () => {
+  it("keeps waiting after non-matching pastes, then accepts the exact one", async () => {
     let openedUrl = "";
     const service = createService(async url => { openedUrl = url; });
     await service.start("google");
-    const { callback, state } = authorizationDetails(openedUrl);
+    const { state } = authorizationDetails(openedUrl);
 
-    callback.searchParams.set("state", "wrong-state");
-    callback.searchParams.set("code", "wrong-code");
-    expect((await loopbackRequest(callback)).status).toBe(400);
-    expect(service.status().phase).toBe("waiting-for-callback");
+    expect(service.submitRedirectUrl(redirectResult({ state: "wrong-state", code: "wrong-code" })).phase).toBe("awaiting-redirect-paste");
+    expect(service.submitRedirectUrl("not a url at all").phase).toBe("awaiting-redirect-paste");
+    expect(service.submitRedirectUrl(redirectResult({ state, code: "the-real-code" })).phase).toBe("authorization-received");
+  });
 
-    callback.searchParams.set("state", state);
-    expect((await loopbackRequest(callback, { method: "POST" })).status).toBe(405);
-    expect(service.status().phase).toBe("waiting-for-callback");
-    expect((await loopbackRequest(callback, { host: `localhost:${callback.port}` })).status).toBe(400);
-    expect(service.status().phase).toBe("waiting-for-callback");
+  it("terminates as an error after enough non-matching pastes, rather than allowing indefinite retries", async () => {
+    let openedUrl = "";
+    const service = createService(async url => { openedUrl = url; });
+    await service.start("google");
+    void authorizationDetails(openedUrl);
 
-    expect((await loopbackRequest(callback)).status).toBe(200);
-    expect(service.status().phase).toBe("authorization-received");
+    let last = service.status();
+    for (let attempt = 0; attempt < 20 && last.phase === "awaiting-redirect-paste"; attempt += 1) {
+      last = service.submitRedirectUrl(redirectResult({ state: "wrong-state", code: "wrong-code" }));
+    }
+    expect(last).toMatchObject({ phase: "error", failure: "redirect-invalid" });
+  });
+
+  it("ignores a paste submitted with no active session", () => {
+    const service = createService(async () => undefined);
+    expect(service.submitRedirectUrl(redirectResult({ state: "x", code: "y" }))).toMatchObject({ phase: "idle" });
   });
 
   it("maps provider denial to a sanitized terminal error", async () => {
     let openedUrl = "";
     const service = createService(async url => { openedUrl = url; });
     await service.start("google");
-    const { callback, state } = authorizationDetails(openedUrl);
-    callback.searchParams.set("state", state);
-    callback.searchParams.set("error", "access_denied");
-    callback.searchParams.set("error_description", "sensitive provider prose");
+    const { state } = authorizationDetails(openedUrl);
 
-    const response = await loopbackRequest(callback);
-    expect(response.status).toBe(200);
-    expect(response.body).not.toContain("sensitive provider prose");
-    expect(service.status()).toMatchObject({ phase: "error", failure: "provider-denied", expiresAt: null });
+    const finished = service.submitRedirectUrl(redirectResult({ state, error: "access_denied", error_description: "sensitive provider prose" }));
+    expect(JSON.stringify(finished)).not.toContain("sensitive provider prose");
+    expect(finished).toMatchObject({ phase: "error", failure: "provider-denied", expiresAt: null });
   });
 
   it("supports explicit cancellation and bounded timeout cleanup", async () => {
-    let cancelledUrl = "";
-    const cancelled = createService(async url => { cancelledUrl = url; });
+    const cancelled = createService(async () => undefined);
     await cancelled.start("google");
     expect(await cancelled.cancel()).toMatchObject({ phase: "cancelled", failure: null, expiresAt: null });
-    const cancelledCallback = authorizationDetails(cancelledUrl).callback;
-    await expect(loopbackRequest(cancelledCallback)).rejects.toThrow();
+    expect(cancelled.submitRedirectUrl(redirectResult({ state: "x", code: "y" }))).toMatchObject({ phase: "cancelled" });
 
     const timedOut = createService(async () => undefined, { timeoutMs: 20 });
     await timedOut.start("google");

@@ -752,6 +752,7 @@ export interface MaterialEmailApi {
   getOAuthAuthorizationStatus(): Promise<OAuthAuthorizationSnapshot>;
   startOAuthAuthorization(provider: OAuthProviderId): Promise<OAuthAuthorizationSnapshot>;
   cancelOAuthAuthorization(): Promise<OAuthAuthorizationSnapshot>;
+  submitOAuthRedirectUrl(url: string): Promise<OAuthAuthorizationSnapshot>;
   getOAuthSignInStatus(): Promise<OAuthSignInSnapshot | null>;
   getOAuthTokenVaultStatus(): Promise<OAuthTokenVaultSnapshot>;
   clearOAuthTokenVault(provider: OAuthProviderId): Promise<OAuthTokenVaultActionResult>;

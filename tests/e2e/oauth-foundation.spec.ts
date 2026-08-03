@@ -37,16 +37,35 @@ test.beforeAll(async () => {
       failure: null,
       providers,
     };
-    for (const channel of ["account:oauth-status", "account:oauth-start", "account:oauth-cancel"]) ipcMain.removeHandler(channel);
+    const FIXTURE_REDIRECT = "https://accounts.example.test/oauth/fixture-redirect";
+    let signIn: { provider: "google" | "microsoft"; phase: "ready"; failure: null } | null = null;
+    for (const channel of ["account:oauth-status", "account:oauth-start", "account:oauth-cancel", "account:oauth-submit-redirect", "account:oauth-signin-status"]) {
+      ipcMain.removeHandler(channel);
+    }
     ipcMain.handle("account:oauth-status", () => snapshot);
+    ipcMain.handle("account:oauth-signin-status", () => signIn);
     ipcMain.handle("account:oauth-start", (_event, provider: "google" | "microsoft") => {
+      signIn = null;
       snapshot = {
-        phase: "waiting-for-callback",
+        phase: "awaiting-redirect-paste",
         provider,
         expiresAt: "2030-08-01T12:05:00.000Z",
         failure: null,
         providers,
       };
+      return snapshot;
+    });
+    ipcMain.handle("account:oauth-submit-redirect", (_event, url: string) => {
+      if (snapshot.phase !== "awaiting-redirect-paste") return snapshot;
+      if (url.startsWith(FIXTURE_REDIRECT) && url.includes("code=")) {
+        // The real service transitions to authorization-received the instant a matching redirect
+        // lands; the sign-in exchange it triggers is a separate, slightly later state this stub
+        // resolves immediately, matching what a fast local fixture exchange would look like.
+        signIn = { provider: snapshot.provider!, phase: "ready", failure: null };
+        snapshot = { phase: "authorization-received", provider: snapshot.provider, expiresAt: null, failure: null, providers };
+      }
+      // A non-matching paste leaves the phase unchanged, exactly like the real service, so the
+      // panel stays open for another attempt rather than silently failing.
       return snapshot;
     });
     ipcMain.handle("account:oauth-cancel", () => {
@@ -86,7 +105,7 @@ test("shows a bilingual accessible OAuth foundation and cancellation without acc
   await expect(panel.locator('span[lang="zh-HK"]')).not.toHaveCount(0);
   await expect(panel).toContainText(/No provider client registration ships in this build/i);
   await expect(panel).toContainText("呢個版本冇附帶供應商 client registration");
-  await expect(panel).toContainText(/never asks you to paste an OAuth token/i);
+  await expect(panel).toContainText(/asks you to paste back the resulting address/i);
   await expect(passwordField).toBeHidden();
   await expect(password).not.toHaveAttribute("required", "");
   await expect(password).toHaveValue("");
@@ -96,7 +115,7 @@ test("shows a bilingual accessible OAuth foundation and cancellation without acc
 
   const provider = panel.getByRole("combobox", { name: /Browser provider/i });
   await expect(provider).toHaveValue("google");
-  const start = panel.getByRole("button", { name: /Start browser authorization/i });
+  const start = panel.getByRole("button", { name: /Start browser sign-in/i });
   await expect(start).toBeEnabled();
   await start.click();
 
@@ -104,20 +123,31 @@ test("shows a bilingual accessible OAuth foundation and cancellation without acc
   await expect(waiting).toHaveAttribute("role", "status");
   await expect(waiting).toHaveAttribute("aria-live", "polite");
   await expect(waiting).toHaveAttribute("aria-busy", "true");
-  await expect(waiting).toContainText(/Waiting for the exact loopback callback/i);
-  await expect(waiting).toContainText("等緊完全吻合嘅 loopback 回呼");
-  await expect(waiting).toContainText(/127\.0\.0\.1/);
+  await expect(waiting).toContainText(/Paste the address after signing in/i);
+  await expect(waiting).toContainText("登入完成之後貼返個網址");
   await expect(waiting).not.toContainText(/authorization-code-fixture|access-token-fixture|refresh-token-fixture/i);
-  const cancel = form.getByRole("button", { name: /Cancel authorization/i });
-  await expect(cancel).toBeFocused();
+  const pasteInput = form.getByTestId("oauth-redirect-input");
+  await expect(pasteInput).toBeFocused();
 
-  await cancel.click();
-  const cancelled = form.getByTestId("oauth-status");
-  await expect(cancelled).toHaveAttribute("aria-busy", "false");
-  await expect(cancelled).toContainText(/Browser authorization cancelled/i);
-  await expect(cancelled).toContainText("瀏覽器授權已取消");
-  await expect(cancelled).toContainText(/No code or token was saved/i);
-  await expect(form.getByRole("button", { name: /Start browser authorization/i })).toBeFocused();
+  // A pasted address that does not match stays in the same phase, ready for another attempt,
+  // rather than silently failing or advancing.
+  await pasteInput.fill("https://not-the-registered-redirect.example.test/?code=wrong");
+  await form.getByRole("button", { name: /^Continue/i }).click();
+  await expect(form.getByRole("button", { name: /Test settings/i })).toBeDisabled();
+  // The field clears after every submit attempt, matched or not, so a fresh paste always starts empty.
+  await expect(pasteInput).toHaveValue("");
+  await expect(waiting).toContainText(/Paste the address after signing in/i);
+
+  // The exact registered redirect, with a code, completes the sign-in and enables the form.
+  await pasteInput.fill("https://accounts.example.test/oauth/fixture-redirect?state=fixture&code=fixture-authorization-code");
+  await form.getByRole("button", { name: /^Continue/i }).click();
+  const ready = form.getByTestId("oauth-status");
+  await expect(ready).toContainText(/Signed in/i);
+  await expect(ready).toContainText("已登入");
+  // No cancel action exists once signed in — there is nothing left to cancel — but a fresh sign-in
+  // can still be started (a different provider, or the same one again).
+  await expect(form.getByRole("button", { name: /^Cancel$/i })).toHaveCount(0);
+  await expect(form.getByRole("button", { name: /Start browser sign-in/i })).toBeVisible();
 
   await page.setViewportSize({ width: 760, height: 560 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);

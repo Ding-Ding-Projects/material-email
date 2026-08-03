@@ -100,6 +100,7 @@ const registerIpc = (trustedRendererUrl: string): void => {
   handleValidated("account:oauth-status", ipcPayloadSchemas.none, () => oauthAuthorization.status());
   handleValidated("account:oauth-start", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthAuthorization.start(provider));
   handleValidated("account:oauth-cancel", ipcPayloadSchemas.none, () => oauthAuthorization.cancel());
+  handleValidated("account:oauth-submit-redirect", ipcPayloadSchemas.oauthRedirectUrl, ([url]) => oauthAuthorization.submitRedirectUrl(url));
   handleValidated("account:oauth-vault-status", ipcPayloadSchemas.none, () => oauthTokenVault.status());
   handleValidated("account:oauth-vault-clear", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.clear(provider));
   handleValidated("account:oauth-vault-revoke", ipcPayloadSchemas.oauthProvider, ([provider]) => oauthTokenVault.revokeAndClear(provider));
@@ -455,7 +456,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   oauthAuthorization = new OAuthAuthorizationService({
     openExternal: url => shell.openExternal(url),
     configurations: microsoftOAuth
-      ? [{ provider: "microsoft", authorizationEndpoint: microsoftOAuth.authorizationEndpoint, clientId: microsoftOAuth.clientId, scopes: microsoftOAuth.scopes }]
+      ? [{
+        provider: "microsoft",
+        authorizationEndpoint: microsoftOAuth.authorizationEndpoint,
+        clientId: microsoftOAuth.clientId,
+        scopes: microsoftOAuth.scopes,
+        redirectUri: microsoftOAuth.redirectUri,
+      }]
       : [],
     // Never over IPC, never given to the renderer: the moment a browser round trip lands a code,
     // hand it straight to the one place that is allowed to exchange it.
