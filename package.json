@@ -22,6 +22,7 @@
     "check": "npm run typecheck && npm test && npm run verify:assets && npm run verify:site && npm run verify:source-policy && npm run build",
     "start": "npm run build && electron .",
     "dist:win": "npm run check && electron-builder --win nsis --x64",
+    "dist:linux-dir": "npm run build && electron-builder --linux dir",
     "verify:package": "node scripts/verify-package.mjs",
     "verify:installer": "node scripts/verify-windows-installer.mjs",
     "count:lines": "node scripts/count-lines.mjs"

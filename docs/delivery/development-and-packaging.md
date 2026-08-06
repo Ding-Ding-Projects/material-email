@@ -2,7 +2,7 @@
 
 ## Status
 
-**The local gate, the packaging path, and the release workflow are implemented; none of them is currently proved.** This checkout has no `release/` output, so neither package verifier can run against an artifact here, and no hosted workflow run is recorded anywhere in the repository. The installer lifecycle evidence below is historical and predates the current tree. Do not present a download or installer link.
+**The local gate, the Windows packaging path, and the release workflow are implemented; none of the Windows-specific ones is currently proved.** `release/` is git-ignored and not part of a fresh checkout, so neither Windows package verifier can run against a committed artifact, and no hosted workflow run is recorded anywhere in the repository. The installer lifecycle evidence below is historical and predates the current tree. Do not present a download or installer link. Separately, `tests/e2e/packaged-build-tour.spec.ts` now builds and launches a real *Linux* `electron-builder --linux dir` package on demand and proves `app.isPackaged === true` against it — genuine packaged-Electron evidence, but Linux `dir`-target evidence only, not Windows NSIS/Squirrel installer proof.
 
 ## Behavior
 
@@ -13,6 +13,8 @@
 `npm run check` is the local gate and runs six steps in order: `typecheck`, `test`, `verify:assets`, `verify:site`, `verify:source-policy`, `build`. `npm test` is Vitest over `tests/**/*.test.ts` in a Node environment; it never starts Electron. The Playwright Electron suite under `tests/e2e` runs only through `npm run test:e2e`, which builds first and then runs Playwright with one worker and no retries. Nothing in the release workflow invokes it.
 
 `npm run dist:win` runs the full `check` chain and then `electron-builder --win nsis --x64`. The configured installer is assisted rather than one-click, permits install-directory choice, creates desktop and Start-menu shortcuts, and intentionally retains application data on uninstall.
+
+`npm run dist:linux-dir` runs `npm run build` and then `electron-builder --linux dir`, an additive convenience script that needs no `build.linux` block in `package.json` at all — electron-builder honors an explicit `--linux dir` target from the command line on its own, and `build.win`/`build.nsis` stay exactly as configured for Windows. The output is a real unpacked app bundle (`release/linux-unpacked/`) with `app.asar`, `app-update.yml`, and a launchable native binary, needing no code signing and no Windows host. `tests/e2e/packaged-build-tour.spec.ts` builds this target itself in `beforeAll` and launches the packaged binary directly (`executablePath`, not `args: [path.resolve(".")]` the way every other spec launches the dev-mode source tree), then asserts `app.isPackaged === true` and `app.getAppPath()` resolves inside that `app.asar` — the one place in this repository where "packaged Electron session" is proven against genuinely packaged output rather than `electron .`. This is Linux packaging evidence only; it proves nothing about NSIS, Squirrel-style installer behavior, Authenticode, or Windows display scaling.
 
 ### What each verification script proves
 
