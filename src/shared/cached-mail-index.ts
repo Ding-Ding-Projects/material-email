@@ -29,7 +29,12 @@ interface IndexedField {
   normalized: string;
 }
 
-interface CachedMailIndexDocument {
+/**
+ * Exported so a derived on-disk index (see `src/main/cached-mail-sqlite-index.ts`) can persist
+ * and reload exactly this shape without re-deriving it — the SQLite cache stores each document's
+ * `JSON.stringify` verbatim, so a round trip through it is byte-identical to building fresh.
+ */
+export interface CachedMailIndexDocument {
   message: MessageSummary;
   snippet: string;
   account: CachedMailSearchHit["account"];

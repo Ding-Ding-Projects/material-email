@@ -136,7 +136,7 @@ import type { MailIdentity, MailIdentityInput } from "../shared/identities.js";
 import { emptyJunkModel } from "../shared/junk-classifier.js";
 import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
 import { collectCachedUnifiedMessages } from "../shared/unified-folders.js";
-import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-mail-index.js";
+import { CachedMailSqliteIndex } from "./cached-mail-sqlite-index.js";
 import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
 import { inspectTlsCertificate } from "./tls-certificate-diagnostics.js";
 import { testPop3Account } from "./pop3-test-transport.js";
@@ -335,6 +335,7 @@ export class AppService {
   readonly #statePath: string;
   readonly #quarantinePath: string;
   readonly #store: JsonStore<PersistedState>;
+  readonly #cachedMailIndex: CachedMailSqliteIndex;
   readonly #mail = new MailService();
   readonly #historyRepository: HistoryRepository;
   readonly #discovery = new AccountDiscoveryService();
@@ -357,6 +358,7 @@ export class AppService {
     this.#oauthTokenVault = options.oauthTokenVault ?? null;
     this.#statePath = path.join(userDataPath, "material-email-state-v1.json");
     this.#quarantinePath = path.join(userDataPath, "attachment-quarantine-v1");
+    this.#cachedMailIndex = new CachedMailSqliteIndex(path.join(userDataPath, "cached-mail-index-v1.sqlite"));
     this.#pim = new PimService(userDataPath);
     this.#historyRepository = new HistoryRepository(path.join(userDataPath, "local-history"), parsePersistedState);
     this.#store = new JsonStore<PersistedState>(
@@ -786,13 +788,15 @@ export class AppService {
 
   async searchCachedMail(query: CachedMailSearchQuery): Promise<CachedMailSearchResult> {
     const state = await this.#store.read();
-    const index = createCachedMailIndex({
-      accounts: state.accounts.map(this.#publicAccount),
-      folders: state.folders,
-      messages: state.messages,
-      details: state.details,
-    });
-    return searchCachedMailIndex(index, query);
+    return this.#cachedMailIndex.search(
+      {
+        accounts: state.accounts.map(this.#publicAccount),
+        folders: state.folders,
+        messages: state.messages,
+        details: state.details,
+      },
+      query,
+    );
   }
 
   async getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail> {

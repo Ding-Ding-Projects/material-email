@@ -120,7 +120,7 @@ This roadmap separates code that exists from behavior that has been verified. Or
 
 ## Data and platform open
 
-- [ ] Replace or complement JSON with a migration-tested indexed store such as SQLite
+- [ ] Replace or complement JSON with a migration-tested indexed store such as SQLite — the cached-mail search index now has an additive, migration-tested `node:sqlite`-backed cache (schema-version + fingerprint checks, clean rebuild on a missing/older-schema/corrupt/stale file, fail-open to the original in-memory index on any unrecoverable failure) sitting behind `AppService.searchCachedMail`'s existing interface; every other persisted store — accounts, drafts, PIM/contacts/calendar/tasks, identities, tags/filters, junk model, notifications, local history, preferences, and the mail cache this index derives from — remains JSON-only and untouched. Left unchecked: this is one search surface complemented, not the store-wide replace-or-complement this item asks for
 - [x] Add searchable Git-backed revision diff previews, local labels, and reviewed whole-state restore UI
 - [x] Add persisted bounded Git-backed retention, exact dry-run preview, app-owned pruning, labeled/current protection, and semantic prune records
 - [x] Add read-only deletion-policy evidence for active revisions, labels, reflog-only commits, and Git object inventory with explicit non-erasure guarantees
