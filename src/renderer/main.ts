@@ -5141,6 +5141,28 @@ const syncIncomingProtocolMode = (form: HTMLFormElement, adjustConventionalPort 
 
 type OAuthPanelFocusKey = "oauth-start" | "oauth-cancel" | "oauth-redirect-paste" | "oauth-redirect-submit";
 
+/**
+ * Prefills the Add Account form's email and display-name fields from a completed OAuth sign-in's
+ * non-secret {@link OAuthSignInAccountHint}, when present — a convenience only, never treated as a
+ * verified identity. Each field is touched only while it is genuinely empty at the moment this
+ * runs, so a value the user already typed (before or during the browser round trip) is never
+ * overwritten by a hint that arrives afterward, and the user can still freely edit either field
+ * right after this runs.
+ */
+const applyOAuthAccountHintPrefill = (form: HTMLFormElement): void => {
+  const hint = state.oauthSignIn?.phase === "ready" ? state.oauthSignIn.accountHint : null;
+  if (!hint) return;
+  const emailInput = form.querySelector<HTMLInputElement>('input[name="email"]');
+  if (emailInput && hint.email && !emailInput.value.trim()) {
+    emailInput.value = hint.email;
+    state.setupEmail = hint.email;
+  }
+  const nameInput = form.querySelector<HTMLInputElement>('input[name="displayName"]');
+  if (nameInput && hint.displayName && !nameInput.value.trim()) {
+    nameInput.value = hint.displayName;
+  }
+};
+
 const updateOAuthAuthorizationPanel = (focusKey?: OAuthPanelFocusKey): void => {
   const form = document.querySelector<HTMLFormElement>('[data-form="account-setup"]');
   const panel = form?.querySelector<HTMLElement>("[data-oauth-panel]");
@@ -5152,6 +5174,7 @@ const updateOAuthAuthorizationPanel = (focusKey?: OAuthPanelFocusKey): void => {
   panel.outerHTML = renderOAuthAuthorizationPanel();
   syncAccountAuthenticationMode(form);
   applyBilingualSemantics(form);
+  applyOAuthAccountHintPrefill(form);
   const nextFocusKey = focusKey ?? preservedFocusKey;
   if (nextFocusKey) requestAnimationFrame(() => form.querySelector<HTMLElement>(`[data-focus-key="${nextFocusKey}"]`)?.focus());
 };
@@ -6825,17 +6848,25 @@ const handleConfirmation = async (): Promise<void> => {
           `已移除 ${result.localRecordsCleared} 個 ${confirmation.label} 加密記錄。冇聯絡供應商端點；唔聲稱檔案系統安全抹除。`,
         );
       } else {
-        const kind: ToastKind = result.remoteRevocation === "succeeded" ? "success" : result.remoteRevocation === "failed" ? "warning" : "info";
+        const kind: ToastKind = result.remoteRevocation === "succeeded"
+          ? "success"
+          : result.remoteRevocation === "failed"
+            ? "warning"
+            : "info";
         const outcomeEnglish = result.remoteRevocation === "succeeded"
-          ? "The registered provider revoker completed."
+          ? "The registered provider revoker completed: revoked with the provider and cleared locally."
           : result.remoteRevocation === "failed"
-            ? "The provider revoker failed, but local ciphertext was still cleared."
-            : "No reviewed provider revoker was available; only local ciphertext was cleared.";
+            ? "The provider revoker failed, but local ciphertext was still cleared locally only."
+            : result.remoteRevocation === "not-supported"
+              ? "This provider does not offer per-token revocation; only local ciphertext was cleared locally only."
+              : "No reviewed provider revoker was available; only local ciphertext was cleared locally only.";
         const outcomeCantonese = result.remoteRevocation === "succeeded"
-          ? "已註冊供應商 revoker 已完成。"
+          ? "已註冊供應商 revoker 已完成：已喺供應商度撤銷並已喺本機清除。"
           : result.remoteRevocation === "failed"
-            ? "供應商 revoker 失敗，但本機密文仍然已清除。"
-            : "冇可用嘅經審閱供應商 revoker；只清除咗本機密文。 ";
+            ? "供應商 revoker 失敗，但本機密文仍然已清除，只清除咗本機。"
+            : result.remoteRevocation === "not-supported"
+              ? "呢個供應商唔提供逐個權杖撤銷；只清除咗本機密文。"
+              : "冇可用嘅經審閱供應商 revoker；只清除咗本機密文。 ";
         pushToast(
           kind,
           "OAuth revoke-and-clear finished",

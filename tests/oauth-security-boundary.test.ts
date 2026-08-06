@@ -68,9 +68,29 @@ describe("OAuth security boundary", () => {
     // A public desktop client has no secret to keep, so the concept must not exist anywhere in the
     // OAuth surface at all, registered provider or not.
     expect(`${vault}\n${main}\n${appService}`).not.toMatch(/client_secret/iu);
-    expect(main).toContain("revokers: []");
+    // Revoker registration follows the exact same environment-gated pattern as client
+    // registration above: real only when the provider's own client config resolved, never a
+    // hardcoded credential, and the vault's own registration gate is what actually enforces this
+    // (an unregistered provider's revoker throws at vault construction).
+    expect(main).toContain("revokers: microsoftOAuth ? [createMicrosoftOAuthRevoker()] : []");
+    expect(main).toContain('import { createMicrosoftOAuthRevoker } from "./oauth-revocation.js"');
+    expect(main).not.toMatch(/revokers:\s*\[\s*\{/u);
     expect(main).toContain('path.join(app.getPath("userData"), "oauth-token-vault.json")');
     expect(`${main}\n${appService}\n${preload}`).not.toContain("mock-oauth-token-lifecycle");
+  });
+
+  it("never fabricates a Microsoft token-revocation HTTP call, and keeps the Google revoker's real endpoint the only one in source", async () => {
+    const revocation = await read("src/main/oauth-revocation.ts");
+    expect(revocation).not.toMatch(/\b(?:console|ipcMain|ipcRenderer|process\.env|safeStorage)\b/u);
+    // Exactly one real revocation endpoint literal exists in this module, and it is Google's own
+    // documented one. Microsoft's revoker below must never grow a matching endpoint string, a
+    // fetch call, or any other network attempt - see this module's own top-of-file comment for why.
+    expect(revocation).toContain('export const GOOGLE_REVOCATION_ENDPOINT = "https://oauth2.googleapis.com/revoke"');
+    expect((revocation.match(/https:\/\//gu) ?? []).length).toBeGreaterThan(0);
+    const microsoftRevoker = revocation.slice(revocation.indexOf("createMicrosoftOAuthRevoker"));
+    expect(microsoftRevoker).not.toMatch(/\bfetch\(/u);
+    expect(microsoftRevoker).not.toMatch(/https:\/\//u);
+    expect(microsoftRevoker).toContain("OAuthProviderRevocationNotSupportedError");
   });
 
   it("hands the authorization code to the main process alone, and exposes only a token-free sign-in snapshot to the renderer", async () => {

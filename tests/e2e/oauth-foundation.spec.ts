@@ -38,7 +38,8 @@ test.beforeAll(async () => {
       providers,
     };
     const FIXTURE_REDIRECT = "https://accounts.example.test/oauth/fixture-redirect";
-    let signIn: { provider: "google" | "microsoft"; phase: "ready"; failure: null } | null = null;
+    type AccountHint = { email: string | null; displayName: string | null } | null;
+    let signIn: { provider: "google" | "microsoft"; phase: "ready"; failure: null; accountHint: AccountHint } | null = null;
     for (const channel of ["account:oauth-status", "account:oauth-start", "account:oauth-cancel", "account:oauth-submit-redirect", "account:oauth-signin-status"]) {
       ipcMain.removeHandler(channel);
     }
@@ -61,7 +62,14 @@ test.beforeAll(async () => {
         // The real service transitions to authorization-received the instant a matching redirect
         // lands; the sign-in exchange it triggers is a separate, slightly later state this stub
         // resolves immediately, matching what a fast local fixture exchange would look like.
-        signIn = { provider: snapshot.provider!, phase: "ready", failure: null };
+        // A distinct fixture code simulates a token exchange whose response carried an ID token
+        // with email/name claims, exercising the non-secret Add Account prefill hint end to end;
+        // the original plain code keeps producing no hint, matching the earlier test unchanged.
+        const code = new URL(url).searchParams.get("code");
+        const accountHint: AccountHint = code === "fixture-authorization-code-with-hint"
+          ? { email: "detected@example.test", displayName: "Detected User" }
+          : null;
+        signIn = { provider: snapshot.provider!, phase: "ready", failure: null, accountHint };
         snapshot = { phase: "authorization-received", provider: snapshot.provider, expiresAt: null, failure: null, providers };
       }
       // A non-matching paste leaves the phase unchanged, exactly like the real service, so the
@@ -153,6 +161,66 @@ test("shows a bilingual accessible OAuth foundation and cancellation without acc
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   await expect(panel).toBeVisible();
   await page.setViewportSize({ width: 1500, height: 940 });
+});
+
+test("prefills empty email and display-name fields from a completed sign-in's non-secret account hint", async () => {
+  const closeSetup = page.getByRole("button", { name: /Close account setup/i });
+  if (await closeSetup.isVisible()) await closeSetup.click();
+  await page.getByRole("tab", { name: /^Settings/i }).click();
+  await page.getByRole("button", { name: /Add account/i }).click();
+
+  const form = page.locator('[data-form="account-setup"]');
+  const emailInput = form.locator('[name="email"]');
+  const nameInput = form.locator('[name="displayName"]');
+  await expect(emailInput).toHaveValue("");
+  await expect(nameInput).toHaveValue("");
+
+  await form.locator('[name="authMode"]').selectOption("oauth2");
+  const panel = form.getByTestId("oauth-foundation");
+  await expect(panel.getByRole("combobox", { name: /Browser provider/i })).toHaveValue("google");
+  await panel.getByRole("button", { name: /Start browser sign-in/i }).click();
+
+  const waiting = form.getByTestId("oauth-status");
+  const pasteInput = form.getByTestId("oauth-redirect-input");
+  await expect(waiting).toContainText(/Paste the address after signing in/i);
+  await expect(pasteInput).toBeFocused();
+  await pasteInput.fill("https://accounts.example.test/oauth/fixture-redirect?state=fixture&code=fixture-authorization-code-with-hint");
+  await form.getByRole("button", { name: /^Continue/i }).click();
+
+  await expect(form.getByTestId("oauth-status")).toContainText(/Signed in/i);
+  await expect(emailInput).toHaveValue("detected@example.test");
+  await expect(nameInput).toHaveValue("Detected User");
+  // The hint is a prefill convenience only: both fields stay ordinary, editable inputs afterward.
+  await emailInput.fill("overridden@example.test");
+  await expect(emailInput).toHaveValue("overridden@example.test");
+});
+
+test("never overwrites an email or display name the user already typed, even after a late-arriving account hint", async () => {
+  const closeSetup = page.getByRole("button", { name: /Close account setup/i });
+  if (await closeSetup.isVisible()) await closeSetup.click();
+  await page.getByRole("tab", { name: /^Settings/i }).click();
+  await page.getByRole("button", { name: /Add account/i }).click();
+
+  const form = page.locator('[data-form="account-setup"]');
+  const emailInput = form.locator('[name="email"]');
+  const nameInput = form.locator('[name="displayName"]');
+  await emailInput.fill("typed-by-user@example.test");
+  await nameInput.fill("Typed By User");
+
+  await form.locator('[name="authMode"]').selectOption("oauth2");
+  const panel = form.getByTestId("oauth-foundation");
+  await panel.getByRole("button", { name: /Start browser sign-in/i }).click();
+
+  const waiting = form.getByTestId("oauth-status");
+  const pasteInput = form.getByTestId("oauth-redirect-input");
+  await expect(waiting).toContainText(/Paste the address after signing in/i);
+  await expect(pasteInput).toBeFocused();
+  await pasteInput.fill("https://accounts.example.test/oauth/fixture-redirect?state=fixture&code=fixture-authorization-code-with-hint");
+  await form.getByRole("button", { name: /^Continue/i }).click();
+
+  await expect(form.getByTestId("oauth-status")).toContainText(/Signed in/i);
+  await expect(emailInput).toHaveValue("typed-by-user@example.test");
+  await expect(nameInput).toHaveValue("Typed By User");
 });
 
 test("shows the production Windows vault boundary without renderer token material or enabled provider actions", async () => {

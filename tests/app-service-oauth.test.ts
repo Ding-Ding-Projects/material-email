@@ -64,6 +64,13 @@ const jsonResponse = (response: ServerResponse, body: unknown): void => {
   response.end(JSON.stringify(body));
 };
 
+/** A JWT-shaped string with the given payload claims and a garbage signature - never checked by this app. */
+const fakeIdToken = (claims: Record<string, unknown>): string => {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }), "utf8").toString("base64url");
+  const payload = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
+  return `${header}.${payload}.not-a-real-signature`;
+};
+
 const oauthDraft = (overrides: Partial<AccountDraft> = {}): AccountDraft => ({
   displayName: "OAuth Test",
   email: "oauth@example.test",
@@ -128,10 +135,33 @@ describe("AppService OAuth account lifecycle", () => {
     await service.completeOAuthSignIn({ provider: "microsoft", code: "auth-code", codeVerifier: "verifier", redirectUri: "http://127.0.0.1:1/oauth/callback" });
 
     const status = service.getOAuthSignInStatus();
-    expect(status).toEqual({ provider: "microsoft", phase: "ready", failure: null });
+    expect(status).toEqual({ provider: "microsoft", phase: "ready", failure: null, accountHint: null });
     expect(JSON.stringify(status)).not.toContain("fixture-access-token");
     expect(received?.get("code")).toBe("auth-code");
     expect(received?.get("grant_type")).toBe("authorization_code");
+  });
+
+  it("surfaces a non-secret account hint decoded from an ID token, without exposing the token itself", async () => {
+    const service = await createHarness((_body, response) => {
+      jsonResponse(response, readyTokenResponse({ id_token: fakeIdToken({ email: "signed-in@example.test", name: "Signed In User" }) }));
+    });
+    await service.completeOAuthSignIn({ provider: "microsoft", code: "auth-code", codeVerifier: "verifier", redirectUri: "http://127.0.0.1:1/oauth/callback" });
+
+    const status = service.getOAuthSignInStatus();
+    expect(status).toEqual({
+      provider: "microsoft",
+      phase: "ready",
+      failure: null,
+      accountHint: { email: "signed-in@example.test", displayName: "Signed In User" },
+    });
+    expect(JSON.stringify(status)).not.toContain("fixture-access-token");
+    expect(JSON.stringify(status)).not.toContain("not-a-real-signature");
+  });
+
+  it("reports no account hint when the token response carries no ID token", async () => {
+    const service = await createHarness((_body, response) => jsonResponse(response, readyTokenResponse()));
+    await service.completeOAuthSignIn({ provider: "microsoft", code: "auth-code", codeVerifier: "verifier", redirectUri: "http://127.0.0.1:1/oauth/callback" });
+    expect(service.getOAuthSignInStatus()).toMatchObject({ phase: "ready", accountHint: null });
   });
 
   it("reports failure when the provider refuses the code, and leaves no sign-in ready", async () => {

@@ -109,6 +109,7 @@ import {
   junkSummaryOf,
   listFilters,
   planFilterRun,
+  previewMessageTagNames,
   removeFilter,
   removeMessageTag,
   reorderFilters,
@@ -135,7 +136,7 @@ import type { MailIdentity, MailIdentityInput } from "../shared/identities.js";
 import { emptyJunkModel } from "../shared/junk-classifier.js";
 import { classifySendResult, describeRecipientOutcome } from "./send-outcome.js";
 import { collectCachedUnifiedMessages } from "../shared/unified-folders.js";
-import { createCachedMailIndex, searchCachedMailIndex } from "../shared/cached-mail-index.js";
+import { CachedMailSqliteIndex } from "./cached-mail-sqlite-index.js";
 import { assertConnectionPreflight } from "../shared/connection-diagnostics.js";
 import { inspectTlsCertificate } from "./tls-certificate-diagnostics.js";
 import { testPop3Account } from "./pop3-test-transport.js";
@@ -334,6 +335,7 @@ export class AppService {
   readonly #statePath: string;
   readonly #quarantinePath: string;
   readonly #store: JsonStore<PersistedState>;
+  readonly #cachedMailIndex: CachedMailSqliteIndex;
   readonly #mail = new MailService();
   readonly #historyRepository: HistoryRepository;
   readonly #discovery = new AccountDiscoveryService();
@@ -356,6 +358,7 @@ export class AppService {
     this.#oauthTokenVault = options.oauthTokenVault ?? null;
     this.#statePath = path.join(userDataPath, "material-email-state-v1.json");
     this.#quarantinePath = path.join(userDataPath, "attachment-quarantine-v1");
+    this.#cachedMailIndex = new CachedMailSqliteIndex(path.join(userDataPath, "cached-mail-index-v1.sqlite"));
     this.#pim = new PimService(userDataPath);
     this.#historyRepository = new HistoryRepository(path.join(userDataPath, "local-history"), parsePersistedState);
     this.#store = new JsonStore<PersistedState>(
@@ -785,13 +788,15 @@ export class AppService {
 
   async searchCachedMail(query: CachedMailSearchQuery): Promise<CachedMailSearchResult> {
     const state = await this.#store.read();
-    const index = createCachedMailIndex({
-      accounts: state.accounts.map(this.#publicAccount),
-      folders: state.folders,
-      messages: state.messages,
-      details: state.details,
-    });
-    return searchCachedMailIndex(index, query);
+    return this.#cachedMailIndex.search(
+      {
+        accounts: state.accounts.map(this.#publicAccount),
+        folders: state.folders,
+        messages: state.messages,
+        details: state.details,
+      },
+      query,
+    );
   }
 
   async getMessage(accountId: string, folderPath: string, uid: number): Promise<MessageDetail> {
@@ -1332,7 +1337,24 @@ export class AppService {
     return catalog ?? this.listMessageTags();
   }
 
+  /**
+   * Stores the tag change locally and, for a real account, first asks the server to keep the same
+   * names as IMAP keywords. That server call is fail-closed like folder administration and
+   * mark-folder-read: a rejection or an unconfirmed store throws before anything local changes, so a
+   * caller never sees local tag state that claims a server sync which did not actually happen.
+   */
   async setMessageTags(accountId: string, folderPath: string, uid: number, tagIds: string[]): Promise<string[]> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    if (account.kind !== "demo") {
+      const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+      const names = previewMessageTagNames(state, message, tagIds);
+      try {
+        await this.#mail.setMessageKeywords(await this.#runtimeAccount(account), folderPath, uid, names, uidValidity);
+      } catch (error) {
+        throw publicMailError(error);
+      }
+    }
     let applied: string[] = [];
     await this.#store.update(draft => {
       this.#requireAccount(draft, accountId);
@@ -2739,15 +2761,15 @@ export class AppService {
    */
   async completeOAuthSignIn(grant: { provider: OAuthProviderId; code: string; codeVerifier: string; redirectUri: string }): Promise<void> {
     this.#pendingOAuthSignIn = null;
-    this.#oauthSignInStatus = { provider: grant.provider, phase: "exchanging", failure: null };
+    this.#oauthSignInStatus = { provider: grant.provider, phase: "exchanging", failure: null, accountHint: null };
     const vault = this.#oauthTokenVault;
     if (!vault) {
-      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "OAuth account connections are not available in this build." };
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "OAuth account connections are not available in this build.", accountHint: null };
       return;
     }
     const registration = vault.registration(grant.provider);
     if (!registration) {
-      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "This build has no OAuth registration for that provider." };
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "This build has no OAuth registration for that provider.", accountHint: null };
       return;
     }
     try {
@@ -2768,9 +2790,11 @@ export class AppService {
         scopes: result.scopes,
         capturedAtMs: Date.now(),
       };
-      this.#oauthSignInStatus = { provider: grant.provider, phase: "ready", failure: null };
+      // A non-secret prefill hint only; see OAuthSignInAccountHint. The renderer never treats this
+      // as proof of who is signed in.
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "ready", failure: null, accountHint: result.accountHint };
     } catch (error) {
-      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: error instanceof Error ? error.message : "The sign-in could not be completed." };
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: error instanceof Error ? error.message : "The sign-in could not be completed.", accountHint: null };
     }
   }
 

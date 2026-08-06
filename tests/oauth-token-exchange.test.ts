@@ -26,6 +26,13 @@ const jsonResponse = (response: ServerResponse, status: number, body: unknown): 
   response.end(JSON.stringify(body));
 };
 
+/** A JWT-shaped string with the given payload claims and an unsigned/garbage signature segment - this module never checks the signature. */
+const fakeIdToken = (claims: Record<string, unknown>): string => {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }), "utf8").toString("base64url");
+  const payload = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
+  return `${header}.${payload}.not-a-real-signature`;
+};
+
 describe("OAuth token exchange", () => {
   let server: Server | undefined;
 
@@ -76,6 +83,7 @@ describe("OAuth token exchange", () => {
       refreshToken: "fixture-refresh-token",
       expiresInSeconds: 3_600,
       scopes: ["IMAP.AccessAsUser.All", "SMTP.Send", "offline_access"],
+      accountHint: null,
     });
     expect(received?.get("grant_type")).toBe("authorization_code");
     expect(received?.get("client_id")).toBe("client-1");
@@ -224,5 +232,108 @@ describe("OAuth token exchange", () => {
       codeVerifier: "verifier",
     });
     expect(result.expiresInSeconds).toBe(24 * 60 * 60);
+  });
+
+  it("decodes a non-secret email/name prefill hint from an ID token in the response", async () => {
+    const fixture = await startFixture((_body, response) => {
+      jsonResponse(response, 200, {
+        access_token: "a",
+        refresh_token: "r",
+        expires_in: 3_600,
+        id_token: fakeIdToken({ email: "alex@example.test", name: "Alex Wong", sub: "should-be-ignored" }),
+      });
+    });
+    server = fixture.server;
+
+    const result = await exchangeAuthorizationCode({
+      provider: "microsoft",
+      tokenEndpoint: fixture.endpoint,
+      clientId: "client-1",
+      code: "auth-code",
+      redirectUri: "http://127.0.0.1:9/oauth/callback",
+      codeVerifier: "verifier",
+    });
+
+    expect(result.accountHint).toEqual({ email: "alex@example.test", displayName: "Alex Wong" });
+    // Only the two claims survive; nothing else about the token (its subject, its raw text) does.
+    expect(JSON.stringify(result)).not.toContain("should-be-ignored");
+    expect(JSON.stringify(result)).not.toContain("not-a-real-signature");
+  });
+
+  it("falls back to preferred_username when the ID token has no email claim", async () => {
+    const fixture = await startFixture((_body, response) => {
+      jsonResponse(response, 200, {
+        access_token: "a",
+        refresh_token: "r",
+        expires_in: 3_600,
+        id_token: fakeIdToken({ preferred_username: "alex@example.test", name: "Alex Wong" }),
+      });
+    });
+    server = fixture.server;
+
+    const result = await exchangeAuthorizationCode({
+      provider: "microsoft",
+      tokenEndpoint: fixture.endpoint,
+      clientId: "client-1",
+      code: "auth-code",
+      redirectUri: "http://127.0.0.1:9/oauth/callback",
+      codeVerifier: "verifier",
+    });
+
+    expect(result.accountHint).toEqual({ email: "alex@example.test", displayName: "Alex Wong" });
+  });
+
+  it("reports no account hint when the response has no ID token at all", async () => {
+    const fixture = await startFixture((_body, response) => {
+      jsonResponse(response, 200, { access_token: "a", refresh_token: "r", expires_in: 3_600 });
+    });
+    server = fixture.server;
+
+    const result = await exchangeAuthorizationCode({
+      provider: "microsoft",
+      tokenEndpoint: fixture.endpoint,
+      clientId: "client-1",
+      code: "auth-code",
+      redirectUri: "http://127.0.0.1:9/oauth/callback",
+      codeVerifier: "verifier",
+    });
+
+    expect(result.accountHint).toBeNull();
+  });
+
+  it("reports no account hint when the ID token is present but malformed", async () => {
+    const fixture = await startFixture((_body, response) => {
+      jsonResponse(response, 200, { access_token: "a", refresh_token: "r", expires_in: 3_600, id_token: "not-a-jwt" });
+    });
+    server = fixture.server;
+
+    const result = await exchangeAuthorizationCode({
+      provider: "microsoft",
+      tokenEndpoint: fixture.endpoint,
+      clientId: "client-1",
+      code: "auth-code",
+      redirectUri: "http://127.0.0.1:9/oauth/callback",
+      codeVerifier: "verifier",
+    });
+
+    expect(result.accountHint).toBeNull();
+  });
+
+  it("reports no account hint when the ID token carries neither claim", async () => {
+    const fixture = await startFixture((_body, response) => {
+      jsonResponse(response, 200, { access_token: "a", refresh_token: "r", expires_in: 3_600, id_token: fakeIdToken({ sub: "user-id-only" }) });
+    });
+    server = fixture.server;
+
+    const result = await exchangeAuthorizationCode({
+      provider: "microsoft",
+      tokenEndpoint: fixture.endpoint,
+      clientId: "client-1",
+      code: "auth-code",
+      redirectUri: "http://127.0.0.1:9/oauth/callback",
+      codeVerifier: "verifier",
+    });
+
+    expect(result.accountHint).toBeNull();
   });
 });

@@ -70,18 +70,34 @@ export interface OAuthTokenVaultSnapshot {
 export type OAuthSignInPhase = "exchanging" | "ready" | "failed";
 
 /**
+ * A non-secret prefill hint for the Add Account form, decoded from an ID token's `email` (or
+ * `preferred_username`) and `name` claims when the provider included one and this app's
+ * `openid`/`profile`/`email` scopes were granted. This is a convenience value only — the ID token's
+ * signature is never checked here, so nothing in this type is a verified identity assertion. It
+ * exists purely to save the user from retyping their own address and name; it proves nothing about
+ * who is signed in, and it must never be treated as authentication evidence. Either field is null
+ * when the provider omitted it, the ID token was absent, or it could not be decoded.
+ */
+export interface OAuthSignInAccountHint {
+  email: string | null;
+  displayName: string | null;
+}
+
+/**
  * State of the token exchange that follows a completed browser round trip, distinct from
  * {@link OAuthAuthorizationSnapshot}'s phase machine — that one only covers getting a code; this one
  * covers turning it into tokens. Deliberately carries no access token, refresh token, or code: the
- * renderer learns only whether a freshly authorized sign-in is ready to attach to an account.
+ * renderer learns only whether a freshly authorized sign-in is ready to attach to an account, plus
+ * the non-secret {@link OAuthSignInAccountHint} prefill hint described above.
  */
 export interface OAuthSignInSnapshot {
   provider: OAuthProviderId;
   phase: OAuthSignInPhase;
   failure: string | null;
+  accountHint: OAuthSignInAccountHint | null;
 }
 
-export type OAuthRemoteRevocationOutcome = "not-needed" | "not-available" | "succeeded" | "failed";
+export type OAuthRemoteRevocationOutcome = "not-needed" | "not-available" | "not-supported" | "succeeded" | "failed";
 
 /** Result of a provider-level clear or revoke-and-clear request. */
 export interface OAuthTokenVaultActionResult {

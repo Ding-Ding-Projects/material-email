@@ -71,6 +71,7 @@ export type {
   OAuthProviderAvailability,
   OAuthProviderId,
   OAuthRemoteRevocationOutcome,
+  OAuthSignInAccountHint,
   OAuthSignInPhase,
   OAuthSignInSnapshot,
   OAuthTokenVaultActionResult,

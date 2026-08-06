@@ -76,6 +76,21 @@ export interface OAuthProviderTokenRevoker {
   revoke(input: { accessToken: string; refreshToken: string }): Promise<void>;
 }
 
+/**
+ * A registered revoker throws this, instead of any other error, to mean one specific thing: this
+ * provider has no public per-token revocation endpoint at all, so no network call was even
+ * attempted — not that a real call was attempted and failed. {@link WindowsSafeStorageOAuthTokenVault.revokeAndClear}
+ * reports that distinctly as `"not-supported"` rather than lumping it in with `"failed"`, so the
+ * user is told the true reason local-only clearing happened instead of an implied network failure.
+ * See `src/main/oauth-revocation.ts` for the concrete revoker that throws this today (Microsoft).
+ */
+export class OAuthProviderRevocationNotSupportedError extends Error {
+  constructor(provider: OAuthProviderId) {
+    super(`OAuth provider "${provider}" does not offer a public per-token revocation endpoint.`);
+    this.name = "OAuthProviderRevocationNotSupportedError";
+  }
+}
+
 export interface WindowsSafeStorageOAuthTokenVaultOptions {
   filePath: string;
   safeStorage: WindowsSafeStorageBoundary;
@@ -453,8 +468,15 @@ export class WindowsSafeStorageOAuthTokenVault {
               accessToken: this.#unprotect(record.accessTokenCiphertext),
               refreshToken: this.#unprotect(record.refreshTokenCiphertext),
             });
-          } catch {
-            remoteRevocation = "failed";
+          } catch (error) {
+            // A "not supported" revoker never attempted a network call, so it must not read as a
+            // failed one — see OAuthProviderRevocationNotSupportedError. Once any record reports
+            // "failed" it stays "failed"; a later "not-supported" record must not paper over that.
+            if (error instanceof OAuthProviderRevocationNotSupportedError) {
+              if (remoteRevocation === "succeeded") remoteRevocation = "not-supported";
+            } else {
+              remoteRevocation = "failed";
+            }
           }
         }
       }

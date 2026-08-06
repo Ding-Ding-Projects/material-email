@@ -23,6 +23,7 @@ import { ExternalLinkReviewQueue } from "./external-link-review.js";
 import { OAuthAuthorizationService } from "./oauth-authorization.js";
 import { WindowsSafeStorageOAuthTokenVault } from "./oauth-token-vault.js";
 import { resolveMicrosoftOAuthConfig } from "./oauth-provider-config.js";
+import { createMicrosoftOAuthRevoker } from "./oauth-revocation.js";
 import { assessExternalLink } from "../shared/external-link-safety.js";
 import {
   assertTrustedRendererClaim,
@@ -450,7 +451,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registrations: microsoftOAuth
       ? [{ provider: "microsoft", clientId: microsoftOAuth.clientId, tokenEndpoint: microsoftOAuth.tokenEndpoint }]
       : [],
-    revokers: [],
+    // Microsoft's v2.0 endpoint has no public per-token revoke endpoint the way Google does (see
+    // src/main/oauth-revocation.ts), so this revoker never makes a network call; it exists so
+    // "Revoke and clear" can honestly report that instead of leaving the action disabled with no
+    // explanation. It is registered only alongside Microsoft's own client-ID registration above,
+    // the same environment-gated pattern that registration already uses. Google has no client-ID
+    // registration path in this build at all yet (see oauth-provider-config.ts), so its real
+    // revocation client (also in oauth-revocation.ts, tested against a real local fixture) is not
+    // registered here — the vault would refuse an unregistered provider's revoker outright.
+    revokers: microsoftOAuth ? [createMicrosoftOAuthRevoker()] : [],
   });
   service = new AppService(app.getPath("userData"), { oauthTokenVault });
   oauthAuthorization = new OAuthAuthorizationService({
