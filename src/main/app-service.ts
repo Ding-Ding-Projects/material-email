@@ -2757,15 +2757,15 @@ export class AppService {
    */
   async completeOAuthSignIn(grant: { provider: OAuthProviderId; code: string; codeVerifier: string; redirectUri: string }): Promise<void> {
     this.#pendingOAuthSignIn = null;
-    this.#oauthSignInStatus = { provider: grant.provider, phase: "exchanging", failure: null };
+    this.#oauthSignInStatus = { provider: grant.provider, phase: "exchanging", failure: null, accountHint: null };
     const vault = this.#oauthTokenVault;
     if (!vault) {
-      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "OAuth account connections are not available in this build." };
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "OAuth account connections are not available in this build.", accountHint: null };
       return;
     }
     const registration = vault.registration(grant.provider);
     if (!registration) {
-      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "This build has no OAuth registration for that provider." };
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: "This build has no OAuth registration for that provider.", accountHint: null };
       return;
     }
     try {
@@ -2786,9 +2786,11 @@ export class AppService {
         scopes: result.scopes,
         capturedAtMs: Date.now(),
       };
-      this.#oauthSignInStatus = { provider: grant.provider, phase: "ready", failure: null };
+      // A non-secret prefill hint only; see OAuthSignInAccountHint. The renderer never treats this
+      // as proof of who is signed in.
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "ready", failure: null, accountHint: result.accountHint };
     } catch (error) {
-      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: error instanceof Error ? error.message : "The sign-in could not be completed." };
+      this.#oauthSignInStatus = { provider: grant.provider, phase: "failed", failure: error instanceof Error ? error.message : "The sign-in could not be completed.", accountHint: null };
     }
   }
 

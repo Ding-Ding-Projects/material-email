@@ -5141,6 +5141,28 @@ const syncIncomingProtocolMode = (form: HTMLFormElement, adjustConventionalPort 
 
 type OAuthPanelFocusKey = "oauth-start" | "oauth-cancel" | "oauth-redirect-paste" | "oauth-redirect-submit";
 
+/**
+ * Prefills the Add Account form's email and display-name fields from a completed OAuth sign-in's
+ * non-secret {@link OAuthSignInAccountHint}, when present — a convenience only, never treated as a
+ * verified identity. Each field is touched only while it is genuinely empty at the moment this
+ * runs, so a value the user already typed (before or during the browser round trip) is never
+ * overwritten by a hint that arrives afterward, and the user can still freely edit either field
+ * right after this runs.
+ */
+const applyOAuthAccountHintPrefill = (form: HTMLFormElement): void => {
+  const hint = state.oauthSignIn?.phase === "ready" ? state.oauthSignIn.accountHint : null;
+  if (!hint) return;
+  const emailInput = form.querySelector<HTMLInputElement>('input[name="email"]');
+  if (emailInput && hint.email && !emailInput.value.trim()) {
+    emailInput.value = hint.email;
+    state.setupEmail = hint.email;
+  }
+  const nameInput = form.querySelector<HTMLInputElement>('input[name="displayName"]');
+  if (nameInput && hint.displayName && !nameInput.value.trim()) {
+    nameInput.value = hint.displayName;
+  }
+};
+
 const updateOAuthAuthorizationPanel = (focusKey?: OAuthPanelFocusKey): void => {
   const form = document.querySelector<HTMLFormElement>('[data-form="account-setup"]');
   const panel = form?.querySelector<HTMLElement>("[data-oauth-panel]");
@@ -5152,6 +5174,7 @@ const updateOAuthAuthorizationPanel = (focusKey?: OAuthPanelFocusKey): void => {
   panel.outerHTML = renderOAuthAuthorizationPanel();
   syncAccountAuthenticationMode(form);
   applyBilingualSemantics(form);
+  applyOAuthAccountHintPrefill(form);
   const nextFocusKey = focusKey ?? preservedFocusKey;
   if (nextFocusKey) requestAnimationFrame(() => form.querySelector<HTMLElement>(`[data-focus-key="${nextFocusKey}"]`)?.focus());
 };

@@ -1,4 +1,5 @@
-import type { OAuthProviderId } from "../shared/oauth.js";
+import type { OAuthProviderId, OAuthSignInAccountHint } from "../shared/oauth.js";
+import { decodeOAuthIdTokenAccountHint } from "./oauth-id-token-claims.js";
 
 /**
  * Bounds for the two HTTPS calls this module ever makes: exchanging an authorization code for
@@ -31,6 +32,12 @@ export interface OAuthTokenExchangeResult {
   refreshToken: string | null;
   expiresInSeconds: number;
   scopes: string[];
+  /**
+   * Non-secret Add-Account-form prefill hint decoded from the response's `id_token`, when present -
+   * see {@link decodeOAuthIdTokenAccountHint}. The raw ID token itself never appears on this result
+   * or anywhere else; only these two bounded claim values survive past {@link toResult}.
+   */
+  accountHint: OAuthSignInAccountHint | null;
 }
 
 export interface AuthorizationCodeExchangeInput {
@@ -102,6 +109,8 @@ interface RawTokenResponse {
   token_type?: unknown;
   error?: unknown;
   error_description?: unknown;
+  /** Present only when the request asked for the openid scope; read once in {@link toResult} and never kept. */
+  id_token?: unknown;
 }
 
 const parseTokenResponse = (body: string): RawTokenResponse => {
@@ -137,6 +146,9 @@ const toResult = (raw: RawTokenResponse): OAuthTokenExchangeResult => {
     throw new OAuthTokenExchangeError("invalid-response", "The token endpoint response had no valid lifetime.");
   }
   const scopes = typeof raw.scope === "string" ? raw.scope.split(/\s+/u).filter(Boolean) : [];
+  // The raw ID token, if any, is read exactly once, right here, to derive the bounded prefill
+  // hint - it is never assigned to a local held past this line, returned, logged, or persisted.
+  const accountHint = typeof raw.id_token === "string" ? decodeOAuthIdTokenAccountHint(raw.id_token) : null;
   return {
     accessToken: raw.access_token,
     refreshToken: typeof raw.refresh_token === "string" && raw.refresh_token ? raw.refresh_token : null,
@@ -144,6 +156,7 @@ const toResult = (raw: RawTokenResponse): OAuthTokenExchangeResult => {
     // outlive a reasonable session; the vault separately bounds what it will store.
     expiresInSeconds: Math.min(raw.expires_in, 24 * 60 * 60),
     scopes,
+    accountHint,
   };
 };
 

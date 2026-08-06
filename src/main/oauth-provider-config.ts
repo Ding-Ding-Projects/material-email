@@ -14,6 +14,13 @@ export const MICROSOFT_OAUTH_SCOPES = Object.freeze([
   "https://outlook.office.com/IMAP.AccessAsUser.All",
   "https://outlook.office.com/SMTP.Send",
   "offline_access",
+  // These three standard OIDC scopes ask Microsoft to include an ID token alongside the access
+  // token. This app never verifies that ID token as an authentication assertion - it only reads
+  // its email/name claims, once, to prefill the Add Account form (see oauth-id-token-claims.ts).
+  // They need no extra admin consent beyond what IMAP.AccessAsUser.All/SMTP.Send already require.
+  "openid",
+  "profile",
+  "email",
 ]);
 
 /**

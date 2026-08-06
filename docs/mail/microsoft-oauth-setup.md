@@ -45,7 +45,8 @@ This app connects to Outlook/Exchange mailboxes using the same IMAP and SMTP pro
    - `SMTP.Send`
 5. Select **Add permissions**.
 6. Also confirm `offline_access` is present under **Microsoft Graph** delegated permissions — most new registrations include this by default. It is what lets Microsoft issue a refresh token at all; without it, this app's sign-in would work once and then be unable to reconnect once the short-lived access token expired, and it deliberately refuses to treat a token as connected without one (see Failure modes in [Accounts and connectivity](accounts-and-connectivity.md)).
-7. If your organization requires administrator consent for these permissions (a padlock or "Not granted" label appears next to them), a Microsoft 365 administrator for that tenant will need to grant consent, either by selecting **Grant admin consent** here (if you have that role) or by asking your administrator to. A personal Microsoft account (outlook.com/hotmail.com) does not need admin consent — it consents for itself on first sign-in.
+7. This app also requests the standard `openid`, `profile`, and `email` scopes alongside the ones above. These are OpenID Connect scopes, not Exchange or Graph mail permissions — they need no separate row in **API permissions** and normally carry no extra admin-consent requirement beyond what Step 4 already needs, since every app registration can request them by default. They ask Microsoft to include an ID token with the token response; this app reads only that ID token's `email` (or `preferred_username`) and `name` claims, once, to prefill the Add Account form's email and display-name fields after a successful sign-in — a convenience only. It never verifies the ID token's signature, never stores or logs the raw token, and never treats these claims as proof of identity; the account itself is still only proven by an actual IMAP/SMTP login.
+8. If your organization requires administrator consent for these permissions (a padlock or "Not granted" label appears next to them), a Microsoft 365 administrator for that tenant will need to grant consent, either by selecting **Grant admin consent** here (if you have that role) or by asking your administrator to. A personal Microsoft account (outlook.com/hotmail.com) does not need admin consent — it consents for itself on first sign-in.
 
 ### Step 5 — Hand the client ID to Material Email
 
@@ -80,7 +81,7 @@ Open Material Email, go to **Settings → Mail accounts → Add account**, choos
 5. Return to Material Email and paste it into the **Pasted address** field, then select **Continue**. The app parses the address itself, checks it against the exact sign-in attempt it started, and completes the exchange.
 6. The app reports **Signed in**.
 
-Fill in the account's display name, email address, and IMAP/SMTP server settings (`outlook.office365.com:993` TLS for incoming, `smtp.office365.com:587` STARTTLS for outgoing are Microsoft's standard values), then **Test settings** or **Connect account**.
+If Microsoft's sign-in page returned an ID token with `email`/`preferred_username` and `name` claims, the account's email address and display name fields are prefilled automatically the moment sign-in completes — but only while each field is still empty, so anything already typed there is left exactly as typed. Fill in (or correct) the display name, email address, and IMAP/SMTP server settings (`outlook.office365.com:993` TLS for incoming, `smtp.office365.com:587` STARTTLS for outgoing are Microsoft's standard values), then **Test settings** or **Connect account**.
 
 ## Configuration
 

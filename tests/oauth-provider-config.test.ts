@@ -15,7 +15,7 @@ describe("Microsoft OAuth provider configuration", () => {
       clientId: "12345678-90ab-cdef-1234-567890abcdef",
       authorizationEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
       tokenEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-      scopes: ["https://outlook.office.com/IMAP.AccessAsUser.All", "https://outlook.office.com/SMTP.Send", "offline_access"],
+      scopes: ["https://outlook.office.com/IMAP.AccessAsUser.All", "https://outlook.office.com/SMTP.Send", "offline_access", "openid", "profile", "email"],
       redirectUri: MICROSOFT_NATIVE_CLIENT_REDIRECT_URI,
     });
   });
