@@ -127,6 +127,23 @@ export const applyMessageTags = (
   return [...(next.assignments[key] ?? [])];
 };
 
+/**
+ * The catalogue names {@link applyMessageTags} would leave on a message, computed without mutating
+ * persisted state. A caller uses this to know exactly what to ask the mail server to keep as IMAP
+ * keywords before committing the same change locally.
+ */
+export const previewMessageTagNames = (
+  state: PersistedState,
+  message: Pick<MessageSummary, "accountId" | "folderPath" | "uid" | "uidValidity">,
+  tagIds: readonly string[],
+): string[] => {
+  const key = messageTagKey(message.accountId, message.folderPath, message.uid, message.uidValidity);
+  const current = messageTagStateOf(state);
+  const next = setMessageTags(current, key, tagIds);
+  const applied = next.assignments[key] ?? [];
+  return applied.map(id => current.catalog.find(tag => tag.id === id)?.name).filter((name): name is string => Boolean(name));
+};
+
 export const carryTagsThroughMove = (
   draft: PersistedState,
   from: { accountId: string; folderPath: string; uid: number; uidValidity?: string },

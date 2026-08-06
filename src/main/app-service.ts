@@ -109,6 +109,7 @@ import {
   junkSummaryOf,
   listFilters,
   planFilterRun,
+  previewMessageTagNames,
   removeFilter,
   removeMessageTag,
   reorderFilters,
@@ -1332,7 +1333,24 @@ export class AppService {
     return catalog ?? this.listMessageTags();
   }
 
+  /**
+   * Stores the tag change locally and, for a real account, first asks the server to keep the same
+   * names as IMAP keywords. That server call is fail-closed like folder administration and
+   * mark-folder-read: a rejection or an unconfirmed store throws before anything local changes, so a
+   * caller never sees local tag state that claims a server sync which did not actually happen.
+   */
   async setMessageTags(accountId: string, folderPath: string, uid: number, tagIds: string[]): Promise<string[]> {
+    const state = await this.#store.read();
+    const account = this.#requireAccount(state, accountId);
+    if (account.kind !== "demo") {
+      const { message, uidValidity } = this.#requireCurrentMessage(state, accountId, folderPath, uid);
+      const names = previewMessageTagNames(state, message, tagIds);
+      try {
+        await this.#mail.setMessageKeywords(await this.#runtimeAccount(account), folderPath, uid, names, uidValidity);
+      } catch (error) {
+        throw publicMailError(error);
+      }
+    }
     let applied: string[] = [];
     await this.#store.update(draft => {
       this.#requireAccount(draft, accountId);

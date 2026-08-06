@@ -80,8 +80,9 @@ const mailFailureMessage = (message: string, code: string): string => {
     || /\b(?:ENETUNREACH|EHOSTUNREACH|ENETDOWN|ECONNRESET|socket hang up|network (?:is )?unreachable)\b/iu.test(message)) {
     return "The network connection ended before the mail operation completed. Check the network and retry.";
   }
-  if (/^The mail server (?:does not advertise MOVE|did not confirm (?:the move|the read-state change|the star change)|returned an invalid destination UID)/u.test(message)
-    || message === "The message is no longer available on the server.") {
+  if (/^The mail server (?:does not advertise MOVE|did not confirm (?:the move|the read-state change|the star change|the tag change)|returned an invalid destination UID|does not accept tag keywords in|accepted the tag change but did not keep the keywords)/u.test(message)
+    || message === "The message is no longer available on the server."
+    || /^(?:A tag needs a name before it can be stored on the mail server\.|The tag .+ encodes to a \d+-character mail server keyword, over the \d+-character limit\. Shorten the tag name; it was not stored\.|Material Email stores at most \d+ tags on one message; \d+ were requested and none were stored\.)$/u.test(message)) {
     return message;
   }
   return MAIL_FALLBACK;

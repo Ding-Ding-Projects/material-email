@@ -2,7 +2,7 @@
 
 ## Current status
 
-**Verified local slice with live folder administration.** Material Email can label cached messages with colour-coded tags, narrow a folder with a quick filter, evaluate ordered filter rules and carry out their actions, learn a local junk classifier from explicit corrections, and create/rename/remove folders and mark a folder read on the server. Tags, filters, and junk training are local and are never sent to a mail server. Filter rules are edited from Settings and run automatically over messages that arrive during a synchronization, as well as on demand. They evaluate cached rows only; server-side filtering and server-stored keywords are not implemented, and no schedule runs them outside a synchronization.
+**Verified local slice with live folder administration and server-side tag keywords.** Material Email can label cached messages with colour-coded tags, narrow a folder with a quick filter, evaluate ordered filter rules and carry out their actions, learn a local junk classifier from explicit corrections, and create/rename/remove folders and mark a folder read on the server. Tagging a message on a real account now also asks the server to keep the same names as IMAP keywords, fail-closed: a rejected or unconfirmed server change throws before the local tag change is applied, so local state never claims a server sync that did not happen. Filters and junk training remain purely local. Filter rules are edited from Settings and run automatically over messages that arrive during a synchronization, as well as on demand. They evaluate cached rows only; server-side filtering is not implemented, and no schedule runs them outside a synchronization.
 
 ## Behavior
 
@@ -14,6 +14,7 @@
 - A move carries a message's tags to the identity the server reported for the destination. When the server confirms a move but does not attribute a destination UID, the tags are dropped rather than applied to whichever message later takes that UID.
 - Removing an account or a folder forgets exactly that account's or folder's assignments and leaves the catalogue intact.
 - Deleting a tag removes it from the catalogue and from every message in one operation. A stored assignment whose tag no longer exists is discarded when state is loaded, so a blank chip cannot appear.
+- On a real account, tagging or untagging a message asks the server to keep the resulting tag names as IMAP keywords before the local change is applied. Each name becomes a lowercase `mtag-` atom (RFC 3501-safe characters kept as-is, everything else escaped as `_` plus two hex digits) so case differences and unusual characters cannot collide or corrupt another client's keyword. Only atoms carrying that prefix are added or removed; a keyword another client wrote is left exactly as it was. The server call is fail-closed: a rejection, an unsupported mailbox, or a store the server did not actually keep throws before any local tag state changes, so the local catalogue never claims a server sync that did not happen. The demonstration account has no server, so its tagging stays entirely local, as it always has.
 
 ### Quick filter
 
@@ -76,7 +77,8 @@ Tags, filters, and junk training live in the existing local application state fi
 - Filter rules see only messages already cached on this computer. A message that has never been synchronized cannot match.
 - One run examines at most 5,000 cached messages and reports when it stopped at that ceiling. The same ceiling applies to a run after synchronization.
 - Tagging and junk training require the message's own account folder. In a unified view or a search result the controls are disabled with an explanation, because those views do not carry a single mailbox generation.
-- Tags are not written to the server as IMAP keywords, so they do not appear in other mail clients and do not survive reinstalling on another computer. A bounded keyword encoder and a fail-closed `setMessageKeywords` exist in the mail service and are unit-tested, but nothing in the application calls them yet, so no tag reaches a server today.
+- A mailbox that does not advertise keyword support (no `PERMANENTFLAGS`, or one that omits the requested atoms without the `\*` wildcard) refuses the tag change outright rather than silently keeping it local only; tagging that message is unavailable until the account or folder supports keywords. This is proven against a mocked IMAP client; no public IMAP provider's real keyword support has been exercised.
+- Tag keywords travel with a message only as far as the account's own IMAP server sees it; nothing here claims cross-provider or cross-client keyword interoperability beyond what RFC 3501 keywords already guarantee.
 - Junk classification never moves, deletes, or reports a message on its own.
 - A folder rename or removal that the server rejects leaves local state untouched; the failure is surfaced with its category preserved and without raw host paths.
 - Marking a folder read is bounded to 50,000 unseen messages in one operation.
@@ -94,8 +96,9 @@ Every operation in this article runs in the main process over validated local st
 - `tests/mail-organization.test.ts` covers state migration, orphaned-assignment pruning, cached-message reads, every tag operation over persisted state, filter create/update/remove/reorder with dense ordinals, subject construction, run planning and summarizing, and junk training over persisted state.
 - `tests/message-filter-editor.test.ts` covers filter creation, editing, ordinal assignment, reordering with a partial identifier list, renumbering after a delete, the model's rejection reasons, the post-synchronization run, disabled and manual-only rules staying out of it, no reprocessing on a later synchronization or after a restart, the run ceiling, and a failing action leaving the synchronization successful.
 - `tests/imap-keyword-persistence.test.ts` covers the keyword encoding round trip, refusal of a tag name that cannot be encoded, the unsupported-server refusal, foreign keywords surviving, and the UIDVALIDITY guard. It runs against a mocked IMAP client, not a socket.
+- `tests/app-service-message-tags.test.ts` covers the application-level wiring: a real account's tag change calls `setMessageKeywords` with the exact resolved tag names and mailbox generation before applying anything locally; a server rejection or an unconfirmed store leaves the local tag catalogue exactly as it was (fail-closed) instead of applying the change anyway; and the demonstration account never calls the mail service and applies its tag purely locally.
 - `npm run check` runs the type, unit, asset, site, source-policy, and build verification on this tree.
-- Not verified: a packaged Electron session exercising these surfaces, the accessibility and language matrices for the new controls, folder administration against a live third-party IMAP server, the filter editor's own rendering and keyboard behaviour (its tests are service-level), and keyword persistence against any real server.
+- Not verified: a packaged Electron session exercising these surfaces, the accessibility and language matrices for the new controls, folder administration against a live third-party IMAP server, the filter editor's own rendering and keyboard behaviour (its tests are service-level), and keyword persistence against any real IMAP server (only a mocked client has been exercised).
 
 ## Suggested articles
 

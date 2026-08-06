@@ -100,7 +100,8 @@ This roadmap separates code that exists from behavior that has been verified. Or
 - [x] Add the per-account identity and signature model: conservative address validation, control-character stripping, exactly one default per account, sibling promotion on removal, reply-address identity selection, and signature placement above or below quoted material without stacking
 - [x] Wire identities and signatures through persistence, IPC, a composer From picker, a Settings editor, and the SMTP From/Reply-To headers, with signature replacement that preserves quoted material and a body that carries someone else's separator
 - [x] Add a filter editor surface with its own search and regex builder, and run `runOnSync` filters automatically over newly arrived messages without reprocessing across restarts
-- [ ] Persist tags as server-side IMAP keywords (a bounded fail-closed encoder and `setMessageKeywords` are implemented and unit-tested against a mocked client, but nothing in the application calls them and no real server has been exercised)
+- [x] Persist tags as server-side IMAP keywords: `AppService.setMessageTags` now calls the bounded fail-closed encoder and `setMessageKeywords` for a real account before applying the change locally, fail-closed like folder administration and mark-folder-read (no real IMAP server has been exercised, only a mocked client)
+- [ ] Verify IMAP keyword persistence against a real public-provider mailbox and other real clients (the encoder, `setMessageKeywords`, and its application wiring are proven only against a mocked IMAP client)
 - [ ] Server-complete all-account synchronization/threading and persistent scalable mail indexing
 - [ ] Conversation threading and complete search indexing
 - [x] Attachment risk classification and review-before-save warnings
