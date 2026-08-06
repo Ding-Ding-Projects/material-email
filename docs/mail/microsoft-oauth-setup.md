@@ -110,6 +110,7 @@ All three are read once, at application startup, from the process environment. C
 - The Application (client) ID and redirect URI are read only from the environment at startup and are never written into this app's source, its persisted state, its local history, or any log.
 - A completed sign-in's access and refresh tokens are encrypted with Windows `safeStorage` before being written to disk, and are never sent to this app's renderer process or exposed over its IPC boundary in decrypted form — see [Accounts and connectivity](accounts-and-connectivity.md) for the full token-vault design.
 - Revoking access from Microsoft's side (at [account.live.com/consent/Manage](https://account.live.com/consent/Manage) for a personal account, or through your organization's admin center for a work/school account) immediately stops this app's stored refresh token from working; the app will report the account as needing to be reconnected.
+- Microsoft's identity platform publishes no public per-token revoke endpoint the way Google does, so this app's own Settings "Revoke and clear" action cannot ask Microsoft to invalidate a token on your behalf - it honestly reports "cleared locally only, this provider does not support revocation" and clears the locally encrypted copy. To actually revoke access at Microsoft's end, use the account/admin-center link above.
 
 ## Verification
 

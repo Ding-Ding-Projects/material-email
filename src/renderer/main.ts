@@ -6848,17 +6848,25 @@ const handleConfirmation = async (): Promise<void> => {
           `已移除 ${result.localRecordsCleared} 個 ${confirmation.label} 加密記錄。冇聯絡供應商端點；唔聲稱檔案系統安全抹除。`,
         );
       } else {
-        const kind: ToastKind = result.remoteRevocation === "succeeded" ? "success" : result.remoteRevocation === "failed" ? "warning" : "info";
+        const kind: ToastKind = result.remoteRevocation === "succeeded"
+          ? "success"
+          : result.remoteRevocation === "failed"
+            ? "warning"
+            : "info";
         const outcomeEnglish = result.remoteRevocation === "succeeded"
-          ? "The registered provider revoker completed."
+          ? "The registered provider revoker completed: revoked with the provider and cleared locally."
           : result.remoteRevocation === "failed"
-            ? "The provider revoker failed, but local ciphertext was still cleared."
-            : "No reviewed provider revoker was available; only local ciphertext was cleared.";
+            ? "The provider revoker failed, but local ciphertext was still cleared locally only."
+            : result.remoteRevocation === "not-supported"
+              ? "This provider does not offer per-token revocation; only local ciphertext was cleared locally only."
+              : "No reviewed provider revoker was available; only local ciphertext was cleared locally only.";
         const outcomeCantonese = result.remoteRevocation === "succeeded"
-          ? "已註冊供應商 revoker 已完成。"
+          ? "已註冊供應商 revoker 已完成：已喺供應商度撤銷並已喺本機清除。"
           : result.remoteRevocation === "failed"
-            ? "供應商 revoker 失敗，但本機密文仍然已清除。"
-            : "冇可用嘅經審閱供應商 revoker；只清除咗本機密文。 ";
+            ? "供應商 revoker 失敗，但本機密文仍然已清除，只清除咗本機。"
+            : result.remoteRevocation === "not-supported"
+              ? "呢個供應商唔提供逐個權杖撤銷；只清除咗本機密文。"
+              : "冇可用嘅經審閱供應商 revoker；只清除咗本機密文。 ";
         pushToast(
           kind,
           "OAuth revoke-and-clear finished",

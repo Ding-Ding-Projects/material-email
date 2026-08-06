@@ -97,7 +97,7 @@ export interface OAuthSignInSnapshot {
   accountHint: OAuthSignInAccountHint | null;
 }
 
-export type OAuthRemoteRevocationOutcome = "not-needed" | "not-available" | "succeeded" | "failed";
+export type OAuthRemoteRevocationOutcome = "not-needed" | "not-available" | "not-supported" | "succeeded" | "failed";
 
 /** Result of a provider-level clear or revoke-and-clear request. */
 export interface OAuthTokenVaultActionResult {

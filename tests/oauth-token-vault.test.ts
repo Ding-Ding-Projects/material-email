@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  OAuthProviderRevocationNotSupportedError,
   WindowsSafeStorageOAuthTokenVault,
   type OAuthTokenMaterial,
   type WindowsSafeStorageBoundary,
@@ -140,6 +141,33 @@ describe("Windows safeStorage OAuth token vault", () => {
     expect(result).toMatchObject({ localRecordsCleared: 1, remoteRevocation: "failed" });
     expect(JSON.stringify(result)).not.toContain("fixture provider detail");
     expect(result.snapshot.providers[0]).toMatchObject({ recordCount: 0, state: "empty" });
+  });
+
+  it("reports a distinct not-supported outcome, still clearing local ciphertext, when the revoker declares the provider unsupported", async () => {
+    const source = new MockProviderTokenSource();
+    source.revoke.mockRejectedValueOnce(new OAuthProviderRevocationNotSupportedError("google"));
+    const { vault, filePath } = await createHarness({ revoker: source });
+    await vault.saveInitial("google", "account-1", source.initial());
+
+    const result = await vault.revokeAndClear("google");
+    expect(result).toMatchObject({ localRecordsCleared: 1, remoteRevocation: "not-supported" });
+    expect(JSON.stringify(result)).not.toMatch(/fixture-(?:access|refresh)/u);
+    expect(await readFile(filePath, "utf8")).not.toMatch(/fixture-(?:access|refresh)/u);
+    expect(result.snapshot.providers[0]).toMatchObject({ recordCount: 0, state: "empty" });
+  });
+
+  it("keeps a genuine failure as failed even when a later record reports not-supported", async () => {
+    const source = new MockProviderTokenSource();
+    const { vault, filePath } = await createHarness({ revoker: source });
+    await vault.saveInitial("google", "account-1", source.initial());
+    await vault.saveInitial("google", "account-2", { ...source.initial(), accessToken: "fixture-access-two-account" });
+    source.revoke
+      .mockRejectedValueOnce(new Error("fixture provider detail must not escape"))
+      .mockRejectedValueOnce(new OAuthProviderRevocationNotSupportedError("google"));
+
+    const result = await vault.revokeAndClear("google");
+    expect(result).toMatchObject({ localRecordsCleared: 2, remoteRevocation: "failed" });
+    expect(await readFile(filePath, "utf8")).not.toMatch(/fixture-(?:access|refresh)/u);
   });
 
   it("clears orphaned local ciphertext without registration, decryption, or a provider call", async () => {
